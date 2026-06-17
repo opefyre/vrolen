@@ -1,0 +1,76 @@
+# === Dependencies ===
+node_modules/
+.pnpm-store/
+
+# === Build outputs ===
+dist/
+build/
+.vite/
+.turbo/
+.next/
+out/
+
+# === Rust (engine port, Phase 4+) ===
+target/
+*.rlib
+*.rmeta
+**/*.rs.bk
+Cargo.lock.bak
+
+# === Test + coverage ===
+coverage/
+*.lcov
+.nyc_output/
+.vitest-cache/
+playwright-report/
+playwright/.cache/
+test-results/
+
+# === Environment + secrets ===
+.env
+.env.*
+!.env.example
+*.local
+*secret*
+*.pem
+*.key
+!*.public.key
+
+# === Defensive: never commit credentials, even if accidentally placed here ===
+*token*.txt
+*apikey*.txt
+*api-key*.txt
+*credentials*.json
+service-account*.json
+auth-key*.json
+
+# === IDE / Editor ===
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+.AppleDouble
+.LSOverride
+
+# === Logs ===
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# === Misc ===
+.cache/
+.parcel-cache/
+*.tsbuildinfo
+.eslintcache
+.stylelintcache
