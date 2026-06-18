@@ -146,3 +146,6 @@ export type { EngineEvent } from "./events";
 // Cycle execution — the per-station core loop.
 export type { CycleConfig, CompletionEvent, CompletionListener } from "./cycle-execution";
 export { CycleExecutor } from "./cycle-execution";
+
+// KPI accumulators — Phase 0 ships ThroughputKPI; OEE / utilization land in VROL-138.
+export { ThroughputKPI } from "./kpi";
