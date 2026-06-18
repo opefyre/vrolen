@@ -12,7 +12,14 @@
 
 import type { Edge, Node } from "@xyflow/react";
 
-import { constant, type Distribution, meanOf } from "@/engine";
+import {
+  type ChainTopology,
+  type ChainTopologyEdge,
+  type ChainTopologyNode,
+  constant,
+  type Distribution,
+  meanOf,
+} from "@/engine";
 
 export interface GraphToChainResult {
   /** Node ids in chain order (source → sink). Empty when error is set. */
@@ -29,6 +36,12 @@ export interface GraphToChainResult {
   readonly stationLabels: readonly string[];
   /** Nodes not part of the selected chain (disconnected or branching). */
   readonly skippedNodeIds: readonly string[];
+  /**
+   * When the graph contains valid splits or merges (branching DAG with a single
+   * source + single sink), this is the ChainTopology ready to feed runChain.
+   * Falls back to undefined for pure linear chains (callers use cycleDistributions).
+   */
+  readonly topology: ChainTopology | null;
   /** Set when the graph can't be turned into a chain at all. */
   readonly error: string | null;
 }
@@ -71,6 +84,7 @@ export function graphToChainOptions(
     cycleTimes: [],
     stationLabels: [],
     skippedNodeIds: [],
+    topology: null,
     error: null,
   };
   if (nodes.length === 0) {
@@ -110,15 +124,101 @@ export function graphToChainOptions(
     return { ...empty, error: "Graph contains a cycle — can't run a cyclic chain" };
   }
 
-  // Walk the longest linear path. A "linear" path is one where every node has
-  // exactly one successor (the last node may have zero).
+  // Find sources (in-degree 0) + sinks (out-degree 0) of the FULL graph.
   const sources = nodes.filter((n) => (inDegree.get(n.id) ?? 0) === 0);
+  const sinks = nodes.filter((n) => (outEdges.get(n.id) ?? []).length === 0);
   if (sources.length === 0) {
-    // Topo check passed but no zero-in-degree node — should only happen on an
-    // empty graph after edge filtering, which we already handled.
     return { ...empty, error: "No source node (every node has an incoming edge)" };
   }
 
+  const nodeById = new Map(nodes.map((n) => [n.id, n] as const));
+
+  // BFS from each source to identify the reachable component.
+  function reachableFrom(rootId: string): Set<string> {
+    const seen = new Set<string>([rootId]);
+    const stack = [rootId];
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      for (const next of outEdges.get(cur) ?? []) {
+        if (!seen.has(next)) {
+          seen.add(next);
+          stack.push(next);
+        }
+      }
+    }
+    return seen;
+  }
+
+  // DAG mode: exactly one source and one sink, and the source's reachable set
+  // contains the sink AND every node in the set has the source as an ancestor.
+  if (sources.length === 1 && sinks.length === 1) {
+    const src = sources[0]!;
+    const sinkId = sinks[0]!.id;
+    const reachable = reachableFrom(src.id);
+    if (reachable.has(sinkId)) {
+      // Topo-order the reachable nodes (Kahn within the reachable subset).
+      const subRemaining = new Map<string, number>();
+      for (const id of reachable) {
+        let count = 0;
+        for (const e of edges) {
+          if (e.target === id && reachable.has(e.source)) count++;
+        }
+        subRemaining.set(id, count);
+      }
+      const subQueue: string[] = [src.id];
+      const topoOrder: string[] = [];
+      while (subQueue.length > 0) {
+        const id = subQueue.shift()!;
+        topoOrder.push(id);
+        for (const next of outEdges.get(id) ?? []) {
+          if (!reachable.has(next)) continue;
+          const r = (subRemaining.get(next) ?? 0) - 1;
+          subRemaining.set(next, r);
+          if (r === 0) subQueue.push(next);
+        }
+      }
+      const topoSet = new Set(topoOrder);
+
+      const topoNodes: ChainTopologyNode[] = topoOrder.map((id) => {
+        const node = nodeById.get(id)!;
+        return {
+          id,
+          label: labelOf(node),
+          cycleTimeMs: distributionOf(node),
+        };
+      });
+      const topoEdges: ChainTopologyEdge[] = edges
+        .filter((e) => topoSet.has(e.source) && topoSet.has(e.target) && e.source !== e.target)
+        .map((e) => ({ source: e.source, target: e.target }));
+
+      const isBranching = topoNodes.some((n) => {
+        const outs = outEdges.get(n.id) ?? [];
+        const ins = nodes.reduce(
+          (acc, m) => acc + (edges.some((e) => e.source === m.id && e.target === n.id) ? 1 : 0),
+          0,
+        );
+        return outs.length > 1 || ins > 1;
+      });
+
+      const cycleDistributions = topoNodes.map((n) => n.cycleTimeMs);
+      const cycleTimes = cycleDistributions.map((d) => meanOf(d));
+      const stationLabels = topoNodes.map((n) => n.label ?? n.id);
+      const skippedNodeIds = nodes.filter((n) => !topoSet.has(n.id)).map((n) => n.id);
+
+      return {
+        chainNodeIds: topoOrder,
+        cycleDistributions,
+        cycleTimes,
+        stationLabels,
+        skippedNodeIds,
+        topology: isBranching ? { nodes: topoNodes, edges: topoEdges } : null,
+        error: null,
+      };
+    }
+  }
+
+  // Fall back to "longest linear path" for graphs that aren't a single-source /
+  // single-sink DAG. Preserves prior behavior (silently picks one chain).
   let bestChain: string[] = [];
   for (const src of sources) {
     const chain: string[] = [src.id];
@@ -127,7 +227,6 @@ export function graphToChainOptions(
       const outs = outEdges.get(cur) ?? [];
       if (outs.length !== 1) break;
       const next = outs[0]!;
-      // Stop on cycles defensively (shouldn't happen post-Kahn, but cheap).
       if (chain.includes(next)) break;
       chain.push(next);
       cur = next;
@@ -139,7 +238,6 @@ export function graphToChainOptions(
     return { ...empty, error: "No usable linear chain found" };
   }
 
-  const nodeById = new Map(nodes.map((n) => [n.id, n] as const));
   const cycleDistributions = bestChain.map((id) => distributionOf(nodeById.get(id)!));
   const cycleTimes = cycleDistributions.map((d) => meanOf(d));
   const stationLabels = bestChain.map((id) => labelOf(nodeById.get(id)!));
@@ -152,6 +250,7 @@ export function graphToChainOptions(
     cycleTimes,
     stationLabels,
     skippedNodeIds,
+    topology: null,
     error: null,
   };
 }

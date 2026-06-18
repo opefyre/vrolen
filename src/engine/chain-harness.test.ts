@@ -331,3 +331,137 @@ describe("runChain — workers (VROL-580)", () => {
     expect(result.laborUtilization!).toBeLessThan(0.3);
   });
 });
+
+describe("runChain — DAG topology (VROL-582)", () => {
+  it("topology mode reproduces a linear chain identically to stationCycleTimes mode", () => {
+    const base = {
+      interStationBufferCapacity: 10,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      stationLabels: ["Filler", "Capper", "Labeler"],
+    };
+    const linear = runChain({
+      ...base,
+      stationCycleTimes: [constant(100), constant(200), constant(100)],
+      prng: new SeededPrng(0xc0ffee),
+    });
+    const dag = runChain({
+      ...base,
+      topology: {
+        nodes: [
+          { id: "a", label: "Filler", cycleTimeMs: constant(100) },
+          { id: "b", label: "Capper", cycleTimeMs: constant(200) },
+          { id: "c", label: "Labeler", cycleTimeMs: constant(100) },
+        ],
+        edges: [
+          { source: "a", target: "b" },
+          { source: "b", target: "c" },
+        ],
+      },
+      prng: new SeededPrng(0xc0ffee),
+    });
+    expect(dag.completed).toBe(linear.completed);
+    expect(dag.perStationCompleted).toEqual(linear.perStationCompleted);
+  });
+
+  it("diamond fixture (Filler → [QC1, QC2] → Packer) runs both branches", () => {
+    // Two QC stations in parallel; total throughput should be ~2x a single 200ms station
+    // (subject to source / sink bottlenecks).
+    const result = runChain({
+      interStationBufferCapacity: 10,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xc0ffee),
+      topology: {
+        nodes: [
+          { id: "filler", label: "Filler", cycleTimeMs: constant(50) },
+          { id: "qc1", label: "QC1", cycleTimeMs: constant(200) },
+          { id: "qc2", label: "QC2", cycleTimeMs: constant(200) },
+          { id: "packer", label: "Packer", cycleTimeMs: constant(50) },
+        ],
+        edges: [
+          { source: "filler", target: "qc1" },
+          { source: "filler", target: "qc2" },
+          { source: "qc1", target: "packer" },
+          { source: "qc2", target: "packer" },
+        ],
+      },
+    });
+    // Both QC stations should have non-zero throughput
+    const perStation = result.perStationCompleted;
+    expect(perStation[0]).toBeGreaterThan(0); // filler
+    expect(perStation[1]).toBeGreaterThan(0); // qc1
+    expect(perStation[2]).toBeGreaterThan(0); // qc2
+    expect(perStation[3]).toBeGreaterThan(0); // packer
+    // Filler must have at least as many completed as QC1+QC2 combined (it feeds them)
+    expect(perStation[0]).toBeGreaterThanOrEqual((perStation[1] ?? 0) + (perStation[2] ?? 0) - 1);
+    // Total at packer should be roughly 2x what a single 200ms station could do over 60s
+    // (single 200ms station = 300 parts/min; diamond should approach 600)
+    expect(result.completed).toBeGreaterThan(450); // generous lower bound
+  });
+
+  it("rejects a topology with no source (every node has an incoming edge)", () => {
+    expect(() =>
+      runChain({
+        interStationBufferCapacity: 10,
+        horizonMs: 10_000,
+        warmupMs: 0,
+        prng: new SeededPrng(),
+        topology: {
+          nodes: [
+            { id: "a", cycleTimeMs: constant(100) },
+            { id: "b", cycleTimeMs: constant(100) },
+          ],
+          edges: [
+            { source: "a", target: "b" },
+            { source: "b", target: "a" },
+          ],
+        },
+      }),
+    ).toThrow(/cycle|source/);
+  });
+
+  it("rejects a topology with multiple sources", () => {
+    expect(() =>
+      runChain({
+        interStationBufferCapacity: 10,
+        horizonMs: 10_000,
+        warmupMs: 0,
+        prng: new SeededPrng(),
+        topology: {
+          nodes: [
+            { id: "a", cycleTimeMs: constant(100) },
+            { id: "b", cycleTimeMs: constant(100) },
+            { id: "c", cycleTimeMs: constant(100) },
+          ],
+          edges: [
+            { source: "a", target: "c" },
+            { source: "b", target: "c" }, // a + b are both sources
+          ],
+        },
+      }),
+    ).toThrow(/source/);
+  });
+
+  it("rejects a topology with multiple sinks", () => {
+    expect(() =>
+      runChain({
+        interStationBufferCapacity: 10,
+        horizonMs: 10_000,
+        warmupMs: 0,
+        prng: new SeededPrng(),
+        topology: {
+          nodes: [
+            { id: "a", cycleTimeMs: constant(100) },
+            { id: "b", cycleTimeMs: constant(100) },
+            { id: "c", cycleTimeMs: constant(100) },
+          ],
+          edges: [
+            { source: "a", target: "b" },
+            { source: "a", target: "c" }, // b + c are both sinks
+          ],
+        },
+      }),
+    ).toThrow(/sink/);
+  });
+});

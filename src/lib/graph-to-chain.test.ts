@@ -130,4 +130,46 @@ describe("graphToChainOptions", () => {
     // mean = (min + mode + max) / 3 = 350/3 ≈ 116.66
     expect(r.cycleTimes[0]).toBeCloseTo(350 / 3, 4);
   });
+
+  it("emits a topology for a diamond DAG (single source, single sink, branching)", () => {
+    // a → b, a → c, b → d, c → d (diamond)
+    const nodes = [
+      node("a", { cycleMs: 50 }),
+      node("b", { cycleMs: 200 }),
+      node("c", { cycleMs: 200 }),
+      node("d", { cycleMs: 50 }),
+    ];
+    const edges = [edge("a", "b"), edge("a", "c"), edge("b", "d"), edge("c", "d")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.topology).not.toBeNull();
+    expect(r.topology!.nodes.map((n) => n.id)).toEqual(["a", "b", "c", "d"]);
+    expect(r.topology!.edges).toEqual([
+      { source: "a", target: "b" },
+      { source: "a", target: "c" },
+      { source: "b", target: "d" },
+      { source: "c", target: "d" },
+    ]);
+    expect(r.skippedNodeIds).toEqual([]);
+  });
+
+  it("emits no topology for a pure linear chain (callers stay on cycleDistributions)", () => {
+    const nodes = [node("a", { cycleMs: 50 }), node("b", { cycleMs: 200 })];
+    const edges = [edge("a", "b")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.topology).toBeNull();
+    expect(r.chainNodeIds).toEqual(["a", "b"]);
+  });
+
+  it("falls back to linear when graph has multiple sinks (engine can't DAG it yet)", () => {
+    // a → b → c, b → d (two sinks: c, d)
+    const nodes = [node("a"), node("b"), node("c"), node("d")];
+    const edges = [edge("a", "b"), edge("b", "c"), edge("b", "d")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.topology).toBeNull();
+    expect(r.chainNodeIds).toEqual(["a", "b"]);
+    expect([...r.skippedNodeIds].sort()).toEqual(["c", "d"]);
+  });
 });

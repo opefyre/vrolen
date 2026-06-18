@@ -29,6 +29,7 @@ import type { EngineEvent } from "./events";
 import type { MaterialId, StationId } from "./ids";
 import { newStationId } from "./ids";
 import { MaterialPool, type MaterialRequirement } from "./material-pool";
+import { MultiInputBuffer, MultiOutputBuffer } from "./multi-buffer";
 import { computeOee, type OeeMetrics } from "./oee";
 import type { Prng } from "./prng";
 import { Scheduler } from "./scheduler";
@@ -161,13 +162,42 @@ export interface ChainMaterialConfig {
   }>;
 }
 
+export interface ChainTopologyNode {
+  /** Stable identifier. Used in `topology.edges` and in error messages. */
+  readonly id: string;
+  /** Optional display label. */
+  readonly label?: string;
+  /** Cycle-time sampling distribution. */
+  readonly cycleTimeMs: Distribution;
+}
+
+export interface ChainTopologyEdge {
+  readonly source: string;
+  readonly target: string;
+}
+
+export interface ChainTopology {
+  readonly nodes: readonly ChainTopologyNode[];
+  readonly edges: readonly ChainTopologyEdge[];
+}
+
 export interface ChainOptions {
-  readonly stationCycleTimes: readonly Distribution[];
+  /**
+   * Linear mode: list of station cycle times. The harness builds an implicit
+   * N-1-edge chain. Ignored when `topology` is provided.
+   */
+  readonly stationCycleTimes?: readonly Distribution[];
+  /**
+   * DAG mode (VROL-582): explicit node + edge list. Single source + single
+   * sink + no cycles enforced; multi-input / multi-output handled via
+   * MultiInputBuffer + MultiOutputBuffer.
+   */
+  readonly topology?: ChainTopology;
   readonly interStationBufferCapacity: number;
   readonly horizonMs: number;
   readonly warmupMs: number;
   readonly prng: Prng;
-  /** Optional labels for each station (matches stationCycleTimes by index). */
+  /** Optional labels for each station (matches stationCycleTimes by index). Ignored in DAG mode. */
   readonly stationLabels?: readonly string[];
   /** Optional material consumption + replenishment configuration. */
   readonly materials?: ChainMaterialConfig;
@@ -177,9 +207,119 @@ export interface ChainOptions {
   readonly workers?: ChainWorkerConfig;
 }
 
+/**
+ * Normalized topology used throughout runChain — every input mode is
+ * collapsed into this shape before wiring executors.
+ */
+interface NormalizedTopology {
+  nodeIds: string[];
+  cycleTimes: Distribution[];
+  labels: (string | undefined)[];
+  /** Edges in input order; each carries source + target as node-array indices. */
+  edges: { sourceIdx: number; targetIdx: number }[];
+  /** For each node index: the indices of nodes it sends parts to. */
+  outgoing: number[][];
+  /** For each node index: the indices of nodes that send parts to it. */
+  incoming: number[][];
+  /** Index of the single source (in-degree 0) node. */
+  sourceIdx: number;
+  /** Index of the single sink (out-degree 0) node. */
+  sinkIdx: number;
+}
+
+function buildTopology(opts: ChainOptions): NormalizedTopology {
+  if (opts.topology) {
+    const { nodes, edges } = opts.topology;
+    if (nodes.length === 0) throw new Error("topology must contain at least one node");
+    const idToIdx = new Map<string, number>();
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i] as ChainTopologyNode;
+      if (idToIdx.has(node.id)) throw new Error(`topology: duplicate node id ${node.id}`);
+      idToIdx.set(node.id, i);
+    }
+    const outgoing: number[][] = nodes.map(() => []);
+    const incoming: number[][] = nodes.map(() => []);
+    const normalizedEdges: { sourceIdx: number; targetIdx: number }[] = [];
+    for (const e of edges) {
+      const s = idToIdx.get(e.source);
+      const t = idToIdx.get(e.target);
+      if (s === undefined) throw new Error(`topology: edge source "${e.source}" not in nodes`);
+      if (t === undefined) throw new Error(`topology: edge target "${e.target}" not in nodes`);
+      if (s === t) continue; // ignore self-loops
+      outgoing[s]!.push(t);
+      incoming[t]!.push(s);
+      normalizedEdges.push({ sourceIdx: s, targetIdx: t });
+    }
+    // Cycle detection via Kahn's algorithm.
+    const remaining = incoming.map((arr) => arr.length);
+    const queue: number[] = [];
+    for (let i = 0; i < remaining.length; i++) if (remaining[i] === 0) queue.push(i);
+    let visited = 0;
+    while (queue.length > 0) {
+      const v = queue.shift()!;
+      visited += 1;
+      for (const t of outgoing[v]!) {
+        remaining[t] = (remaining[t] ?? 0) - 1;
+        if (remaining[t] === 0) queue.push(t);
+      }
+    }
+    if (visited < nodes.length) throw new Error("topology contains a cycle");
+    // Source + sink validation.
+    const sources: number[] = [];
+    const sinks: number[] = [];
+    for (let i = 0; i < nodes.length; i++) {
+      if (incoming[i]!.length === 0) sources.push(i);
+      if (outgoing[i]!.length === 0) sinks.push(i);
+    }
+    if (sources.length !== 1) {
+      throw new Error(
+        `topology requires exactly one source (in-degree 0), found ${String(sources.length)}`,
+      );
+    }
+    if (sinks.length !== 1) {
+      throw new Error(
+        `topology requires exactly one sink (out-degree 0), found ${String(sinks.length)}`,
+      );
+    }
+    return {
+      nodeIds: nodes.map((n) => n.id),
+      cycleTimes: nodes.map((n) => n.cycleTimeMs),
+      labels: nodes.map((n) => n.label),
+      edges: normalizedEdges,
+      outgoing,
+      incoming,
+      sourceIdx: sources[0]!,
+      sinkIdx: sinks[0]!,
+    };
+  }
+  // Linear mode.
+  const times = opts.stationCycleTimes ?? [];
+  if (times.length < 1)
+    throw new Error("chain requires at least 1 station (provide stationCycleTimes or topology)");
+  const n = times.length;
+  const outgoing: number[][] = Array.from({ length: n }, () => []);
+  const incoming: number[][] = Array.from({ length: n }, () => []);
+  const edges: { sourceIdx: number; targetIdx: number }[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    outgoing[i]!.push(i + 1);
+    incoming[i + 1]!.push(i);
+    edges.push({ sourceIdx: i, targetIdx: i + 1 });
+  }
+  return {
+    nodeIds: Array.from({ length: n }, (_, i) => `s${String(i)}`),
+    cycleTimes: [...times],
+    labels: Array.from({ length: n }, (_, i) => opts.stationLabels?.[i]),
+    edges,
+    outgoing,
+    incoming,
+    sourceIdx: 0,
+    sinkIdx: n - 1,
+  };
+}
+
 export function runChain(opts: ChainOptions): ChainResult {
-  const n = opts.stationCycleTimes.length;
-  if (n < 1) throw new Error("chain requires at least 1 station");
+  const topology = buildTopology(opts);
+  const n = topology.nodeIds.length;
 
   const stationIds: StationId[] = Array.from({ length: n }, () => newStationId());
   const stateMachines = stationIds.map((id) => new StationStateMachine(id));
@@ -222,8 +362,8 @@ export function runChain(opts: ChainOptions): ChainResult {
 
   const inputBuffer = new Buffer<TrackedPart>(10_000_000);
   const sinkBuffer = new Buffer<TrackedPart>(10_000_000);
-  const interBuffers: TrackedBuffer<TrackedPart>[] = Array.from(
-    { length: Math.max(0, n - 1) },
+  // One TrackedBuffer per topology edge.
+  const edgeBuffers: TrackedBuffer<TrackedPart>[] = topology.edges.map(
     () => new TrackedBuffer<TrackedPart>(opts.interStationBufferCapacity),
   );
 
@@ -246,20 +386,50 @@ export function runChain(opts: ChainOptions): ChainResult {
     }
   }
 
+  // Build per-node upstream/downstream buffer arrays from the topology.
+  // For each node i:
+  //   - incomingEdgeIdx[i] = indices into edgeBuffers that target node i
+  //   - outgoingEdgeIdx[i] = indices into edgeBuffers that source from node i
+  const incomingEdgeIdx: number[][] = Array.from({ length: n }, () => []);
+  const outgoingEdgeIdx: number[][] = Array.from({ length: n }, () => []);
+  for (let e = 0; e < topology.edges.length; e++) {
+    const edge = topology.edges[e]!;
+    outgoingEdgeIdx[edge.sourceIdx]!.push(e);
+    incomingEdgeIdx[edge.targetIdx]!.push(e);
+  }
+
+  // Helper: build the upstream / downstream buffer (single or multi-aggregating)
+  // for a given node. Source uses inputBuffer; sink uses sinkBuffer. Interior
+  // nodes use their edge buffers (wrapped when there's more than one).
+  function upstreamFor(nodeIdx: number): Buffer<TrackedPart> {
+    if (nodeIdx === topology.sourceIdx) return inputBuffer;
+    const ins = incomingEdgeIdx[nodeIdx]!;
+    if (ins.length === 1) return edgeBuffers[ins[0]!] as TrackedBuffer<TrackedPart>;
+    return new MultiInputBuffer<TrackedPart>(
+      ins.map((idx) => edgeBuffers[idx] as TrackedBuffer<TrackedPart>),
+    );
+  }
+  function downstreamFor(nodeIdx: number): Buffer<TrackedPart> {
+    if (nodeIdx === topology.sinkIdx) return sinkBuffer;
+    const outs = outgoingEdgeIdx[nodeIdx]!;
+    if (outs.length === 1) return edgeBuffers[outs[0]!] as TrackedBuffer<TrackedPart>;
+    return new MultiOutputBuffer<TrackedPart>(
+      outs.map((idx) => edgeBuffers[idx] as TrackedBuffer<TrackedPart>),
+    );
+  }
+
   const executors: CycleExecutor<TrackedPart>[] = [];
   for (let i = 0; i < n; i++) {
-    const upstream = i === 0 ? inputBuffer : (interBuffers[i - 1] as TrackedBuffer<TrackedPart>);
-    const downstream = i === n - 1 ? sinkBuffer : (interBuffers[i] as TrackedBuffer<TrackedPart>);
     const recipe = recipeByStation.get(i);
     const requiredSkills =
       opts.workers?.perStationSkills?.[i] ?? opts.workers?.requireDefault ?? undefined;
     const cfg: CycleConfig<TrackedPart> = {
       stationId: stationIds[i] as StationId,
-      cycleTimeMs: opts.stationCycleTimes[i] as Distribution,
+      cycleTimeMs: topology.cycleTimes[i] as Distribution,
       defectRate: 0,
       capacity: 1,
-      upstream,
-      downstream,
+      upstream: upstreamFor(i),
+      downstream: downstreamFor(i),
       ...(materialPool && recipe?.length ? { materialPool, materialRequirements: recipe } : {}),
       ...(workerPool ? { workerPool, ...(requiredSkills ? { requiredSkills } : {}) } : {}),
     };
@@ -270,8 +440,6 @@ export function runChain(opts: ChainOptions): ChainResult {
       opts.prng,
     );
     executors.push(ex);
-    // Index this executor under every material it consumes (so replenishment
-    // events know which stations to nudge).
     if (recipe?.length) {
       for (const req of recipe) {
         const list = executorsByMaterial.get(req.materialId) ?? [];
@@ -281,21 +449,19 @@ export function runChain(opts: ChainOptions): ChainResult {
     }
   }
 
-  for (const buf of interBuffers) buf.resetTracking(0);
+  for (const buf of edgeBuffers) buf.resetTracking(0);
 
-  // Track exits at the LAST station with real timestamps.
+  // Track exits at the sink station with real timestamps.
   const exits: { part: TrackedPart; exitTimeMs: number }[] = [];
-  const lastExecutor = executors[n - 1];
-  if (!lastExecutor) throw new Error("chain harness invariant: no last executor");
-  lastExecutor.onCompletion((event) => {
+  const sinkExecutor = executors[topology.sinkIdx];
+  if (!sinkExecutor) throw new Error("chain harness invariant: no sink executor");
+  sinkExecutor.onCompletion((event) => {
     exits.push({ part: event.part, exitTimeMs: event.timeMs });
   });
 
   // Refill the input on-demand, ONE part at a time, stamped with the time
-  // station 0 will pull it. This means W (time-in-system) measured at exit
-  // reflects only the part's actual pipeline traversal, not waiting in the
-  // input feed. (An earlier version pre-loaded 100 parts at t=0 and gave
-  // misleading W values for parts deep in the queue.)
+  // the source will pull it. This keeps W (time-in-system) at exit honest —
+  // a pre-loaded queue would give misleading W values for parts deep in it.
   let nextPartId = 0;
   const refillOne = (timeMs: number): void => {
     if (inputBuffer.size === 0) {
@@ -304,20 +470,23 @@ export function runChain(opts: ChainOptions): ChainResult {
   };
   refillOne(0);
 
-  // Cross-station notifications: station i's completion notifies station i+1.
+  // Cross-station notifications via the topology adjacency.
   for (let i = 0; i < n; i++) {
     const ex = executors[i];
-    const next = executors[i + 1];
-    if (!ex || !next) continue;
+    if (!ex) continue;
+    const downstreamNodes = topology.outgoing[i] ?? [];
+    if (downstreamNodes.length === 0) continue;
     ex.onCompletion((event) => {
-      next.onUpstreamAvailable(event.timeMs);
+      for (const downIdx of downstreamNodes) {
+        executors[downIdx]?.onUpstreamAvailable(event.timeMs);
+      }
     });
   }
 
-  // After station 0 finishes a cycle, refill the input BEFORE its attemptStart
-  // tries to pull. (notifyCompletion runs before attemptStart inside
-  // handleCycleComplete, so this slots in correctly.)
-  executors[0]?.onCompletion((event) => {
+  // After the source station finishes a cycle, refill the input BEFORE its
+  // attemptStart tries to pull. (notifyCompletion runs before attemptStart
+  // inside handleCycleComplete, so this slots in correctly.)
+  executors[topology.sourceIdx]?.onCompletion((event) => {
     refillOne(event.timeMs);
   });
 
@@ -375,12 +544,14 @@ export function runChain(opts: ChainOptions): ChainResult {
 
     executor.handleCycleComplete(ev.timeMs);
 
-    // After station idx pulled from interBuffers[idx-1] (in its attemptStart),
-    // station idx-1's downstream just gained space — tell it.
-    const prev = executors[idx - 1];
-    if (prev) prev.onDownstreamCleared(ev.timeMs);
+    // After this station pulled from each of its upstream buffers (inside
+    // attemptStart), each of those upstream stations' downstream just gained
+    // space — notify each.
+    for (const upIdx of topology.incoming[idx] ?? []) {
+      executors[upIdx]?.onDownstreamCleared(ev.timeMs);
+    }
 
-    if (idx === 0) refillOne(ev.timeMs);
+    if (idx === topology.sourceIdx) refillOne(ev.timeMs);
 
     // When workers are configured, releasing one inside handleCycleComplete
     // doesn't notify other stations that have been Starved on no-skill. Nudge
@@ -412,15 +583,14 @@ export function runChain(opts: ChainOptions): ChainResult {
 
   // L — average WIP across the system.
   //
-  // Buffer contribution: TrackedBuffer's analytical time-weighted average.
+  // Buffer contribution: TrackedBuffer's analytical time-weighted average across
+  // every edge.
   // In-flight contribution: assume each station's capacity is fully utilized
   // in steady state on the measurement window. This is exact for a balanced
   // chain where every station stays Running (the canonical Little's Law
-  // fixture); for chains with starvation/blocking this overestimates and a
-  // separate time-weighted-in-flight measurement (VROL-138) would be more
-  // honest. For Phase 0 validation, the steady-state approximation suffices.
+  // fixture); for chains with starvation/blocking this overestimates.
   let bufferWipL = 0;
-  for (const buf of interBuffers) {
+  for (const buf of edgeBuffers) {
     bufferWipL += buf.averageWIP(endTimeMs);
   }
   const inFlightApprox = executors.reduce((s, e) => s + e.config.capacity, 0);
@@ -432,7 +602,7 @@ export function runChain(opts: ChainOptions): ChainResult {
   }
   const bottlenecks = detectBottlenecks(
     stationIds.map((id, i) => {
-      const label = opts.stationLabels?.[i];
+      const label = topology.labels[i];
       const tracker = stateTimeTrackers[i] as StateTimeTracker;
       return label !== undefined ? { stationId: id, label, tracker } : { stationId: id, tracker };
     }),
@@ -461,7 +631,7 @@ export function runChain(opts: ChainOptions): ChainResult {
   const perStationOee: OeeMetrics[] = executors.map((ex, i) =>
     computeOee({
       stateTimeTracker: stateTimeTrackers[i] as StateTimeTracker,
-      idealCycleTimeMs: meanOf(opts.stationCycleTimes[i] as Distribution),
+      idealCycleTimeMs: meanOf(topology.cycleTimes[i] as Distribution),
       goodParts: ex.completed,
       totalParts: ex.completed + ex.scrapped,
     }),
@@ -474,7 +644,7 @@ export function runChain(opts: ChainOptions): ChainResult {
         1 / perStationOee.length,
       )
     : 0;
-  const aggregateBufferWipL = interBuffers.reduce((s, b) => s + b.averageWIP(endTimeMs), 0);
+  const aggregateBufferWipL = edgeBuffers.reduce((s, b) => s + b.averageWIP(endTimeMs), 0);
 
   return {
     completed: exitsInWindow.length,

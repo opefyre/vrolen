@@ -174,8 +174,14 @@ export type {
   ChainMaterialConfig,
   ChainBreakdownConfig,
   ChainWorkerConfig,
+  ChainTopology,
+  ChainTopologyNode,
+  ChainTopologyEdge,
 } from "./chain-harness";
 export { runChain } from "./chain-harness";
+
+// Multi-buffer wrappers (VROL-582) — used by chain-harness for branching graphs.
+export { MultiInputBuffer, MultiOutputBuffer } from "./multi-buffer";
 
 // Material inventory pool (VROL-153). Tracks quantities; consume() is atomic.
 export type { MaterialRequirement } from "./material-pool";

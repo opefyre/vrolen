@@ -337,12 +337,19 @@ function EditorCanvas() {
       try {
         const t0 = performance.now();
         const r = runChain({
-          stationCycleTimes: [...translation.cycleDistributions],
+          // Prefer the DAG topology when the translator surfaced one (split / merge
+          // graphs); otherwise fall through to the linear API so the engine builds
+          // the implicit linear DAG.
+          ...(translation.topology
+            ? { topology: translation.topology }
+            : {
+                stationCycleTimes: [...translation.cycleDistributions],
+                stationLabels: [...translation.stationLabels],
+              }),
           interStationBufferCapacity: settings.interStationBufferCapacity,
           horizonMs: settings.horizonMs,
           warmupMs: Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2)),
           prng: new SeededPrng(settings.seed),
-          stationLabels: [...translation.stationLabels],
           ...(materialsCfg ? { materials: materialsCfg } : {}),
           ...(breakdownsCfg ? { breakdowns: breakdownsCfg } : {}),
           ...(workersCfg ? { workers: workersCfg } : {}),
