@@ -322,6 +322,7 @@ const NODE_TYPES = { station: StationNode };
 // so a normal import is fine.
 import { AnimatedEdge } from "./AnimatedEdge";
 import { Sparkline } from "./Sparkline";
+import { OeeOverTimeChart } from "./OeeOverTimeChart";
 import { ThroughputChart } from "./ThroughputChart";
 const EDGE_TYPES = { animated: AnimatedEdge };
 
@@ -3127,6 +3128,27 @@ function KpiStrip({
         </CardHeader>
         <CardContent>
           <ThroughputChart samples={result.samples} horizonMs={horizonMs} warmupMs={warmupMs} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-heading text-base">Bottleneck state over time</CardTitle>
+          <CardDescription>
+            How the rate-limiting station's state mix evolved across the run (VROL-620).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <OeeOverTimeChart
+            samples={result.samples}
+            stationIdx={result.bottleneckStationIdx}
+            stationLabel={
+              runMeta.stationLabels[result.bottleneckStationIdx] ??
+              `Station ${String(result.bottleneckStationIdx + 1)}`
+            }
+            horizonMs={horizonMs}
+            warmupMs={warmupMs}
+          />
         </CardContent>
       </Card>
 
