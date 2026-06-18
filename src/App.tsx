@@ -1,4 +1,4 @@
-import { ThemeToggle } from "@/components/ThemeToggle";
+import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,10 +14,7 @@ import DesignTokens from "@/routes/DesignTokens";
 
 function HomePage() {
   return (
-    <main className="bg-background text-foreground flex min-h-screen flex-col items-center justify-center gap-6">
-      <div className="absolute top-4 right-4">
-        <ThemeToggle />
-      </div>
+    <div className="flex h-full flex-col items-center justify-center gap-6 p-8">
       <h1 className="font-heading text-5xl font-bold tracking-tight">Hello Vrolen</h1>
       <p className="text-muted-foreground text-sm tracking-wide">
         Production-line simulator · Phase 0 foundation
@@ -36,20 +33,15 @@ function HomePage() {
           </DialogContent>
         </Dialog>
       </div>
-      <a className="text-muted-foreground text-xs underline" href="/design-tokens">
-        Design tokens
-      </a>
-    </main>
+    </div>
   );
 }
 
 export default function App() {
-  // Lightweight pathname router — replaced by TanStack Router in VROL-33.
   const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
-
   return (
     <TooltipProvider>
-      {pathname === "/design-tokens" ? <DesignTokens /> : <HomePage />}
+      <AppShell>{pathname === "/design-tokens" ? <DesignTokens /> : <HomePage />}</AppShell>
     </TooltipProvider>
   );
 }
