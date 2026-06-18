@@ -521,6 +521,67 @@ describe("runChain — multi-product mix (VROL-594)", () => {
     expect(result.perProductCompleted).toBeUndefined();
   });
 
+  it("per-product cycle differentiation: 100% B at 4x cycle produces 4x fewer parts than 100% A", () => {
+    // Same station, two runs. The only difference is which single-product mix
+    // is fed in. Throughput should scale inversely with cycle time.
+    const common = {
+      topology: {
+        nodes: [
+          {
+            id: "s0",
+            cycleTimeMs: constant(100),
+            cycleByProduct: {
+              A: constant(100),
+              B: constant(400),
+            },
+          },
+        ],
+        edges: [] as { source: string; target: string }[],
+      },
+      interStationBufferCapacity: 10,
+      horizonMs: 60_000,
+      warmupMs: 0,
+    };
+    const runA = runChain({
+      ...common,
+      prng: new SeededPrng(0xc0ffee),
+      products: { products: [{ id: "A", weight: 1 }] },
+    });
+    const runB = runChain({
+      ...common,
+      prng: new SeededPrng(0xc0ffee),
+      products: { products: [{ id: "B", weight: 1 }] },
+    });
+    // A at 100ms over 60s ≈ 600 parts; B at 400ms over 60s ≈ 150 parts.
+    // Ratio (A / B) should be ~4.
+    expect(runA.completed).toBeGreaterThan(runB.completed * 3);
+    expect(runA.completed).toBeLessThan(runB.completed * 5);
+  });
+
+  it("cycleByProduct falls back to cycleTimeMs when no matching productId", () => {
+    // Source emits a single 'X' product, but the cycleByProduct map only has 'Y'.
+    // Should fall back to cycleTimeMs (100ms) and produce normally.
+    const result = runChain({
+      topology: {
+        nodes: [
+          {
+            id: "s0",
+            cycleTimeMs: constant(100),
+            cycleByProduct: { Y: constant(10) },
+          },
+        ],
+        edges: [],
+      },
+      interStationBufferCapacity: 10,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(),
+      products: { products: [{ id: "X", weight: 1 }] },
+    });
+    // Single station, no sink — completed counts as exit from the single node.
+    expect(result.completed).toBeGreaterThan(0);
+  });
+
   it("three-product mix sums to total completion at the sink", () => {
     const result = runChain({
       stationCycleTimes: [constant(50), constant(50)],

@@ -85,6 +85,20 @@ function setupDistributionOf(node: Node): Distribution | undefined {
   return undefined;
 }
 
+function cycleByProductOf(node: Node): Record<string, Distribution> | undefined {
+  const raw = (node.data as { cycleByProduct?: unknown } | undefined)?.cycleByProduct;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, Distribution> = {};
+  let any = false;
+  for (const [productId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (isDistribution(value)) {
+      out[productId] = value;
+      any = true;
+    }
+  }
+  return any ? out : undefined;
+}
+
 function maintenanceWindowsOf(node: Node): NodeMaintenanceWindow[] {
   const raw = (node.data as { maintenanceWindows?: unknown } | undefined)?.maintenanceWindows;
   if (!Array.isArray(raw)) return [];
@@ -214,11 +228,13 @@ export function graphToChainOptions(
       const topoNodes: ChainTopologyNode[] = topoOrder.map((id) => {
         const node = nodeById.get(id)!;
         const setup = setupDistributionOf(node);
+        const byProduct = cycleByProductOf(node);
         return {
           id,
           label: labelOf(node),
           cycleTimeMs: distributionOf(node),
           ...(setup ? { setupTimeMs: setup } : {}),
+          ...(byProduct ? { cycleByProduct: byProduct } : {}),
         };
       });
       const topoEdges: ChainTopologyEdge[] = edges

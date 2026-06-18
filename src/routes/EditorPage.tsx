@@ -36,6 +36,7 @@ import {
   CircleDot,
   Combine,
   ConciergeBell,
+  Download,
   Factory,
   FolderOpen,
   Package,
@@ -76,6 +77,12 @@ import {
   runChain,
   SeededPrng,
 } from "@/engine";
+import {
+  chainResultToCsv,
+  chainResultToJsonString,
+  downloadFile,
+  suggestedFilenameStem,
+} from "@/lib/export-run";
 import { graphToChainOptions } from "@/lib/graph-to-chain";
 import {
   deleteScenario,
@@ -539,6 +546,45 @@ function EditorCanvas() {
               <Button variant="outline" size="sm" onClick={handleReset} className="w-full">
                 Reset canvas
               </Button>
+              {result && runMeta ? (
+                <>
+                  <div className="border-border my-2 border-t" />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full gap-2"
+                    onClick={() => {
+                      const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
+                      downloadFile(
+                        `${stem}.json`,
+                        chainResultToJsonString(result),
+                        "application/json",
+                      );
+                      toast.success("Downloaded JSON");
+                    }}
+                  >
+                    <Download className="h-4 w-4" />
+                    Download JSON
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full gap-2"
+                    onClick={() => {
+                      const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
+                      downloadFile(
+                        `${stem}.csv`,
+                        chainResultToCsv(result, { stationLabels: runMeta.stationLabels }),
+                        "text/csv",
+                      );
+                      toast.success("Downloaded CSV");
+                    }}
+                  >
+                    <Download className="h-4 w-4" />
+                    Download CSV
+                  </Button>
+                </>
+              ) : null}
             </div>
           </CardContent>
         </Card>
@@ -626,6 +672,20 @@ function EditorCanvas() {
                   updateSelectedNodeData({ setupDistribution: d ?? undefined });
                 }}
               />
+              {settings.products.enabled && settings.products.list.length > 0 ? (
+                <PerProductCyclesEditor
+                  products={settings.products.list}
+                  value={
+                    (selectedNode.data as { cycleByProduct?: Record<string, Distribution> })
+                      .cycleByProduct ?? {}
+                  }
+                  onChange={(next) => {
+                    updateSelectedNodeData({
+                      cycleByProduct: Object.keys(next).length > 0 ? next : undefined,
+                    });
+                  }}
+                />
+              ) : null}
               <MaintenanceWindowsEditor
                 value={
                   Array.isArray(
@@ -1558,6 +1618,61 @@ function SkillsField({
         </div>
       ) : null}
       {helpText ? <p className="text-muted-foreground text-xs">{helpText}</p> : null}
+    </div>
+  );
+}
+
+function PerProductCyclesEditor({
+  products,
+  value,
+  onChange,
+}: {
+  products: readonly { id: string; name: string; weight: number }[];
+  value: Record<string, Distribution>;
+  onChange: (next: Record<string, Distribution>) => void;
+}) {
+  return (
+    <div className="border-border space-y-2 rounded-md border border-dashed p-3">
+      <div className="text-xs font-medium">Per-product cycle overrides</div>
+      <p className="text-muted-foreground text-xs">
+        When a part of the listed product arrives, this distribution overrides the default cycle
+        time above. Toggle off to use the default for that product.
+      </p>
+      {products.map((p) => {
+        const enabled = p.id in value;
+        const dist = value[p.id];
+        return (
+          <div key={p.id} className="border-border space-y-2 rounded-md border p-2">
+            <label className="flex items-center gap-2 text-xs font-medium">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    onChange({ ...value, [p.id]: constant(100) });
+                  } else {
+                    const next = { ...value };
+                    delete next[p.id];
+                    onChange(next);
+                  }
+                }}
+                className="accent-sim-running h-4 w-4"
+              />
+              <span>
+                {p.id} <span className="text-muted-foreground">— {p.name}</span>
+              </span>
+            </label>
+            {enabled && dist ? (
+              <DistributionEditor
+                value={dist}
+                onChange={(d) => {
+                  onChange({ ...value, [p.id]: d });
+                }}
+              />
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }

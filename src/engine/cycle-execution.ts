@@ -39,6 +39,14 @@ import type { WorkerPool } from "./worker-pool";
 export interface CycleConfig<P> {
   readonly stationId: StationId;
   readonly cycleTimeMs: Distribution;
+  /**
+   * Optional per-part cycle-distribution override. Takes precedence over
+   * cycleTimeMs when set. Used by chain-harness for per-product per-station
+   * cycle distributions (VROL-595): each cycle samples the distribution
+   * returned for the specific part. Falls back to cycleTimeMs when this
+   * returns undefined (e.g., the part has no productId or no override).
+   */
+  readonly cycleTimeFor?: (part: P) => Distribution | undefined;
   /** [0, 1]. Probability that a completed part is defective and scrapped (vs pushed downstream). */
   readonly defectRate: number;
   /** Maximum number of simultaneously in-progress parts. */
@@ -200,7 +208,8 @@ export class CycleExecutor<P> {
       const setupMs = this.config.setupTimeMs
         ? sample(this.config.setupTimeMs, this.prng, { min: 0 })
         : 0;
-      const cycleTimeMs = sample(this.config.cycleTimeMs, this.prng, { min: 0 });
+      const partDistribution = this.config.cycleTimeFor?.(part) ?? this.config.cycleTimeMs;
+      const cycleTimeMs = sample(partDistribution, this.prng, { min: 0 });
       const completeAt = timeMs + setupMs + cycleTimeMs;
 
       this.inFlight.push({

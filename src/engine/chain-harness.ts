@@ -214,8 +214,14 @@ export interface ChainTopologyNode {
   readonly id: string;
   /** Optional display label. */
   readonly label?: string;
-  /** Cycle-time sampling distribution. */
+  /** Cycle-time sampling distribution. Used as the default when no per-product override applies. */
   readonly cycleTimeMs: Distribution;
+  /**
+   * Optional per-product cycle-distribution overrides (VROL-595). When a part
+   * with a productId arrives, the harness looks up cycleByProduct[productId]
+   * and uses it instead of cycleTimeMs. Missing entries fall back to cycleTimeMs.
+   */
+  readonly cycleByProduct?: Record<string, Distribution>;
   /**
    * Optional per-cycle setup / changeover time. When set, the station goes
    * Idle → Setup → Running for each cycle. Defaults to no setup.
@@ -270,6 +276,7 @@ export interface ChainOptions {
 interface NormalizedTopology {
   nodeIds: string[];
   cycleTimes: Distribution[];
+  cyclesByProduct: (Record<string, Distribution> | undefined)[];
   setupTimes: (Distribution | undefined)[];
   labels: (string | undefined)[];
   /** Edges in input order; each carries source + target as node-array indices. */
@@ -341,6 +348,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     return {
       nodeIds: nodes.map((n) => n.id),
       cycleTimes: nodes.map((n) => n.cycleTimeMs),
+      cyclesByProduct: nodes.map((n) => n.cycleByProduct),
       setupTimes: nodes.map((n) => n.setupTimeMs),
       labels: nodes.map((n) => n.label),
       edges: normalizedEdges,
@@ -366,6 +374,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
   return {
     nodeIds: Array.from({ length: n }, (_, i) => `s${String(i)}`),
     cycleTimes: [...times],
+    cyclesByProduct: Array.from({ length: n }, () => undefined),
     setupTimes: Array.from({ length: n }, () => undefined),
     labels: Array.from({ length: n }, (_, i) => opts.stationLabels?.[i]),
     edges,
@@ -496,6 +505,11 @@ export function runChain(opts: ChainOptions): ChainResult {
     const requiredSkills =
       opts.workers?.perStationSkills?.[i] ?? opts.workers?.requireDefault ?? undefined;
     const setupTimeMs = topology.setupTimes[i];
+    const cycleByProduct = topology.cyclesByProduct[i];
+    const cycleTimeFor: ((part: TrackedPart) => Distribution | undefined) | undefined =
+      cycleByProduct
+        ? (part) => (part.productId !== undefined ? cycleByProduct[part.productId] : undefined)
+        : undefined;
     const cfg: CycleConfig<TrackedPart> = {
       stationId: stationIds[i] as StationId,
       cycleTimeMs: topology.cycleTimes[i] as Distribution,
@@ -503,6 +517,7 @@ export function runChain(opts: ChainOptions): ChainResult {
       capacity: 1,
       upstream: upstreamFor(i),
       downstream: downstreamFor(i),
+      ...(cycleTimeFor ? { cycleTimeFor } : {}),
       ...(setupTimeMs ? { setupTimeMs } : {}),
       ...(materialPool && recipe?.length ? { materialPool, materialRequirements: recipe } : {}),
       ...(workerPool ? { workerPool, ...(requiredSkills ? { requiredSkills } : {}) } : {}),
