@@ -67,6 +67,31 @@ function fakeResult(): ChainResult {
   };
 }
 
+function fakeSamples(): import("@/engine").TimeseriesSample[] {
+  return [
+    {
+      tMs: 1_000,
+      lineCompleted: 5,
+      perStationCompleted: [10, 5],
+      perEdgeBufferFill: [3, 0],
+      perStationStateMs: [
+        { Running: 800, Idle: 200 },
+        { Running: 700, Starved: 300 },
+      ],
+    },
+    {
+      tMs: 2_000,
+      lineCompleted: 12,
+      perStationCompleted: [20, 12],
+      perEdgeBufferFill: [4, 1],
+      perStationStateMs: [
+        { Running: 1_700, Idle: 300 },
+        { Running: 1_500, Starved: 500 },
+      ],
+    },
+  ];
+}
+
 describe("export-run", () => {
   it("chainResultToJsonString round-trips via JSON.parse", () => {
     const result = fakeResult();
@@ -120,5 +145,48 @@ describe("export-run", () => {
 
   it("suggestedFilenameStem falls back to vrolen-run for empty label", () => {
     expect(suggestedFilenameStem(undefined)).toMatch(/^vrolen-run-/);
+  });
+
+  it("samples-mode emits header + one row per (sample, station) (VROL-623)", () => {
+    const result: ChainResult = { ...fakeResult(), samples: fakeSamples() };
+    const csv = chainResultToCsv(result, {
+      stationLabels: ["Filler", "Capper"],
+      mode: "samples",
+    });
+    const lines = csv.split("\n");
+    // 1 header + 2 samples * 2 stations = 5 lines
+    expect(lines).toHaveLength(5);
+    expect(lines[0]).toMatch(/^tMs,station,completed,/);
+    // First data row corresponds to the first sample's Filler station.
+    expect(lines[1]).toMatch(/^1000,Filler,10,/);
+    expect(lines[2]).toMatch(/^1000,Capper,5,/);
+    expect(lines[3]).toMatch(/^2000,Filler,20,/);
+    expect(lines[4]).toMatch(/^2000,Capper,12,/);
+  });
+
+  it("samples-mode header includes [state]Ms columns for every observed state (VROL-623)", () => {
+    const result: ChainResult = { ...fakeResult(), samples: fakeSamples() };
+    const csv = chainResultToCsv(result, {
+      stationLabels: ["Filler", "Capper"],
+      mode: "samples",
+    });
+    const header = csv.split("\n")[0] ?? "";
+    // Across both stations, the observed states are Idle, Running, Starved.
+    expect(header).toContain("IdleMs");
+    expect(header).toContain("RunningMs");
+    expect(header).toContain("StarvedMs");
+    // Plus edge fill columns (2 edges in fakeSamples).
+    expect(header).toContain("edge0Fill");
+    expect(header).toContain("edge1Fill");
+  });
+
+  it("stations-mode output is unchanged byte-for-byte after VROL-623 (regression)", () => {
+    const result = fakeResult();
+    const before = [
+      "label,completed,scrapped,runningPct,primaryReason,primaryReasonPct,oee,availability,performance,quality",
+      "Filler,120,0,0.5,blocking,0.45,0.5,1,0.5,1",
+      "Capper,100,0,0.98,running,0.98,0.98,1,0.98,1",
+    ].join("\n");
+    expect(chainResultToCsv(result, { stationLabels: ["Filler", "Capper"] })).toBe(before);
   });
 });

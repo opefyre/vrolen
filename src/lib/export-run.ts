@@ -28,11 +28,34 @@ function mapAwareReplacer(_key: string, value: unknown): unknown {
 }
 
 /**
+ * CSV export mode (VROL-623).
+ *
+ * - "stations" (default) — one row per station with end-of-run KPIs. Original
+ *   format from VROL-596; unchanged byte-for-byte.
+ * - "samples" — one row per (sample, station) with per-state ms + completed
+ *   counts + per-edge buffer fills. For taking the sampled timeseries into a
+ *   notebook / Excel.
+ */
+export type CsvMode = "stations" | "samples";
+
+interface ChainResultToCsvOptions extends RunExportMeta {
+  readonly mode?: CsvMode;
+}
+
+/**
  * Build a per-station CSV summary. One header row, then one row per station.
  * Columns: label, completed, scrapped, runningPct, primaryReason,
  * primaryReasonPct, oee, availability, performance, quality.
+ *
+ * In "samples" mode (VROL-623), emits a wide per-sample-per-station table
+ * with state-ms + buffer-fill columns instead. Header columns: tMs, station,
+ * completed, [state]Ms columns (sorted), [edge#]Fill columns. Empty-samples
+ * → header-only output.
  */
-export function chainResultToCsv(result: ChainResult, meta: RunExportMeta): string {
+export function chainResultToCsv(result: ChainResult, meta: ChainResultToCsvOptions): string {
+  if (meta.mode === "samples") {
+    return chainSamplesToCsv(result, meta);
+  }
   const headers = [
     "label",
     "completed",
@@ -70,6 +93,49 @@ export function chainResultToCsv(result: ChainResult, meta: RunExportMeta): stri
         fmt(oee?.quality ?? 0),
       ].join(","),
     );
+  }
+  return lines.join("\n");
+}
+
+/**
+ * VROL-623 — samples-mode CSV. One row per (sample, station). Wide columns
+ * for every state observed in any sample (alphabetically sorted) + every
+ * edge's buffer fill at that sample.
+ */
+function chainSamplesToCsv(result: ChainResult, meta: RunExportMeta): string {
+  // Collect the union of state names that appear in ANY sample. Alphabetically
+  // sorted so column ordering is deterministic across runs.
+  const stateSet = new Set<string>();
+  for (const s of result.samples) {
+    for (const stateMs of s.perStationStateMs) {
+      for (const k of Object.keys(stateMs)) stateSet.add(k);
+    }
+  }
+  const stateColumns = [...stateSet].sort();
+  const edgeColumns = result.samples[0]?.perEdgeBufferFill.length ?? 0;
+  const headers = [
+    "tMs",
+    "station",
+    "completed",
+    ...stateColumns.map((s) => `${s}Ms`),
+    ...Array.from({ length: edgeColumns }, (_, i) => `edge${String(i)}Fill`),
+  ];
+  const lines: string[] = [headers.join(",")];
+  for (const sample of result.samples) {
+    const N = sample.perStationCompleted.length;
+    for (let stn = 0; stn < N; stn++) {
+      const label = meta.stationLabels[stn] ?? `Station ${String(stn + 1)}`;
+      const completed = sample.perStationCompleted[stn] ?? 0;
+      const stateMs = sample.perStationStateMs[stn] ?? {};
+      const row = [
+        String(sample.tMs),
+        csvQuote(label),
+        String(completed),
+        ...stateColumns.map((s) => String(stateMs[s] ?? 0)),
+        ...Array.from({ length: edgeColumns }, (_, i) => String(sample.perEdgeBufferFill[i] ?? 0)),
+      ];
+      lines.push(row.join(","));
+    }
   }
   return lines.join("\n");
 }

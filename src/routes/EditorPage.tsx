@@ -995,8 +995,30 @@ function EditorCanvas() {
                     }}
                   >
                     <Download className="h-4 w-4" />
-                    Download CSV
+                    CSV (per station)
                   </Button>
+                  {result.samples.length > 1 ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full gap-2"
+                      onClick={() => {
+                        const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
+                        downloadFile(
+                          `${stem}-samples.csv`,
+                          chainResultToCsv(result, {
+                            stationLabels: runMeta.stationLabels,
+                            mode: "samples",
+                          }),
+                          "text/csv",
+                        );
+                        toast.success("Downloaded timeseries CSV");
+                      }}
+                    >
+                      <Download className="h-4 w-4" />
+                      CSV (timeseries)
+                    </Button>
+                  ) : null}
                 </>
               ) : null}
             </div>
