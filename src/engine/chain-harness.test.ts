@@ -923,3 +923,88 @@ describe("runChain — DAG topology (VROL-582)", () => {
     ).toThrow(/sink/);
   });
 });
+
+describe("runChain — timeseries sampler (VROL-612)", () => {
+  it("sampler off → samples is empty array (zero-cost path)", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(50)],
+      interStationBufferCapacity: 5,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    expect(result.samples).toEqual([]);
+  });
+
+  it("sampler on → emits one sample per intervalMs up to horizonMs", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(50)],
+      interStationBufferCapacity: 5,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(2),
+      sampler: { intervalMs: 1_000 },
+    });
+    // 10s horizon / 1s interval → ticks at 1000, 2000, ..., 10000 = 10 samples.
+    expect(result.samples).toHaveLength(10);
+    expect(result.samples[0]?.tMs).toBe(1_000);
+    expect(result.samples[result.samples.length - 1]?.tMs).toBe(10_000);
+    // Strictly monotone time axis.
+    for (let i = 1; i < result.samples.length; i++) {
+      expect(result.samples[i]?.tMs).toBeGreaterThan(result.samples[i - 1]?.tMs ?? -1);
+    }
+  });
+
+  it("last sample matches end-of-run totals exactly", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(40), constant(40), constant(40)],
+      interStationBufferCapacity: 10,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(3),
+      sampler: { intervalMs: 500 },
+    });
+    const last = result.samples[result.samples.length - 1];
+    expect(last).toBeDefined();
+    expect(last?.lineCompleted).toBe(result.completed);
+    expect(last?.perStationCompleted).toEqual([...result.perStationCompleted]);
+  });
+
+  it("samples before warmupMs are dropped from the published array", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(50)],
+      interStationBufferCapacity: 5,
+      horizonMs: 10_000,
+      warmupMs: 3_000,
+      prng: new SeededPrng(4),
+      sampler: { intervalMs: 1_000 },
+    });
+    // ticks at 3000, 4000, ..., 10000 → 8 samples (3000 included since tMs >= warmupMs).
+    expect(result.samples).toHaveLength(8);
+    expect(result.samples[0]?.tMs).toBe(3_000);
+    // lineCompleted is monotone non-decreasing.
+    for (let i = 1; i < result.samples.length; i++) {
+      expect(result.samples[i]?.lineCompleted).toBeGreaterThanOrEqual(
+        result.samples[i - 1]?.lineCompleted ?? 0,
+      );
+    }
+  });
+
+  it("perStationCompleted is monotone non-decreasing per station across samples", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(50), constant(50)],
+      interStationBufferCapacity: 5,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(5),
+      sampler: { intervalMs: 500 },
+    });
+    for (let s = 1; s < result.samples.length; s++) {
+      const curr = result.samples[s]?.perStationCompleted ?? [];
+      const prev = result.samples[s - 1]?.perStationCompleted ?? [];
+      for (let stn = 0; stn < curr.length; stn++) {
+        expect(curr[stn]).toBeGreaterThanOrEqual(prev[stn] ?? 0);
+      }
+    }
+  });
+});

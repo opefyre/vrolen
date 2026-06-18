@@ -98,6 +98,31 @@ class CountingTrackedBuffer<T> extends TrackedBuffer<T> {
   }
 }
 
+/**
+ * Periodic snapshot of run state (VROL-612). Emitted when ChainOptions.sampler
+ * is configured. tMs is the in-simulation time of the snapshot; lineCompleted
+ * is the cumulative count of parts that have EXITED the system at or before
+ * tMs (filtered against warmupMs); perStationCompleted is each station's own
+ * completed counter at that instant.
+ *
+ * Samples enable time-axis visualisations in the editor (throughput chart,
+ * per-station sparklines) without re-instrumenting every executor.
+ */
+export interface TimeseriesSample {
+  readonly tMs: number;
+  readonly lineCompleted: number;
+  readonly perStationCompleted: readonly number[];
+}
+
+/**
+ * Sampler configuration (VROL-612). Setting intervalMs > 0 turns sampling on;
+ * leaving it undefined / 0 leaves ChainResult.samples empty and adds no
+ * per-tick overhead.
+ */
+export interface ChainSamplerConfig {
+  readonly intervalMs: number;
+}
+
 export interface ChainResult {
   readonly completed: number;
   readonly elapsedMs: number;
@@ -156,6 +181,12 @@ export interface ChainResult {
    * products config was provided.
    */
   readonly perProductCompleted?: ReadonlyMap<string, number>;
+  /**
+   * Timeseries snapshots taken at the sampler's intervalMs (VROL-612). Empty
+   * array when no sampler was configured. Always present so callers can read
+   * `.length === 0` without an undefined check.
+   */
+  readonly samples: readonly TimeseriesSample[];
 }
 
 export interface ChainProductsConfig {
@@ -283,6 +314,12 @@ export interface ChainOptions {
   readonly workers?: ChainWorkerConfig;
   /** Optional product mix at source (VROL-594). When set, every part gets a productId. */
   readonly products?: ChainProductsConfig;
+  /**
+   * Optional timeseries sampler (VROL-612). When set, the harness emits one
+   * TimeseriesSample per intervalMs interval; warmup-period samples are
+   * dropped so chart series line up with the published end-of-run KPIs.
+   */
+  readonly sampler?: ChainSamplerConfig;
 }
 
 /**
@@ -655,9 +692,56 @@ export function runChain(opts: ChainOptions): ChainResult {
   // Kick off — every station attempts to start so Starved transitions fire correctly.
   for (const ex of executors) ex.attemptStart(0);
 
+  // VROL-612 — pre-compute sampler timestamps when the sampler is configured.
+  // Samples land at intervalMs, 2*intervalMs, ... up to horizonMs (inclusive).
+  // tMs values before warmupMs are recorded but flagged so they get dropped
+  // from the published samples array.
+  const samplerIntervalMs = opts.sampler?.intervalMs ?? 0;
+  const sampleTimes: number[] = [];
+  if (samplerIntervalMs > 0) {
+    for (let t = samplerIntervalMs; t <= opts.horizonMs; t += samplerIntervalMs) {
+      sampleTimes.push(t);
+    }
+    // Guarantee a final flush at horizonMs so the last sample's totals match
+    // ChainResult.completed / perStationCompleted exactly.
+    if (sampleTimes.length === 0 || sampleTimes[sampleTimes.length - 1] !== opts.horizonMs) {
+      sampleTimes.push(opts.horizonMs);
+    }
+  }
+  let nextSampleIdx = 0;
+  let exitCursor = 0;
+  let exitsInWindowSoFar = 0;
+  const samples: TimeseriesSample[] = [];
+  const drainSamplesUpTo = (uptoMs: number): void => {
+    while (nextSampleIdx < sampleTimes.length) {
+      const tMs = sampleTimes[nextSampleIdx];
+      if (tMs === undefined || tMs > uptoMs) break;
+      // Advance the running cursor through any exits we've now passed. exits
+      // are pushed in temporal order so this is a single linear sweep total.
+      while (exitCursor < exits.length) {
+        const exit = exits[exitCursor];
+        if (!exit || exit.exitTimeMs > tMs) break;
+        if (exit.exitTimeMs >= opts.warmupMs) exitsInWindowSoFar += 1;
+        exitCursor += 1;
+      }
+      if (tMs >= opts.warmupMs) {
+        samples.push({
+          tMs,
+          lineCompleted: exitsInWindowSoFar,
+          perStationCompleted: executors.map((e) => e.completed),
+        });
+      }
+      nextSampleIdx += 1;
+    }
+  };
+
   while (scheduler.size > 0) {
     const peeked = scheduler.peek();
     if (!peeked || peeked.timeMs > opts.horizonMs) break;
+    // Drain any sampler ticks whose tMs falls before the next event — those
+    // snapshots see executor.completed as of the previous event's outcome,
+    // matching the engine's "discrete event clock" semantics.
+    if (samplerIntervalMs > 0) drainSamplesUpTo(peeked.timeMs - 1);
     const ev = scheduler.popMin();
     if (ev.payload.kind === "material-replenishment") {
       if (!materialPool) continue;
@@ -745,6 +829,11 @@ export function runChain(opts: ChainOptions): ChainResult {
 
   const endTimeMs = opts.horizonMs;
   const measureWindowMs = endTimeMs - opts.warmupMs;
+
+  // Final sampler flush — any tMs ≤ horizonMs that wasn't drained mid-loop
+  // (because no event followed it) gets the end-of-run executor state. This
+  // is the sample whose perStationCompleted equals ChainResult.perStationCompleted.
+  if (samplerIntervalMs > 0) drainSamplesUpTo(endTimeMs);
 
   // Filter exits to those that occurred in the measurement window.
   const exitsInWindow = exits.filter((e) => e.exitTimeMs >= opts.warmupMs);
@@ -854,6 +943,7 @@ export function runChain(opts: ChainOptions): ChainResult {
       const denom = totalCompleted + totalScrapped;
       return denom > 0 ? totalScrapped / denom : 0;
     })(),
+    samples,
     ...(materialFinal ? { materialFinal, replenishmentsFired } : {}),
     ...(breakdownCounts ? { perStationBreakdowns: breakdownCounts } : {}),
     ...(opts.maintenance
