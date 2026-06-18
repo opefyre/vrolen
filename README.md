@@ -2,7 +2,7 @@
 
 Browser-based production-line simulator for industrial engineers and continuous-improvement practitioners. Model multi-line discrete manufacturing — stations, workers, materials, shifts, defects, breakdowns — and simulate locally in your browser via WebAssembly. Visualized as a live isometric factory scene.
 
-> *Model your production line. Press play. Watch the bottleneck.*
+> _Model your production line. Press play. Watch the bottleneck._
 
 ## Status
 
