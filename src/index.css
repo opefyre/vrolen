@@ -2,12 +2,31 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/jetbrains-mono";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: "Geist Variable", sans-serif;
+  --font-mono:
+    "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+
+  /* Simulation state colors — exposed as Tailwind utilities (bg-sim-running, text-sim-down, etc.) */
+  --color-sim-idle: var(--sim-idle);
+  --color-sim-idle-foreground: var(--sim-idle-foreground);
+  --color-sim-setup: var(--sim-setup);
+  --color-sim-setup-foreground: var(--sim-setup-foreground);
+  --color-sim-running: var(--sim-running);
+  --color-sim-running-foreground: var(--sim-running-foreground);
+  --color-sim-blocked: var(--sim-blocked);
+  --color-sim-blocked-foreground: var(--sim-blocked-foreground);
+  --color-sim-starved: var(--sim-starved);
+  --color-sim-starved-foreground: var(--sim-starved-foreground);
+  --color-sim-down: var(--sim-down);
+  --color-sim-down-foreground: var(--sim-down-foreground);
+  --color-sim-maintenance: var(--sim-maintenance);
+  --color-sim-maintenance-foreground: var(--sim-maintenance-foreground);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -81,6 +100,24 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* === Sim state colors — light mode ===
+     Saturation kept moderate so they read as functional indicators, not
+     candy. Pairs each bg color with a foreground that hits WCAG AA contrast. */
+  --sim-idle: oklch(0.85 0.01 240);
+  --sim-idle-foreground: oklch(0.25 0.01 240);
+  --sim-setup: oklch(0.78 0.13 65);
+  --sim-setup-foreground: oklch(0.22 0.05 65);
+  --sim-running: oklch(0.65 0.17 145);
+  --sim-running-foreground: oklch(0.99 0.02 145);
+  --sim-blocked: oklch(0.7 0.16 50);
+  --sim-blocked-foreground: oklch(0.2 0.05 50);
+  --sim-starved: oklch(0.82 0.14 95);
+  --sim-starved-foreground: oklch(0.22 0.05 95);
+  --sim-down: oklch(0.58 0.22 25);
+  --sim-down-foreground: oklch(0.99 0.02 25);
+  --sim-maintenance: oklch(0.62 0.14 240);
+  --sim-maintenance-foreground: oklch(0.99 0.02 240);
 }
 
 .dark {
@@ -115,6 +152,23 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+  /* === Sim state colors — dark mode ===
+     Slightly more saturated than light to remain readable against dark bg. */
+  --sim-idle: oklch(0.5 0.015 240);
+  --sim-idle-foreground: oklch(0.95 0.01 240);
+  --sim-setup: oklch(0.65 0.15 65);
+  --sim-setup-foreground: oklch(0.99 0.02 65);
+  --sim-running: oklch(0.7 0.19 145);
+  --sim-running-foreground: oklch(0.15 0.05 145);
+  --sim-blocked: oklch(0.7 0.18 50);
+  --sim-blocked-foreground: oklch(0.15 0.05 50);
+  --sim-starved: oklch(0.78 0.16 95);
+  --sim-starved-foreground: oklch(0.15 0.05 95);
+  --sim-down: oklch(0.65 0.24 25);
+  --sim-down-foreground: oklch(0.99 0.02 25);
+  --sim-maintenance: oklch(0.68 0.16 240);
+  --sim-maintenance-foreground: oklch(0.99 0.02 240);
 }
 
 @layer base {
