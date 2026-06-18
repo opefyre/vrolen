@@ -57,10 +57,21 @@ export interface CycleConfig<P> {
    * Optional setup/changeover time before each cycle starts. When set, the
    * station goes Idle → Setup → Running instead of directly to Running.
    * The cycle clock starts AFTER setup completes. Use constant(0) or omit to
-   * skip setup entirely. Changeover matrices for product-specific setups are
-   * a follow-up — single-product behavior in Phase 0.
+   * skip setup entirely. See setupTimeFor for product-specific changeover
+   * matrices (VROL-597).
    */
   readonly setupTimeMs?: Distribution;
+  /**
+   * Optional per-transition setup distribution (VROL-597). Called with the
+   * previous part's productId (or undefined for the very first cycle) and
+   * the next part about to start. Takes precedence over setupTimeMs when it
+   * returns a Distribution. Use this to encode a product-changeover matrix:
+   * A→A might be free; A→B might cost 300ms.
+   */
+  readonly setupTimeFor?: (
+    prevProductId: string | undefined,
+    nextPart: P,
+  ) => Distribution | undefined;
   /**
    * Optional material requirements consumed atomically at cycle start. When
    * present + a materialPool is also provided, the executor calls
@@ -105,6 +116,8 @@ export class CycleExecutor<P> {
   private completed_ = 0;
   private scrapped_ = 0;
   private nextPartIdx_ = 0;
+  /** Last completed part's productId — used by setupTimeFor for changeover lookups. */
+  private lastProductId_: string | undefined;
   /** Parts that finished their cycle but couldn't push (downstream was full). Drained when downstream clears. */
   private pendingPush: P[] = [];
   private listeners: CompletionListener<P>[] = [];
@@ -205,9 +218,9 @@ export class CycleExecutor<P> {
 
       // If setup time is configured (and non-zero), spend it in Setup state
       // before the cycle clock starts. Otherwise, go straight to Running.
-      const setupMs = this.config.setupTimeMs
-        ? sample(this.config.setupTimeMs, this.prng, { min: 0 })
-        : 0;
+      const setupDistribution =
+        this.config.setupTimeFor?.(this.lastProductId_, part) ?? this.config.setupTimeMs;
+      const setupMs = setupDistribution ? sample(setupDistribution, this.prng, { min: 0 }) : 0;
       const partDistribution = this.config.cycleTimeFor?.(part) ?? this.config.cycleTimeMs;
       const cycleTimeMs = sample(partDistribution, this.prng, { min: 0 });
       const completeAt = timeMs + setupMs + cycleTimeMs;
@@ -298,6 +311,12 @@ export class CycleExecutor<P> {
     }
 
     const part = entry.part;
+    // Update the changeover memory regardless of whether the part is scrapped
+    // or pushed — the station has now "seen" this product.
+    const partRecord = part as unknown as { productId?: string };
+    if (typeof partRecord.productId === "string") {
+      this.lastProductId_ = partRecord.productId;
+    }
 
     // Maintenance-during-cycle: same Phase-0 scope as breakdown originally had —
     // scrap the part since we can't push from Maintenance state.

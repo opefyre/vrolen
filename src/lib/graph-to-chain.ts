@@ -99,6 +99,29 @@ function cycleByProductOf(node: Node): Record<string, Distribution> | undefined 
   return any ? out : undefined;
 }
 
+function changeoverMatrixOf(node: Node): Record<string, Record<string, Distribution>> | undefined {
+  const raw = (node.data as { changeoverMatrix?: unknown } | undefined)?.changeoverMatrix;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, Record<string, Distribution>> = {};
+  let any = false;
+  for (const [fromId, rowRaw] of Object.entries(raw as Record<string, unknown>)) {
+    if (!rowRaw || typeof rowRaw !== "object" || Array.isArray(rowRaw)) continue;
+    const row: Record<string, Distribution> = {};
+    let rowAny = false;
+    for (const [toId, value] of Object.entries(rowRaw as Record<string, unknown>)) {
+      if (isDistribution(value)) {
+        row[toId] = value;
+        rowAny = true;
+      }
+    }
+    if (rowAny) {
+      out[fromId] = row;
+      any = true;
+    }
+  }
+  return any ? out : undefined;
+}
+
 function maintenanceWindowsOf(node: Node): NodeMaintenanceWindow[] {
   const raw = (node.data as { maintenanceWindows?: unknown } | undefined)?.maintenanceWindows;
   if (!Array.isArray(raw)) return [];
@@ -229,12 +252,14 @@ export function graphToChainOptions(
         const node = nodeById.get(id)!;
         const setup = setupDistributionOf(node);
         const byProduct = cycleByProductOf(node);
+        const matrix = changeoverMatrixOf(node);
         return {
           id,
           label: labelOf(node),
           cycleTimeMs: distributionOf(node),
           ...(setup ? { setupTimeMs: setup } : {}),
           ...(byProduct ? { cycleByProduct: byProduct } : {}),
+          ...(matrix ? { changeoverMatrix: matrix } : {}),
         };
       });
       const topoEdges: ChainTopologyEdge[] = edges

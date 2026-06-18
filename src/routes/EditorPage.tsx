@@ -19,11 +19,14 @@ import {
   BackgroundVariant,
   Controls,
   type Edge,
+  Handle,
   MiniMap,
   type Node,
   type NodeChange,
   type EdgeChange,
+  type NodeProps,
   type OnConnect,
+  Position,
   ReactFlow,
   ReactFlowProvider,
   addEdge,
@@ -111,6 +114,17 @@ interface PaletteItem {
   readonly summary: string;
 }
 
+const STATION_TYPE_ICON: Record<string, typeof Factory> = {
+  machine: Factory,
+  manual: CircleDot,
+  buffer: Boxes,
+  qc: PackageCheck,
+  assembly: Combine,
+  transport: Truck,
+  input: ConciergeBell,
+  output: Wrench,
+};
+
 const PALETTE: readonly PaletteItem[] = [
   { stationType: "machine", label: "Machine", icon: Factory, summary: "Stochastic cycle time" },
   { stationType: "manual", label: "Manual", icon: CircleDot, summary: "Worker-driven" },
@@ -125,21 +139,36 @@ const PALETTE: readonly PaletteItem[] = [
 const INITIAL_NODES: Node[] = [
   {
     id: "n1",
-    type: "default",
+    type: "station",
     position: { x: 80, y: 120 },
-    data: { label: "Filler", cycleDistribution: constant(50), defectRate: 0 },
+    data: {
+      label: "Filler",
+      stationType: "input",
+      cycleDistribution: constant(50),
+      defectRate: 0,
+    },
   },
   {
     id: "n2",
-    type: "default",
+    type: "station",
     position: { x: 320, y: 120 },
-    data: { label: "Capper", cycleDistribution: constant(200), defectRate: 0 },
+    data: {
+      label: "Capper",
+      stationType: "machine",
+      cycleDistribution: constant(200),
+      defectRate: 0,
+    },
   },
   {
     id: "n3",
-    type: "default",
+    type: "station",
     position: { x: 560, y: 120 },
-    data: { label: "Labeler", cycleDistribution: constant(50), defectRate: 0 },
+    data: {
+      label: "Labeler",
+      stationType: "qc",
+      cycleDistribution: constant(50),
+      defectRate: 0,
+    },
   },
 ];
 
@@ -183,6 +212,69 @@ interface RunMeta {
   /** "sourceNodeId arrow targetNodeId" keys, in the order the engine returned them. */
   edgeKeys: string[];
 }
+
+interface StationNodeData {
+  label?: string;
+  stationType?: string;
+  maintenanceWindows?: { startMs: number; endMs: number }[];
+  skills?: string[];
+  setupDistribution?: Distribution;
+  changeoverMatrix?: Record<string, Record<string, Distribution>>;
+  [key: string]: unknown;
+}
+
+function StationNode({ data, selected }: NodeProps) {
+  const d = data as StationNodeData;
+  const Icon = STATION_TYPE_ICON[d.stationType ?? "machine"] ?? Factory;
+  const maintenanceCount = Array.isArray(d.maintenanceWindows) ? d.maintenanceWindows.length : 0;
+  const skillCount = Array.isArray(d.skills) ? d.skills.length : 0;
+  const hasSetup = !!d.setupDistribution;
+  const hasMatrix =
+    d.changeoverMatrix && typeof d.changeoverMatrix === "object"
+      ? Object.keys(d.changeoverMatrix).length > 0
+      : false;
+
+  return (
+    <div
+      className={`border-border bg-card min-w-[140px] rounded-md border px-3 py-2 shadow-sm transition-shadow ${
+        selected ? "ring-foreground/30 ring-2" : ""
+      }`}
+    >
+      <Handle type="target" position={Position.Left} className="!h-3 !w-3" />
+      <div className="flex items-center gap-2">
+        <Icon className="h-4 w-4 shrink-0" />
+        <div className="min-w-0 text-sm font-medium">{d.label ?? "Station"}</div>
+      </div>
+      {maintenanceCount + skillCount + (hasSetup ? 1 : 0) + (hasMatrix ? 1 : 0) > 0 ? (
+        <div className="text-muted-foreground mt-1.5 flex flex-wrap gap-1 text-[10px]">
+          {maintenanceCount > 0 ? (
+            <span className="bg-muted rounded-full px-1.5 py-0.5" title="Maintenance windows">
+              🛠 {maintenanceCount}
+            </span>
+          ) : null}
+          {skillCount > 0 ? (
+            <span className="bg-muted rounded-full px-1.5 py-0.5" title="Required skills">
+              🏷 {skillCount}
+            </span>
+          ) : null}
+          {hasSetup ? (
+            <span className="bg-muted rounded-full px-1.5 py-0.5" title="Setup time configured">
+              ↻
+            </span>
+          ) : null}
+          {hasMatrix ? (
+            <span className="bg-muted rounded-full px-1.5 py-0.5" title="Changeover matrix">
+              ⇄
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      <Handle type="source" position={Position.Right} className="!h-3 !w-3" />
+    </div>
+  );
+}
+
+const NODE_TYPES = { station: StationNode };
 
 function EditorCanvas() {
   const initial = useMemo(() => loadGraph(), []);
@@ -268,9 +360,14 @@ function EditorCanvas() {
       const id = `n${String(nodeIdRef.current++)}`;
       const newNode: Node = {
         id,
-        type: "default",
+        type: "station",
         position,
-        data: { label: item.label, cycleDistribution: constant(100), defectRate: 0 },
+        data: {
+          label: item.label,
+          stationType: item.stationType,
+          cycleDistribution: constant(100),
+          defectRate: 0,
+        },
       };
       setNodes((nds) => nds.concat(newNode));
     },
@@ -598,6 +695,7 @@ function EditorCanvas() {
           <ReactFlow
             nodes={nodes}
             edges={edgesForFlow}
+            nodeTypes={NODE_TYPES}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}

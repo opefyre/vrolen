@@ -227,6 +227,14 @@ export interface ChainTopologyNode {
    * Idle → Setup → Running for each cycle. Defaults to no setup.
    */
   readonly setupTimeMs?: Distribution;
+  /**
+   * Optional changeover matrix (VROL-597). Keyed by previous product id, then
+   * next product id. When a transition matches a cell, that distribution is
+   * used for the setup time of the upcoming cycle instead of setupTimeMs.
+   * Same-product transitions (A→A) typically have a zero-or-missing entry to
+   * model "no changeover needed".
+   */
+  readonly changeoverMatrix?: Record<string, Record<string, Distribution>>;
 }
 
 export interface ChainTopologyEdge {
@@ -278,6 +286,7 @@ interface NormalizedTopology {
   cycleTimes: Distribution[];
   cyclesByProduct: (Record<string, Distribution> | undefined)[];
   setupTimes: (Distribution | undefined)[];
+  changeoverMatrices: (Record<string, Record<string, Distribution>> | undefined)[];
   labels: (string | undefined)[];
   /** Edges in input order; each carries source + target as node-array indices. */
   edges: { sourceIdx: number; targetIdx: number }[];
@@ -350,6 +359,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       cycleTimes: nodes.map((n) => n.cycleTimeMs),
       cyclesByProduct: nodes.map((n) => n.cycleByProduct),
       setupTimes: nodes.map((n) => n.setupTimeMs),
+      changeoverMatrices: nodes.map((n) => n.changeoverMatrix),
       labels: nodes.map((n) => n.label),
       edges: normalizedEdges,
       outgoing,
@@ -376,6 +386,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     cycleTimes: [...times],
     cyclesByProduct: Array.from({ length: n }, () => undefined),
     setupTimes: Array.from({ length: n }, () => undefined),
+    changeoverMatrices: Array.from({ length: n }, () => undefined),
     labels: Array.from({ length: n }, (_, i) => opts.stationLabels?.[i]),
     edges,
     outgoing,
@@ -506,10 +517,19 @@ export function runChain(opts: ChainOptions): ChainResult {
       opts.workers?.perStationSkills?.[i] ?? opts.workers?.requireDefault ?? undefined;
     const setupTimeMs = topology.setupTimes[i];
     const cycleByProduct = topology.cyclesByProduct[i];
+    const changeoverMatrix = topology.changeoverMatrices[i];
     const cycleTimeFor: ((part: TrackedPart) => Distribution | undefined) | undefined =
       cycleByProduct
         ? (part) => (part.productId !== undefined ? cycleByProduct[part.productId] : undefined)
         : undefined;
+    const setupTimeFor:
+      | ((prevId: string | undefined, nextPart: TrackedPart) => Distribution | undefined)
+      | undefined = changeoverMatrix
+      ? (prevId, nextPart) => {
+          if (prevId === undefined || nextPart.productId === undefined) return undefined;
+          return changeoverMatrix[prevId]?.[nextPart.productId];
+        }
+      : undefined;
     const cfg: CycleConfig<TrackedPart> = {
       stationId: stationIds[i] as StationId,
       cycleTimeMs: topology.cycleTimes[i] as Distribution,
@@ -519,6 +539,7 @@ export function runChain(opts: ChainOptions): ChainResult {
       downstream: downstreamFor(i),
       ...(cycleTimeFor ? { cycleTimeFor } : {}),
       ...(setupTimeMs ? { setupTimeMs } : {}),
+      ...(setupTimeFor ? { setupTimeFor } : {}),
       ...(materialPool && recipe?.length ? { materialPool, materialRequirements: recipe } : {}),
       ...(workerPool ? { workerPool, ...(requiredSkills ? { requiredSkills } : {}) } : {}),
     };

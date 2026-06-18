@@ -582,6 +582,77 @@ describe("runChain — multi-product mix (VROL-594)", () => {
     expect(result.completed).toBeGreaterThan(0);
   });
 
+  it("changeover matrix: cross-product transition pays the matrix cost (VROL-597)", () => {
+    // 50/50 mix; same-product A→A and B→B cost 0; cross-product A→B and B→A
+    // cost 500ms each. Compare to a baseline run with no changeover matrix
+    // (everything at default 0ms setup).
+    const common = {
+      interStationBufferCapacity: 10,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      products: {
+        products: [
+          { id: "A", weight: 1 },
+          { id: "B", weight: 1 },
+        ],
+      },
+    };
+    const baseline = runChain({
+      ...common,
+      prng: new SeededPrng(0xcafebabe),
+      topology: {
+        nodes: [{ id: "s0", cycleTimeMs: constant(100) }],
+        edges: [],
+      },
+    });
+    const withMatrix = runChain({
+      ...common,
+      prng: new SeededPrng(0xcafebabe),
+      topology: {
+        nodes: [
+          {
+            id: "s0",
+            cycleTimeMs: constant(100),
+            changeoverMatrix: {
+              A: { B: constant(500) },
+              B: { A: constant(500) },
+            },
+          },
+        ],
+        edges: [],
+      },
+    });
+    // Cross-product setup cost should slow throughput
+    expect(withMatrix.completed).toBeLessThan(baseline.completed);
+    expect(withMatrix.completed).toBeGreaterThan(baseline.completed * 0.3);
+  });
+
+  it("changeover matrix: same-product transitions stay fast", () => {
+    // Same matrix, but the mix is 100% A → A→A transitions only → no cost.
+    const result = runChain({
+      interStationBufferCapacity: 10,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xcafebabe),
+      products: { products: [{ id: "A", weight: 1 }] },
+      topology: {
+        nodes: [
+          {
+            id: "s0",
+            cycleTimeMs: constant(100),
+            changeoverMatrix: {
+              A: { B: constant(500) },
+              B: { A: constant(500) },
+            },
+          },
+        ],
+        edges: [],
+      },
+    });
+    // Same-product never hits the matrix; throughput approximates 1/cycleMs
+    expect(result.completed).toBeGreaterThan(280); // 30000/100 = 300, allow some slack
+  });
+
   it("three-product mix sums to total completion at the sink", () => {
     const result = runChain({
       stationCycleTimes: [constant(50), constant(50)],
