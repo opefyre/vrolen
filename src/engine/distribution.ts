@@ -23,3 +23,19 @@ export type Distribution =
 
 /** Convenience: build a constant Distribution from a plain number. */
 export const constant = (value: number): Distribution => ({ kind: "constant", value });
+
+/** Analytical mean of a Distribution. Used by OEE for ideal cycle time. */
+export function meanOf(d: Distribution): number {
+  switch (d.kind) {
+    case "constant":
+      return d.value;
+    case "uniform":
+      return (d.min + d.max) / 2;
+    case "normal":
+      return d.mean;
+    case "triangular":
+      return (d.min + d.mode + d.max) / 3;
+    case "exponential":
+      return 1 / d.rate;
+  }
+}

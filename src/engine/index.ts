@@ -174,3 +174,10 @@ export { runChain } from "./chain-harness";
 // Material inventory pool (VROL-153). Tracks quantities; consume() is atomic.
 export type { MaterialRequirement } from "./material-pool";
 export { MaterialPool } from "./material-pool";
+
+// Distribution helpers — analytical mean for OEE ideal-cycle-time derivation.
+export { meanOf } from "./distribution";
+
+// OEE + canonical sub-metrics (VROL-138).
+export type { OeeMetrics, OeeInputs } from "./oee";
+export { computeOee } from "./oee";

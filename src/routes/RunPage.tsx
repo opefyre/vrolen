@@ -12,6 +12,7 @@
 import {
   Activity,
   AlertTriangle,
+  Award,
   Dice5,
   Gauge,
   Layers,
@@ -586,6 +587,68 @@ export default function RunPage() {
               hint="per exited part, on average"
             />
           </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="font-heading flex items-center gap-2 text-base">
+                <Award className="h-4 w-4" />
+                OEE per station
+              </CardTitle>
+              <CardDescription>
+                Availability × Performance × Quality. Line OEE (geometric mean):{" "}
+                <span className="font-mono tabular-nums">
+                  {formatNumber(result.lineOee * 100, 1)}%
+                </span>
+                . Aggregate inter-buffer WIP:{" "}
+                <span className="font-mono tabular-nums">
+                  {formatNumber(result.aggregateBufferWipL, 2)}
+                </span>{" "}
+                parts (time-weighted).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-muted-foreground border-border border-b text-left text-xs tracking-wide uppercase">
+                      <th className="py-2 pr-3 font-medium">Station</th>
+                      <th className="px-3 py-2 text-right font-medium">A</th>
+                      <th className="px-3 py-2 text-right font-medium">P</th>
+                      <th className="px-3 py-2 text-right font-medium">Q</th>
+                      <th className="py-2 pl-3 text-right font-medium">OEE</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.perStationOee.map((m, i) => {
+                      const label = `${STATION_BASE_LABELS[i] ?? `Station ${String(i + 1)}`} (${String(config.cycleTimes[i])}ms)`;
+                      return (
+                        <tr key={i} className="border-border/50 border-b last:border-0">
+                          <td className="py-2 pr-3">{label}</td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums">
+                            {formatNumber(m.availability * 100, 1)}%
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums">
+                            {formatNumber(m.performance * 100, 1)}%
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums">
+                            {formatNumber(m.quality * 100, 1)}%
+                          </td>
+                          <td className="py-2 pl-3 text-right font-mono font-semibold tabular-nums">
+                            {formatNumber(m.oee * 100, 1)}%
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-muted-foreground mt-3 text-xs">
+                A = Running / (Running + Down). P = (idealCycle × goodParts) / Running. Q = good /
+                total. Phase 0 chain has no breakdowns + zero defect rate, so A and Q are 1.0 — P
+                moves with throughput, exposing line balance.
+              </p>
+            </CardContent>
+          </Card>
 
           {result.materialFinal ? (
             <Card>

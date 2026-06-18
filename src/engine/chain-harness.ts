@@ -13,8 +13,9 @@
  * fell inside the window — both their entry and exit times are real,
  * recorded at the moment the relevant events fired.
  *
- * The harness is test-only — lives in src/engine/ for type access; not in
- * the public barrel.
+ * Originally test-only; promoted to public API in VROL-573 when the /run
+ * page became the first UI consumer. Material-consumption + replenishment
+ * support landed in VROL-575.
  */
 
 import { detectBottlenecks, type BottleneckCandidate } from "./bottleneck";
@@ -22,10 +23,12 @@ import { Buffer, TrackedBuffer } from "./buffer";
 import type { CycleConfig } from "./cycle-execution";
 import { CycleExecutor } from "./cycle-execution";
 import type { Distribution } from "./distribution";
+import { meanOf } from "./distribution";
 import type { EngineEvent } from "./events";
 import type { MaterialId, StationId } from "./ids";
 import { newStationId } from "./ids";
 import { MaterialPool, type MaterialRequirement } from "./material-pool";
+import { computeOee, type OeeMetrics } from "./oee";
 import type { Prng } from "./prng";
 import { Scheduler } from "./scheduler";
 import { StationStateMachine } from "./state-machine";
@@ -56,6 +59,12 @@ export interface ChainResult {
   readonly materialFinal?: ReadonlyArray<readonly [MaterialId, number]>;
   /** Total replenishment-event count fired during the run. */
   readonly replenishmentsFired?: number;
+  /** Per-station OEE metrics (Availability × Performance × Quality). */
+  readonly perStationOee: readonly OeeMetrics[];
+  /** Line-level OEE — geometric mean of station OEEs (rough proxy until VROL-140 lands). */
+  readonly lineOee: number;
+  /** Aggregate time-weighted WIP across inter-station buffers, taken from TrackedBuffer integrals. */
+  readonly aggregateBufferWipL: number;
 }
 
 export interface ChainMaterialConfig {
@@ -294,6 +303,26 @@ export function runChain(opts: ChainOptions): ChainResult {
       )
     : undefined;
 
+  // Per-station OEE — A × P × Q against the station's own time-in-state breakdown.
+  // Phase 0 chain has defectRate=0, so totalParts = goodParts = perStationCompleted.
+  const perStationOee: OeeMetrics[] = executors.map((ex, i) =>
+    computeOee({
+      stateTimeTracker: stateTimeTrackers[i] as StateTimeTracker,
+      idealCycleTimeMs: meanOf(opts.stationCycleTimes[i] as Distribution),
+      goodParts: ex.completed,
+      totalParts: ex.completed + ex.scrapped,
+    }),
+  );
+  // Geometric mean of per-station OEE — a quick proxy for line OEE until VROL-140
+  // brings a proper line-level rollup with parallel branch handling.
+  const lineOee = perStationOee.length
+    ? Math.pow(
+        perStationOee.reduce((acc, m) => acc * Math.max(m.oee, 1e-12), 1),
+        1 / perStationOee.length,
+      )
+    : 0;
+  const aggregateBufferWipL = interBuffers.reduce((s, b) => s + b.averageWIP(endTimeMs), 0);
+
   return {
     completed: exitsInWindow.length,
     elapsedMs: measureWindowMs,
@@ -302,6 +331,9 @@ export function runChain(opts: ChainOptions): ChainResult {
     avgTimeInSystemW,
     perStationCompleted: executors.map((e) => e.completed),
     bottlenecks,
+    perStationOee,
+    lineOee,
+    aggregateBufferWipL,
     ...(materialFinal ? { materialFinal, replenishmentsFired } : {}),
   };
 }
