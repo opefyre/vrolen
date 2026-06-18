@@ -1,4 +1,12 @@
-import { Factory, LayoutGrid, Palette, PanelLeftClose, PanelLeftOpen, Play } from "lucide-react";
+import {
+  Factory,
+  LayoutGrid,
+  Network,
+  Palette,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Play,
+} from "lucide-react";
 import type { ReactNode } from "react";
 
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -15,6 +23,7 @@ interface NavItem {
 const NAV_ITEMS: readonly NavItem[] = [
   { href: "/", label: "Home", icon: LayoutGrid },
   { href: "/run", label: "Run", icon: Play },
+  { href: "/editor", label: "Editor", icon: Network },
   { href: "/design-tokens", label: "Design tokens", icon: Palette },
 ];
 

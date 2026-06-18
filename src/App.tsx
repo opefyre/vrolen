@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import DesignTokens from "@/routes/DesignTokens";
+import EditorPage from "@/routes/EditorPage";
 import RunPage from "@/routes/RunPage";
 
 function HomePage() {
@@ -63,6 +64,7 @@ export default function App() {
   let page;
   if (pathname === "/design-tokens") page = <DesignTokens />;
   else if (pathname === "/run") page = <RunPage />;
+  else if (pathname === "/editor") page = <EditorPage />;
   else page = <HomePage />;
 
   return (
