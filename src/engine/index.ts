@@ -175,6 +175,7 @@ export type {
   ChainBreakdownConfig,
   ChainMaintenanceConfig,
   ChainWorkerConfig,
+  ChainProductsConfig,
   ChainTopology,
   ChainTopologyNode,
   ChainTopologyEdge,

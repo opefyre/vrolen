@@ -485,6 +485,62 @@ describe("runChain — defect rate KPI (VROL-591)", () => {
   });
 });
 
+describe("runChain — multi-product mix (VROL-594)", () => {
+  it("samples products at the source according to the configured weights", () => {
+    // 60/40 A/B mix; over many parts the observed ratio should match within ~5%.
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(50), constant(50)],
+      interStationBufferCapacity: 10,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xdeadbeef),
+      products: {
+        products: [
+          { id: "A", weight: 60 },
+          { id: "B", weight: 40 },
+        ],
+      },
+    });
+    expect(result.perProductCompleted).toBeDefined();
+    const a = result.perProductCompleted!.get("A") ?? 0;
+    const b = result.perProductCompleted!.get("B") ?? 0;
+    expect(a + b).toBeGreaterThan(0);
+    const total = a + b;
+    expect(Math.abs(a / total - 0.6)).toBeLessThan(0.05);
+    expect(Math.abs(b / total - 0.4)).toBeLessThan(0.05);
+  });
+
+  it("single-product back-compat: omitting products produces no perProductCompleted field", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(),
+    });
+    expect(result.perProductCompleted).toBeUndefined();
+  });
+
+  it("three-product mix sums to total completion at the sink", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(50)],
+      interStationBufferCapacity: 5,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xfeedface),
+      products: {
+        products: [
+          { id: "X", weight: 1 },
+          { id: "Y", weight: 1 },
+          { id: "Z", weight: 1 },
+        ],
+      },
+    });
+    const summed = [...result.perProductCompleted!.values()].reduce((s, n) => s + n, 0);
+    expect(summed).toBe(result.completed);
+  });
+});
+
 describe("runChain — DAG topology (VROL-582)", () => {
   it("topology mode reproduces a linear chain identically to stationCycleTimes mode", () => {
     const base = {

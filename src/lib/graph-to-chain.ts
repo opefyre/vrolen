@@ -21,6 +21,11 @@ import {
   meanOf,
 } from "@/engine";
 
+interface NodeMaintenanceWindow {
+  startMs: number;
+  endMs: number;
+}
+
 export interface GraphToChainResult {
   /** Node ids in chain order (source → sink). Empty when error is set. */
   readonly chainNodeIds: readonly string[];
@@ -42,6 +47,11 @@ export interface GraphToChainResult {
    * Falls back to undefined for pure linear chains (callers use cycleDistributions).
    */
   readonly topology: ChainTopology | null;
+  /**
+   * Per-station maintenance windows in chain order. Empty array if no windows.
+   * Index matches chainNodeIds / cycleDistributions.
+   */
+  readonly maintenanceWindows: ReadonlyArray<readonly NodeMaintenanceWindow[]>;
   /** Set when the graph can't be turned into a chain at all. */
   readonly error: string | null;
 }
@@ -75,6 +85,21 @@ function setupDistributionOf(node: Node): Distribution | undefined {
   return undefined;
 }
 
+function maintenanceWindowsOf(node: Node): NodeMaintenanceWindow[] {
+  const raw = (node.data as { maintenanceWindows?: unknown } | undefined)?.maintenanceWindows;
+  if (!Array.isArray(raw)) return [];
+  const out: NodeMaintenanceWindow[] = [];
+  for (const w of raw) {
+    if (!w || typeof w !== "object") continue;
+    const startMs = Number((w as { startMs?: unknown }).startMs);
+    const endMs = Number((w as { endMs?: unknown }).endMs);
+    if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
+      out.push({ startMs, endMs });
+    }
+  }
+  return out;
+}
+
 function labelOf(node: Node): string {
   const raw = (node.data as { label?: unknown } | undefined)?.label;
   return typeof raw === "string" && raw.length > 0 ? raw : node.id;
@@ -91,6 +116,7 @@ export function graphToChainOptions(
     stationLabels: [],
     skippedNodeIds: [],
     topology: null,
+    maintenanceWindows: [],
     error: null,
   };
   if (nodes.length === 0) {
@@ -212,6 +238,7 @@ export function graphToChainOptions(
       const cycleTimes = cycleDistributions.map((d) => meanOf(d));
       const stationLabels = topoNodes.map((n) => n.label ?? n.id);
       const skippedNodeIds = nodes.filter((n) => !topoSet.has(n.id)).map((n) => n.id);
+      const maintenanceWindows = topoOrder.map((id) => maintenanceWindowsOf(nodeById.get(id)!));
 
       return {
         chainNodeIds: topoOrder,
@@ -220,6 +247,7 @@ export function graphToChainOptions(
         stationLabels,
         skippedNodeIds,
         topology: isBranching ? { nodes: topoNodes, edges: topoEdges } : null,
+        maintenanceWindows,
         error: null,
       };
     }
@@ -251,6 +279,7 @@ export function graphToChainOptions(
   const stationLabels = bestChain.map((id) => labelOf(nodeById.get(id)!));
   const chainSet = new Set(bestChain);
   const skippedNodeIds = nodes.filter((n) => !chainSet.has(n.id)).map((n) => n.id);
+  const maintenanceWindows = bestChain.map((id) => maintenanceWindowsOf(nodeById.get(id)!));
 
   return {
     chainNodeIds: bestChain,
@@ -259,6 +288,7 @@ export function graphToChainOptions(
     stationLabels,
     skippedNodeIds,
     topology: null,
+    maintenanceWindows,
     error: null,
   };
 }

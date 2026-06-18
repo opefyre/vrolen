@@ -80,6 +80,8 @@ class TrackingWorkerPool extends WorkerPool {
 interface TrackedPart {
   readonly id: number;
   readonly enteredSystemAtMs: number;
+  /** Optional product identifier (VROL-594). Undefined for single-product runs. */
+  readonly productId?: string;
 }
 
 /**
@@ -141,6 +143,16 @@ export interface ChainResult {
    * mode, the implicit i → i+1 edges in stationCycleTimes order).
    */
   readonly perEdgeFlowed: readonly number[];
+  /**
+   * Per-product completion counts at the sink (VROL-594). Undefined when no
+   * products config was provided.
+   */
+  readonly perProductCompleted?: ReadonlyMap<string, number>;
+}
+
+export interface ChainProductsConfig {
+  /** Weighted product mix. Weights are normalized; relative sizes are what matter. */
+  readonly products: ReadonlyArray<{ readonly id: string; readonly weight: number }>;
 }
 
 export interface ChainWorkerConfig {
@@ -247,6 +259,8 @@ export interface ChainOptions {
   readonly maintenance?: ChainMaintenanceConfig;
   /** Optional worker pool — stations request workers before each cycle starts. */
   readonly workers?: ChainWorkerConfig;
+  /** Optional product mix at source (VROL-594). When set, every part gets a productId. */
+  readonly products?: ChainProductsConfig;
 }
 
 /**
@@ -513,11 +527,38 @@ export function runChain(opts: ChainOptions): ChainResult {
 
   // Track exits at the sink station with real timestamps.
   const exits: { part: TrackedPart; exitTimeMs: number }[] = [];
+  const perProductCompleted = opts.products ? new Map<string, number>() : undefined;
   const sinkExecutor = executors[topology.sinkIdx];
   if (!sinkExecutor) throw new Error("chain harness invariant: no sink executor");
   sinkExecutor.onCompletion((event) => {
     exits.push({ part: event.part, exitTimeMs: event.timeMs });
+    if (perProductCompleted && event.part.productId !== undefined) {
+      perProductCompleted.set(
+        event.part.productId,
+        (perProductCompleted.get(event.part.productId) ?? 0) + 1,
+      );
+    }
   });
+
+  // Products — when configured, every part is stamped with a productId from a
+  // weighted mix. Cumulative weights for inverse-transform sampling.
+  const productCumulative: { id: string; cum: number }[] = [];
+  if (opts.products && opts.products.products.length > 0) {
+    const totalWeight = opts.products.products.reduce((s, p) => s + Math.max(0, p.weight), 0);
+    let acc = 0;
+    for (const p of opts.products.products) {
+      acc += Math.max(0, p.weight) / Math.max(totalWeight, 1e-12);
+      productCumulative.push({ id: p.id, cum: acc });
+    }
+  }
+  const pickProduct = (): string | undefined => {
+    if (productCumulative.length === 0) return undefined;
+    const r = opts.prng.nextFloat();
+    for (const entry of productCumulative) {
+      if (r <= entry.cum) return entry.id;
+    }
+    return productCumulative[productCumulative.length - 1]!.id;
+  };
 
   // Refill the input on-demand, ONE part at a time, stamped with the time
   // the source will pull it. This keeps W (time-in-system) at exit honest —
@@ -525,7 +566,12 @@ export function runChain(opts: ChainOptions): ChainResult {
   let nextPartId = 0;
   const refillOne = (timeMs: number): void => {
     if (inputBuffer.size === 0) {
-      inputBuffer.push({ id: nextPartId++, enteredSystemAtMs: timeMs });
+      const productId = pickProduct();
+      inputBuffer.push({
+        id: nextPartId++,
+        enteredSystemAtMs: timeMs,
+        ...(productId !== undefined ? { productId } : {}),
+      });
     }
   };
   refillOne(0);
@@ -761,5 +807,6 @@ export function runChain(opts: ChainOptions): ChainResult {
         }
       : {}),
     ...(laborUtilization !== undefined ? { laborUtilization } : {}),
+    ...(perProductCompleted ? { perProductCompleted } : {}),
   };
 }

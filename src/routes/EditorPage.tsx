@@ -65,7 +65,9 @@ import {
   asMaterialId,
   asResourceId,
   type ChainBreakdownConfig,
+  type ChainMaintenanceConfig,
   type ChainMaterialConfig,
+  type ChainProductsConfig,
   type ChainResult,
   type ChainWorkerConfig,
   constant,
@@ -359,6 +361,26 @@ function EditorCanvas() {
       if (Array.isArray(raw)) return raw.filter((s): s is string => typeof s === "string");
       return [];
     });
+    // Build per-station maintenance windows from the translator output.
+    const maintenanceMap = new Map<number, { startMs: number; endMs: number }[]>();
+    translation.maintenanceWindows.forEach((windows, i) => {
+      if (windows.length > 0) {
+        maintenanceMap.set(i, [...windows]);
+      }
+    });
+    const maintenanceCfg: ChainMaintenanceConfig | undefined =
+      maintenanceMap.size > 0 ? { perStationWindows: maintenanceMap } : undefined;
+
+    const productsCfg: ChainProductsConfig | undefined =
+      settings.products.enabled && settings.products.list.length > 0
+        ? {
+            products: settings.products.list.map((p) => ({
+              id: p.id || p.name || "default",
+              weight: Math.max(0, p.weight),
+            })),
+          }
+        : undefined;
+
     const workersCfg: ChainWorkerConfig | undefined =
       settings.workers.enabled && settings.workers.list.length > 0
         ? {
@@ -396,6 +418,8 @@ function EditorCanvas() {
           ...(materialsCfg ? { materials: materialsCfg } : {}),
           ...(breakdownsCfg ? { breakdowns: breakdownsCfg } : {}),
           ...(workersCfg ? { workers: workersCfg } : {}),
+          ...(maintenanceCfg ? { maintenance: maintenanceCfg } : {}),
+          ...(productsCfg ? { products: productsCfg } : {}),
         });
         const wallMs = performance.now() - t0;
         setResult(r);
@@ -600,6 +624,22 @@ function EditorCanvas() {
                 }
                 onChange={(d) => {
                   updateSelectedNodeData({ setupDistribution: d ?? undefined });
+                }}
+              />
+              <MaintenanceWindowsEditor
+                value={
+                  Array.isArray(
+                    (selectedNode.data as { maintenanceWindows?: unknown }).maintenanceWindows,
+                  )
+                    ? ((
+                        selectedNode.data as {
+                          maintenanceWindows: { startMs: number; endMs: number }[];
+                        }
+                      ).maintenanceWindows ?? [])
+                    : []
+                }
+                onChange={(next) => {
+                  updateSelectedNodeData({ maintenanceWindows: next });
                 }}
               />
             </CardContent>
@@ -1041,6 +1081,161 @@ function EditorCanvas() {
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input
                   type="checkbox"
+                  checked={settings.products.enabled}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    setSettings((s) => ({
+                      ...s,
+                      products: { ...s.products, enabled },
+                    }));
+                  }}
+                  className="accent-sim-running h-4 w-4"
+                />
+                <Boxes className="h-4 w-4" />
+                Multi-product mix at source
+              </label>
+              {settings.products.enabled ? (
+                <div className="space-y-2">
+                  {settings.products.list.map((p, idx) => {
+                    const totalWeight = settings.products.list.reduce(
+                      (s, q) => s + Math.max(0, q.weight),
+                      0,
+                    );
+                    const sharePct = totalWeight > 0 ? (p.weight / totalWeight) * 100 : 0;
+                    return (
+                      <div
+                        key={idx}
+                        className="border-border grid grid-cols-[1fr_1fr_80px_auto] items-end gap-2 rounded-md border p-2"
+                      >
+                        <div className="flex flex-col gap-1">
+                          <label
+                            htmlFor={`rs-product-${String(idx)}-id`}
+                            className="text-muted-foreground text-xs font-medium"
+                          >
+                            ID
+                          </label>
+                          <Input
+                            id={`rs-product-${String(idx)}-id`}
+                            type="text"
+                            value={p.id}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setSettings((s) => ({
+                                ...s,
+                                products: {
+                                  ...s.products,
+                                  list: s.products.list.map((q, i) =>
+                                    i === idx ? { ...q, id: v } : q,
+                                  ),
+                                },
+                              }));
+                            }}
+                            className="font-mono text-sm"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label
+                            htmlFor={`rs-product-${String(idx)}-name`}
+                            className="text-muted-foreground text-xs font-medium"
+                          >
+                            Name
+                          </label>
+                          <Input
+                            id={`rs-product-${String(idx)}-name`}
+                            type="text"
+                            value={p.name}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setSettings((s) => ({
+                                ...s,
+                                products: {
+                                  ...s.products,
+                                  list: s.products.list.map((q, i) =>
+                                    i === idx ? { ...q, name: v } : q,
+                                  ),
+                                },
+                              }));
+                            }}
+                            className="text-sm"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label
+                            htmlFor={`rs-product-${String(idx)}-weight`}
+                            className="text-muted-foreground text-xs font-medium"
+                          >
+                            Weight ({sharePct.toFixed(0)}%)
+                          </label>
+                          <Input
+                            id={`rs-product-${String(idx)}-weight`}
+                            type="number"
+                            min={1}
+                            value={p.weight}
+                            onChange={(e) => {
+                              const n = Number(e.target.value);
+                              if (Number.isFinite(n) && n >= 0) {
+                                setSettings((s) => ({
+                                  ...s,
+                                  products: {
+                                    ...s.products,
+                                    list: s.products.list.map((q, i) =>
+                                      i === idx ? { ...q, weight: n } : q,
+                                    ),
+                                  },
+                                }));
+                              }
+                            }}
+                            className="font-mono tabular-nums"
+                          />
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Remove product ${p.name}`}
+                          disabled={settings.products.list.length <= 1}
+                          onClick={() => {
+                            setSettings((s) => ({
+                              ...s,
+                              products: {
+                                ...s.products,
+                                list: s.products.list.filter((_, i) => i !== idx),
+                              },
+                            }));
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    );
+                  })}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => {
+                      const nextLetter = String.fromCharCode(65 + settings.products.list.length);
+                      setSettings((s) => ({
+                        ...s,
+                        products: {
+                          ...s.products,
+                          list: [
+                            ...s.products.list,
+                            { id: nextLetter, name: `Product ${nextLetter}`, weight: 10 },
+                          ],
+                        },
+                      }));
+                    }}
+                  >
+                    Add product
+                  </Button>
+                </div>
+              ) : null}
+            </section>
+
+            <section className="border-border space-y-3 rounded-md border border-dashed p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
                   checked={settings.workers.enabled}
                   onChange={(e) => {
                     const enabled = e.target.checked;
@@ -1367,6 +1562,106 @@ function SkillsField({
   );
 }
 
+function MaintenanceWindowsEditor({
+  value,
+  onChange,
+}: {
+  value: readonly { startMs: number; endMs: number }[];
+  onChange: (next: { startMs: number; endMs: number }[]) => void;
+}) {
+  return (
+    <div className="border-border space-y-2 rounded-md border border-dashed p-3">
+      <div className="text-xs font-medium">Planned maintenance windows</div>
+      {value.length === 0 ? (
+        <p className="text-muted-foreground text-xs">
+          No maintenance planned. Add a window with explicit start + end (ms).
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {value.map((w, idx) => (
+            <li key={idx} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor={`maint-${String(idx)}-start`}
+                  className="text-muted-foreground text-xs font-medium"
+                >
+                  Start (ms)
+                </label>
+                <Input
+                  id={`maint-${String(idx)}-start`}
+                  type="number"
+                  min={0}
+                  step={1000}
+                  value={w.startMs}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    if (Number.isFinite(n) && n >= 0) {
+                      onChange(
+                        value.map((entry, i) =>
+                          i === idx ? { ...entry, startMs: Math.floor(n) } : entry,
+                        ),
+                      );
+                    }
+                  }}
+                  className="font-mono tabular-nums"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor={`maint-${String(idx)}-end`}
+                  className="text-muted-foreground text-xs font-medium"
+                >
+                  End (ms)
+                </label>
+                <Input
+                  id={`maint-${String(idx)}-end`}
+                  type="number"
+                  min={w.startMs + 1}
+                  step={1000}
+                  value={w.endMs}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    if (Number.isFinite(n) && n > w.startMs) {
+                      onChange(
+                        value.map((entry, i) =>
+                          i === idx ? { ...entry, endMs: Math.floor(n) } : entry,
+                        ),
+                      );
+                    }
+                  }}
+                  className="font-mono tabular-nums"
+                />
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`Remove window ${String(idx + 1)}`}
+                onClick={() => {
+                  onChange(value.filter((_, i) => i !== idx));
+                }}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-full"
+        onClick={() => {
+          const last = value[value.length - 1];
+          const start = last ? last.endMs + 5_000 : 10_000;
+          onChange([...value, { startMs: start, endMs: start + 5_000 }]);
+        }}
+      >
+        Add window
+      </Button>
+    </div>
+  );
+}
+
 function SetupTimeEditor({
   value,
   onChange,
@@ -1634,6 +1929,100 @@ function DistributionEditor({
   );
 }
 
+const REASON_HINT: Record<string, string> = {
+  starvation:
+    "upstream isn't feeding it fast enough — speed up the feeder, add buffer capacity, or accept the chain rate.",
+  blocking:
+    "downstream can't keep up — speed up the downstream station, add buffer capacity, or accept the upstream rate.",
+  breakdown: "stochastic failures are dominating — raise MTBF or reduce MTTR.",
+  setup: "setup / changeover overhead is dominating — reduce setup time or batch products.",
+  maintenance: "planned maintenance is dominating — schedule fewer or shorter windows.",
+  idle: "this station hasn't been needed — the chain may be over-provisioned at this point.",
+  running: "this station is running near full capacity.",
+};
+
+function ProductMixCard({ result }: { result: ChainResult }) {
+  const entries = [...(result.perProductCompleted?.entries() ?? [])].sort((a, b) => b[1] - a[1]);
+  const total = entries.reduce((s, [, n]) => s + n, 0);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="font-heading text-base">Product mix at sink</CardTitle>
+        <CardDescription>
+          Per-product completion counts. Compare to the configured intent in the Products section of
+          Run settings.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-2">
+          {entries.map(([productId, n]) => {
+            const pct = total > 0 ? (n / total) * 100 : 0;
+            return (
+              <div key={productId} className="space-y-1">
+                <div className="flex justify-between text-sm">
+                  <span className="text-foreground/80">{productId}</span>
+                  <span className="font-mono tabular-nums">
+                    {n.toLocaleString()} ({pct.toFixed(1)}%)
+                  </span>
+                </div>
+                <div className="bg-muted h-2 overflow-hidden rounded-full">
+                  <div
+                    className="bg-sim-running h-full rounded-full"
+                    style={{ width: `${String(pct)}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function BottleneckExplanationCard({ result }: { result: ChainResult }) {
+  if (result.bottlenecks.length === 0) return null;
+  const sorted = [...result.bottlenecks].sort((a, b) => b.runningPct - a.runningPct);
+  const head = sorted[0];
+  if (!head) return null;
+
+  const fmtPct = (pct: number) => (pct * 100).toLocaleString("en-US", { maximumFractionDigits: 1 });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="font-heading text-base">Bottleneck analysis</CardTitle>
+        <CardDescription>Auto-narrated from the per-station state breakdown.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-2 text-sm">
+          <p>
+            <strong>{head.label ?? String(head.stationId)}</strong> is the constraint —{" "}
+            <span className="font-mono tabular-nums">{fmtPct(head.runningPct)}%</span> of time spent
+            Running. Whatever drives this station's rate caps the line.
+          </p>
+          {sorted.slice(1).map((b) => {
+            const hint = REASON_HINT[b.primaryReason] ?? "";
+            return (
+              <p key={String(b.stationId)} className="text-muted-foreground">
+                <strong className="text-foreground">{b.label ?? String(b.stationId)}</strong> spends{" "}
+                <span className="font-mono tabular-nums">{fmtPct(b.primaryReasonPct)}%</span> in{" "}
+                <span className="font-medium">{b.primaryReason}</span> — {hint}
+              </p>
+            );
+          })}
+          <p className="text-muted-foreground border-border border-t pt-2">
+            <strong className="text-foreground">Recommendation:</strong>{" "}
+            {head.primaryReason === "running"
+              ? `Speed up ${head.label ?? "the bottleneck"} (lower its cycle time) to lift the entire chain. Other stations have idle capacity.`
+              : `Reduce ${head.primaryReason} on ${head.label ?? "the bottleneck"} — that's its dominant non-Running state.`}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function stateColor(state: string): string {
   switch (state) {
     case "Running":
@@ -1721,6 +2110,12 @@ function KpiStrip({ result, runMeta }: { result: ChainResult; runMeta: RunMeta }
           </div>
         </CardContent>
       </Card>
+
+      <BottleneckExplanationCard result={result} />
+
+      {result.perProductCompleted && result.perProductCompleted.size > 0 ? (
+        <ProductMixCard result={result} />
+      ) : null}
 
       <Card>
         <CardHeader>

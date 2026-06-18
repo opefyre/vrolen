@@ -35,6 +35,11 @@ export interface WorkerEntry {
   shiftEndMs: number;
 }
 
+export interface ProductsSettings {
+  enabled: boolean;
+  list: { id: string; name: string; weight: number }[];
+}
+
 export interface WorkersSettings {
   enabled: boolean;
   list: WorkerEntry[];
@@ -56,6 +61,7 @@ export interface RunSettings {
   materials: MaterialsSettings;
   breakdowns: BreakdownsSettings;
   workers: WorkersSettings;
+  products: ProductsSettings;
 }
 
 export const DEFAULT_RUN_SETTINGS: RunSettings = {
@@ -81,6 +87,13 @@ export const DEFAULT_RUN_SETTINGS: RunSettings = {
   workers: {
     enabled: false,
     list: [{ name: "Worker 1", skills: ["any"], shiftEndMs: 60_000 }],
+  },
+  products: {
+    enabled: false,
+    list: [
+      { id: "A", name: "Product A", weight: 60 },
+      { id: "B", name: "Product B", weight: 40 },
+    ],
   },
 };
 
@@ -134,6 +147,22 @@ export function mergeWithDefaults(parsed: Partial<RunSettings>): RunSettings {
     workers: {
       enabled: w.enabled ?? DEFAULT_RUN_SETTINGS.workers.enabled,
       list: migrateWorkerList(w),
+    },
+    products: {
+      enabled: parsed.products?.enabled ?? DEFAULT_RUN_SETTINGS.products.enabled,
+      list:
+        Array.isArray(parsed.products?.list) && parsed.products.list.length > 0
+          ? parsed.products.list
+              .filter(
+                (p): p is { id: string; name: string; weight: number } =>
+                  !!p && typeof p === "object",
+              )
+              .map((p) => ({
+                id: typeof p.id === "string" && p.id.length > 0 ? p.id : "default",
+                name: typeof p.name === "string" && p.name.length > 0 ? p.name : p.id,
+                weight: typeof p.weight === "number" && p.weight > 0 ? p.weight : 1,
+              }))
+          : DEFAULT_RUN_SETTINGS.products.list.slice(),
     },
   };
 }
