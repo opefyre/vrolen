@@ -413,6 +413,57 @@ describe("runChain — workers (VROL-580)", () => {
   });
 });
 
+describe("runChain — line OEE (VROL-610)", () => {
+  it("balanced chain at theoretical capacity → lineOee close to 1.0", () => {
+    // All stations same cycle, no breakdowns / defects. The chain should
+    // operate at ~100% of theoretical throughput after warmup.
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100), constant(100)],
+      interStationBufferCapacity: 10,
+      horizonMs: 60_000,
+      warmupMs: 5_000,
+      prng: new SeededPrng(0xc0ffee),
+      stationLabels: ["A", "B", "C"],
+    });
+    expect(result.lineOee).toBeGreaterThan(0.95);
+    expect(result.lineOee).toBeLessThanOrEqual(1.0);
+  });
+
+  it("bottleneckStationIdx points to the slowest station", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(200), constant(50)],
+      interStationBufferCapacity: 10,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xc0ffee),
+    });
+    expect(result.bottleneckStationIdx).toBe(1);
+    // throughput ≈ 1/200ms; bottleneck cycle = 200 → OEE ≈ 1.0 for steady
+    // state at the bottleneck rate.
+    expect(result.lineOee).toBeGreaterThan(0.9);
+  });
+
+  it("breakdowns drag lineOee below 1.0", () => {
+    const common = {
+      stationCycleTimes: [constant(100), constant(100), constant(100)],
+      interStationBufferCapacity: 10,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      stationLabels: ["A", "B", "C"],
+    };
+    const baseline = runChain({ ...common, prng: new SeededPrng(0xc0ffee) });
+    const withBreakdowns = runChain({
+      ...common,
+      prng: new SeededPrng(0xc0ffee),
+      breakdowns: {
+        mtbfMs: { kind: "exponential", rate: 1 / 5_000 },
+        mttrMs: constant(500),
+      },
+    });
+    expect(withBreakdowns.lineOee).toBeLessThan(baseline.lineOee);
+  });
+});
+
 describe("runChain — maintenance (VROL-589)", () => {
   it("station enters Maintenance during the configured window and exits at the end", () => {
     const result = runChain({

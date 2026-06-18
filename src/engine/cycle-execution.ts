@@ -372,6 +372,7 @@ export class CycleExecutor<P> {
    * the entry's scheduledAt no longer matches the event's timeMs.
    */
   handleRepair(timeMs: number): void {
+    let resumedAny = false;
     for (const entry of this.inFlight) {
       if (!entry.isPaused) continue;
       entry.isPaused = false;
@@ -381,6 +382,15 @@ export class CycleExecutor<P> {
         stationId: this.config.stationId,
         partIndex: entry.partIdx,
       });
+      resumedAny = true;
+    }
+    // If we have resumed work but the state machine just landed on Idle (the
+    // post-repair / post-maintenance state), advance to Running so the
+    // upcoming cycle-complete handler can transition Running → BlockedOut
+    // legally if downstream is full (the Idle → BlockedOut transition isn't
+    // in the table). Skipped when no parts were paused.
+    if (resumedAny && this.stateMachine.state === "Idle") {
+      this.stateMachine.transition("Running", "start-cycle", timeMs);
     }
   }
 

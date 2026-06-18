@@ -120,8 +120,16 @@ export interface ChainResult {
   readonly replenishmentsFired?: number;
   /** Per-station OEE metrics (Availability × Performance × Quality). */
   readonly perStationOee: readonly OeeMetrics[];
-  /** Line-level OEE — geometric mean of station OEEs (rough proxy until VROL-140 lands). */
+  /**
+   * Line-level OEE = actual throughput / theoretical-max throughput, clamped
+   * to [0, 1] (VROL-610 closes VROL-140). Theoretical-max throughput is
+   * 1 / bottleneck-ideal-cycle, where the bottleneck is the station with the
+   * largest mean cycle time. Captures Availability × Performance × Quality
+   * at the chain level for both serial and DAG topologies.
+   */
   readonly lineOee: number;
+  /** Index of the rate-limiting station (largest meanOf(cycleTimeMs)). */
+  readonly bottleneckStationIdx: number;
   /** Aggregate time-weighted WIP across inter-station buffers, taken from TrackedBuffer integrals. */
   readonly aggregateBufferWipL: number;
   /** Per-station breakdown count fired during the run. Undefined when no breakdowns config given. */
@@ -806,14 +814,24 @@ export function runChain(opts: ChainOptions): ChainResult {
       totalParts: ex.completed + ex.scrapped,
     }),
   );
-  // Geometric mean of per-station OEE — a quick proxy for line OEE until VROL-140
-  // brings a proper line-level rollup with parallel branch handling.
-  const lineOee = perStationOee.length
-    ? Math.pow(
-        perStationOee.reduce((acc, m) => acc * Math.max(m.oee, 1e-12), 1),
-        1 / perStationOee.length,
-      )
-    : 0;
+  // Proper line OEE (VROL-610) — actual throughput / theoretical-max
+  // throughput, where the max is set by the bottleneck (largest ideal cycle).
+  // Clamped to [0, 1] so heavy warm-up / short-horizon corner cases (where
+  // a few parts may exit faster than the "ideal" rate due to startup queue)
+  // don't report >100% OEE.
+  let bottleneckIdealCycleMs = 0;
+  let bottleneckStationIdx = 0;
+  topology.cycleTimes.forEach((dist, i) => {
+    const mean = meanOf(dist as Distribution);
+    if (mean > bottleneckIdealCycleMs) {
+      bottleneckIdealCycleMs = mean;
+      bottleneckStationIdx = i;
+    }
+  });
+  const lineOee =
+    bottleneckIdealCycleMs > 0
+      ? Math.min(1, Math.max(0, throughputLambda * bottleneckIdealCycleMs))
+      : 0;
   const aggregateBufferWipL = edgeBuffers.reduce((s, b) => s + b.averageWIP(endTimeMs), 0);
 
   return {
@@ -826,6 +844,7 @@ export function runChain(opts: ChainOptions): ChainResult {
     bottlenecks,
     perStationOee,
     lineOee,
+    bottleneckStationIdx,
     aggregateBufferWipL,
     perEdgeFlowed: edgeBuffers.map((b) => b.flowed),
     perStationScrapped: executors.map((e) => e.scrapped),

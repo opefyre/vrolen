@@ -60,6 +60,7 @@ function fakeResult(): ChainResult {
       },
     ],
     lineOee: 0.7,
+    bottleneckStationIdx: 1,
     aggregateBufferWipL: 2,
     perEdgeFlowed: [120, 100],
   };
