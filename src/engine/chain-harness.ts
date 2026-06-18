@@ -19,11 +19,13 @@
 
 import { detectBottlenecks, type BottleneckCandidate } from "./bottleneck";
 import { Buffer, TrackedBuffer } from "./buffer";
+import type { CycleConfig } from "./cycle-execution";
 import { CycleExecutor } from "./cycle-execution";
 import type { Distribution } from "./distribution";
 import type { EngineEvent } from "./events";
-import type { StationId } from "./ids";
+import type { MaterialId, StationId } from "./ids";
 import { newStationId } from "./ids";
+import { MaterialPool, type MaterialRequirement } from "./material-pool";
 import type { Prng } from "./prng";
 import { Scheduler } from "./scheduler";
 import { StationStateMachine } from "./state-machine";
@@ -46,6 +48,34 @@ export interface ChainResult {
   readonly perStationCompleted: readonly number[];
   /** Bottleneck candidates ranked by time-in-Running descending. */
   readonly bottlenecks: readonly BottleneckCandidate[];
+  /**
+   * Final material quantities at end-of-run, in the order materials were
+   * declared in opts.materials.initialInventory. Undefined when no materials
+   * config was provided.
+   */
+  readonly materialFinal?: ReadonlyArray<readonly [MaterialId, number]>;
+  /** Total replenishment-event count fired during the run. */
+  readonly replenishmentsFired?: number;
+}
+
+export interface ChainMaterialConfig {
+  /** Starting inventory per material. Tuple ordering preserved in the result. */
+  readonly initialInventory: ReadonlyArray<readonly [MaterialId, number]>;
+  /** Per-station recipes — which material a station consumes per part. */
+  readonly stationRecipes: ReadonlyArray<{
+    readonly stationIndex: number;
+    readonly requirements: ReadonlyArray<MaterialRequirement>;
+  }>;
+  /**
+   * Scheduled replenishments. Each fires as a "material-replenishment" event at
+   * its atMs; the harness calls pool.replenish + nudges every executor that
+   * consumes that material.
+   */
+  readonly replenishments?: ReadonlyArray<{
+    readonly materialId: MaterialId;
+    readonly amount: number;
+    readonly atMs: number;
+  }>;
 }
 
 export interface ChainOptions {
@@ -56,6 +86,8 @@ export interface ChainOptions {
   readonly prng: Prng;
   /** Optional labels for each station (matches stationCycleTimes by index). */
   readonly stationLabels?: readonly string[];
+  /** Optional material consumption + replenishment configuration. */
+  readonly materials?: ChainMaterialConfig;
 }
 
 export function runChain(opts: ChainOptions): ChainResult {
@@ -84,24 +116,47 @@ export function runChain(opts: ChainOptions): ChainResult {
     () => new TrackedBuffer<TrackedPart>(opts.interStationBufferCapacity),
   );
 
+  // Materials — optional. Build a single pool that the configured executors share.
+  let materialPool: MaterialPool | undefined;
+  const recipeByStation = new Map<number, ReadonlyArray<MaterialRequirement>>();
+  const executorsByMaterial = new Map<MaterialId, CycleExecutor<TrackedPart>[]>();
+  if (opts.materials) {
+    materialPool = new MaterialPool(opts.materials.initialInventory);
+    for (const r of opts.materials.stationRecipes) {
+      recipeByStation.set(r.stationIndex, r.requirements);
+    }
+  }
+
   const executors: CycleExecutor<TrackedPart>[] = [];
   for (let i = 0; i < n; i++) {
     const upstream = i === 0 ? inputBuffer : (interBuffers[i - 1] as TrackedBuffer<TrackedPart>);
     const downstream = i === n - 1 ? sinkBuffer : (interBuffers[i] as TrackedBuffer<TrackedPart>);
+    const recipe = recipeByStation.get(i);
+    const cfg: CycleConfig<TrackedPart> = {
+      stationId: stationIds[i] as StationId,
+      cycleTimeMs: opts.stationCycleTimes[i] as Distribution,
+      defectRate: 0,
+      capacity: 1,
+      upstream,
+      downstream,
+      ...(materialPool && recipe?.length ? { materialPool, materialRequirements: recipe } : {}),
+    };
     const ex = new CycleExecutor<TrackedPart>(
-      {
-        stationId: stationIds[i] as StationId,
-        cycleTimeMs: opts.stationCycleTimes[i] as Distribution,
-        defectRate: 0,
-        capacity: 1,
-        upstream,
-        downstream,
-      },
+      cfg,
       stateMachines[i] as StationStateMachine,
       scheduler,
       opts.prng,
     );
     executors.push(ex);
+    // Index this executor under every material it consumes (so replenishment
+    // events know which stations to nudge).
+    if (recipe?.length) {
+      for (const req of recipe) {
+        const list = executorsByMaterial.get(req.materialId) ?? [];
+        list.push(ex);
+        executorsByMaterial.set(req.materialId, list);
+      }
+    }
   }
 
   for (const buf of interBuffers) buf.resetTracking(0);
@@ -144,6 +199,18 @@ export function runChain(opts: ChainOptions): ChainResult {
     refillOne(event.timeMs);
   });
 
+  // Schedule any replenishment events declared in the materials config.
+  let replenishmentsFired = 0;
+  if (opts.materials?.replenishments) {
+    for (const rep of opts.materials.replenishments) {
+      scheduler.schedule(rep.atMs, {
+        kind: "material-replenishment",
+        materialId: rep.materialId,
+        amount: rep.amount,
+      });
+    }
+  }
+
   // Kick off — every station attempts to start so Starved transitions fire correctly.
   for (const ex of executors) ex.attemptStart(0);
 
@@ -151,6 +218,16 @@ export function runChain(opts: ChainOptions): ChainResult {
     const peeked = scheduler.peek();
     if (!peeked || peeked.timeMs > opts.horizonMs) break;
     const ev = scheduler.popMin();
+    if (ev.payload.kind === "material-replenishment") {
+      if (!materialPool) continue;
+      materialPool.replenish(ev.payload.materialId, ev.payload.amount);
+      replenishmentsFired += 1;
+      const affected = executorsByMaterial.get(ev.payload.materialId);
+      if (affected) {
+        for (const ex of affected) ex.onUpstreamAvailable(ev.timeMs);
+      }
+      continue;
+    }
     if (ev.payload.kind !== "cycle-complete") continue;
     const idx = stationIds.indexOf(ev.payload.stationId);
     if (idx === -1) continue;
@@ -211,6 +288,12 @@ export function runChain(opts: ChainOptions): ChainResult {
     }),
   );
 
+  const materialFinal: Array<readonly [MaterialId, number]> | undefined = opts.materials
+    ? opts.materials.initialInventory.map(
+        ([id]) => [id, materialPool ? materialPool.quantity(id) : 0] as const,
+      )
+    : undefined;
+
   return {
     completed: exitsInWindow.length,
     elapsedMs: measureWindowMs,
@@ -219,5 +302,6 @@ export function runChain(opts: ChainOptions): ChainResult {
     avgTimeInSystemW,
     perStationCompleted: executors.map((e) => e.completed),
     bottlenecks,
+    ...(materialFinal ? { materialFinal, replenishmentsFired } : {}),
   };
 }

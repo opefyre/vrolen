@@ -15,6 +15,7 @@ import {
   Dice5,
   Gauge,
   Layers,
+  Package,
   Play,
   RotateCcw,
   Timer,
@@ -24,14 +25,34 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { constant, type ChainResult, runChain, SeededPrng } from "@/engine";
+import {
+  asMaterialId,
+  type ChainMaterialConfig,
+  type ChainResult,
+  constant,
+  MaterialPool,
+  runChain,
+  SeededPrng,
+} from "@/engine";
 import { toast } from "@/lib/toast";
+
+interface MaterialsConfig {
+  enabled: boolean;
+  bottles: number;
+  caps: number;
+  replenishment: {
+    enabled: boolean;
+    atMs: number;
+    amount: number;
+  };
+}
 
 interface RunConfig {
   cycleTimes: [number, number, number];
   horizonMs: number;
   warmupMs: number;
   seed: number;
+  materials: MaterialsConfig;
 }
 
 const DEFAULT_CONFIG: RunConfig = {
@@ -39,7 +60,20 @@ const DEFAULT_CONFIG: RunConfig = {
   horizonMs: 60_000,
   warmupMs: 5_000,
   seed: 0xc0ffee,
+  materials: {
+    enabled: false,
+    bottles: 1000,
+    caps: 1000,
+    replenishment: {
+      enabled: false,
+      atMs: 10_000,
+      amount: 500,
+    },
+  },
 };
+
+const BOTTLES_ID = asMaterialId("bottles");
+const CAPS_ID = asMaterialId("caps");
 
 const STORAGE_KEY = "vrolen.run-page-fixture";
 
@@ -51,6 +85,7 @@ function loadConfig(): RunConfig {
     const raw = window.localStorage?.getItem?.(STORAGE_KEY);
     if (!raw) return DEFAULT_CONFIG;
     const parsed = JSON.parse(raw) as Partial<RunConfig>;
+    const materialsParsed = parsed.materials ?? DEFAULT_CONFIG.materials;
     return {
       cycleTimes: (parsed.cycleTimes && parsed.cycleTimes.length === 3
         ? parsed.cycleTimes
@@ -58,6 +93,19 @@ function loadConfig(): RunConfig {
       horizonMs: parsed.horizonMs ?? DEFAULT_CONFIG.horizonMs,
       warmupMs: parsed.warmupMs ?? DEFAULT_CONFIG.warmupMs,
       seed: parsed.seed ?? DEFAULT_CONFIG.seed,
+      materials: {
+        enabled: materialsParsed.enabled ?? DEFAULT_CONFIG.materials.enabled,
+        bottles: materialsParsed.bottles ?? DEFAULT_CONFIG.materials.bottles,
+        caps: materialsParsed.caps ?? DEFAULT_CONFIG.materials.caps,
+        replenishment: {
+          enabled:
+            materialsParsed.replenishment?.enabled ??
+            DEFAULT_CONFIG.materials.replenishment.enabled,
+          atMs: materialsParsed.replenishment?.atMs ?? DEFAULT_CONFIG.materials.replenishment.atMs,
+          amount:
+            materialsParsed.replenishment?.amount ?? DEFAULT_CONFIG.materials.replenishment.amount,
+        },
+      },
     };
   } catch {
     return DEFAULT_CONFIG;
@@ -211,6 +259,34 @@ export default function RunPage() {
         const labels = STATION_BASE_LABELS.map(
           (l, i) => `${l} (${String(config.cycleTimes[i])}ms)`,
         );
+        const materialsCfg: ChainMaterialConfig | undefined = config.materials.enabled
+          ? {
+              initialInventory: [
+                [BOTTLES_ID, config.materials.bottles],
+                [CAPS_ID, config.materials.caps],
+              ],
+              stationRecipes: [
+                {
+                  stationIndex: 1, // Capper consumes the recipe
+                  requirements: [
+                    { materialId: BOTTLES_ID, qtyPerPart: 1 },
+                    { materialId: CAPS_ID, qtyPerPart: 1 },
+                  ],
+                },
+              ],
+              ...(config.materials.replenishment.enabled
+                ? {
+                    replenishments: [
+                      {
+                        materialId: BOTTLES_ID,
+                        amount: config.materials.replenishment.amount,
+                        atMs: config.materials.replenishment.atMs,
+                      },
+                    ],
+                  }
+                : {}),
+            }
+          : undefined;
         const r = runChain({
           stationCycleTimes: config.cycleTimes.map((ms) => constant(ms)),
           interStationBufferCapacity: 10,
@@ -218,6 +294,7 @@ export default function RunPage() {
           warmupMs: Math.min(config.warmupMs, Math.floor(config.horizonMs / 2)),
           prng: new SeededPrng(config.seed),
           stationLabels: labels,
+          ...(materialsCfg ? { materials: materialsCfg } : {}),
         });
         const wallMs = performance.now() - t0;
         setResult(r);
@@ -236,6 +313,30 @@ export default function RunPage() {
   const bottleneckIdx = config.cycleTimes.indexOf(Math.max(...config.cycleTimes));
   const expectedRate = 1 / Math.max(...config.cycleTimes); // parts/ms
   const expectedPerHour = expectedRate * 3_600_000;
+
+  // Pre-run material runway preview — assume the Capper (slowest path) consumes
+  // at 1 unit per cycle, so per-ms rate ≈ 1 / capperCycle.
+  let runwayPreview: { materialLabel: string; runwayMs: number } | null = null;
+  if (config.materials.enabled) {
+    const pool = new MaterialPool([
+      [BOTTLES_ID, config.materials.bottles],
+      [CAPS_ID, config.materials.caps],
+    ]);
+    const capperCycle = Math.max(1, config.cycleTimes[1] ?? 1);
+    const rate = 1 / capperCycle;
+    const first = pool.firstToDeplete(
+      new Map([
+        [BOTTLES_ID, rate],
+        [CAPS_ID, rate],
+      ]),
+    );
+    if (first) {
+      runwayPreview = {
+        materialLabel: first.materialId === BOTTLES_ID ? "bottles" : "caps",
+        runwayMs: first.runwayMs,
+      };
+    }
+  }
 
   const throughputPerHour =
     result && result.elapsedMs > 0 ? result.throughputLambda * 3_600_000 : 0;
@@ -317,6 +418,130 @@ export default function RunPage() {
               </Button>
             </div>
           </div>
+          <div className="border-border space-y-3 rounded-md border border-dashed p-3">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={config.materials.enabled}
+                onChange={(e) => {
+                  const enabled = e.target.checked;
+                  setConfig((c) => ({ ...c, materials: { ...c.materials, enabled } }));
+                }}
+                className="accent-sim-running h-4 w-4"
+              />
+              <Package className="h-4 w-4" />
+              Capper consumes a recipe (1 bottle + 1 cap per part)
+            </label>
+            {config.materials.enabled ? (
+              <>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <NumberField
+                    label="Starting bottles"
+                    value={config.materials.bottles}
+                    onChange={(n) => {
+                      setConfig((c) => ({
+                        ...c,
+                        materials: { ...c.materials, bottles: Math.floor(n) },
+                      }));
+                    }}
+                    min={0}
+                  />
+                  <NumberField
+                    label="Starting caps"
+                    value={config.materials.caps}
+                    onChange={(n) => {
+                      setConfig((c) => ({
+                        ...c,
+                        materials: { ...c.materials, caps: Math.floor(n) },
+                      }));
+                    }}
+                    min={0}
+                  />
+                </div>
+                <label className="flex items-center gap-2 text-xs font-medium">
+                  <input
+                    type="checkbox"
+                    checked={config.materials.replenishment.enabled}
+                    onChange={(e) => {
+                      const enabled = e.target.checked;
+                      setConfig((c) => ({
+                        ...c,
+                        materials: {
+                          ...c.materials,
+                          replenishment: { ...c.materials.replenishment, enabled },
+                        },
+                      }));
+                    }}
+                    className="accent-sim-running h-4 w-4"
+                  />
+                  Schedule a single bottle replenishment
+                </label>
+                {config.materials.replenishment.enabled ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <NumberField
+                      label="Replenish at"
+                      value={config.materials.replenishment.atMs}
+                      onChange={(n) => {
+                        setConfig((c) => ({
+                          ...c,
+                          materials: {
+                            ...c.materials,
+                            replenishment: {
+                              ...c.materials.replenishment,
+                              atMs: Math.floor(n),
+                            },
+                          },
+                        }));
+                      }}
+                      min={0}
+                      step={1000}
+                      suffix="ms"
+                    />
+                    <NumberField
+                      label="Bottles delivered"
+                      value={config.materials.replenishment.amount}
+                      onChange={(n) => {
+                        setConfig((c) => ({
+                          ...c,
+                          materials: {
+                            ...c.materials,
+                            replenishment: {
+                              ...c.materials.replenishment,
+                              amount: Math.floor(n),
+                            },
+                          },
+                        }));
+                      }}
+                      min={1}
+                    />
+                  </div>
+                ) : null}
+                {runwayPreview ? (
+                  <p className="text-muted-foreground text-xs">
+                    Predicted runway (Capper-rate): <strong>{runwayPreview.materialLabel}</strong>{" "}
+                    deplete in{" "}
+                    <span className="font-mono tabular-nums">
+                      {formatNumber(runwayPreview.runwayMs, 0)}
+                    </span>{" "}
+                    ms ≈{" "}
+                    <span className="font-mono tabular-nums">
+                      {formatNumber(runwayPreview.runwayMs / 1000, 1)}
+                    </span>{" "}
+                    s. Horizon is{" "}
+                    <span className="font-mono tabular-nums">
+                      {formatNumber(config.horizonMs / 1000, 1)}
+                    </span>{" "}
+                    s — expect{" "}
+                    {runwayPreview.runwayMs < config.horizonMs
+                      ? "starvation"
+                      : "no material starvation"}
+                    .
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+
           <div className="flex flex-wrap gap-2 pt-2">
             <Button onClick={handleRun} disabled={isRunning} className="gap-2">
               <Play className="h-4 w-4" />
@@ -361,6 +586,82 @@ export default function RunPage() {
               hint="per exited part, on average"
             />
           </div>
+
+          {result.materialFinal ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="font-heading flex items-center gap-2 text-base">
+                  <Package className="h-4 w-4" />
+                  Materials
+                </CardTitle>
+                <CardDescription>
+                  Per-material consumption + replenishment outcome.{" "}
+                  {result.replenishmentsFired !== undefined && result.replenishmentsFired > 0
+                    ? `${String(result.replenishmentsFired)} replenishment${
+                        result.replenishmentsFired === 1 ? "" : "s"
+                      } fired.`
+                    : "No replenishments fired."}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {result.materialFinal.map(([id, finalQty]) => {
+                    const label =
+                      id === BOTTLES_ID ? "Bottles" : id === CAPS_ID ? "Caps" : String(id);
+                    const startQty =
+                      id === BOTTLES_ID ? config.materials.bottles : config.materials.caps;
+                    const replenished =
+                      id === BOTTLES_ID && config.materials.replenishment.enabled
+                        ? config.materials.replenishment.amount
+                        : 0;
+                    const consumed = startQty + replenished - finalQty;
+                    const pctLeft =
+                      startQty + replenished > 0 ? (finalQty / (startQty + replenished)) * 100 : 0;
+                    const depleted = finalQty === 0;
+                    return (
+                      <div key={String(id)} className="space-y-1">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-foreground/80">
+                            {label}{" "}
+                            {depleted ? (
+                              <span className="bg-sim-starved text-sim-starved-foreground ml-1 rounded-full px-2 py-0.5 text-xs font-medium">
+                                depleted
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="font-mono tabular-nums">
+                            {finalQty.toLocaleString()} /{" "}
+                            {(startQty + replenished).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="bg-muted h-2 overflow-hidden rounded-full">
+                          <div
+                            className={`h-full rounded-full transition-[width] ${depleted ? "bg-sim-starved" : "bg-sim-running"}`}
+                            style={{ width: `${String(Math.max(pctLeft, 0))}%` }}
+                          />
+                        </div>
+                        <p className="text-muted-foreground text-xs">
+                          Consumed{" "}
+                          <span className="font-mono tabular-nums">
+                            {consumed.toLocaleString()}
+                          </span>
+                          {replenished > 0 ? (
+                            <>
+                              {" "}
+                              · Replenished{" "}
+                              <span className="font-mono tabular-nums">
+                                {replenished.toLocaleString()}
+                              </span>
+                            </>
+                          ) : null}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
 
           {result.bottlenecks.length > 0 ? (
             <Card>
