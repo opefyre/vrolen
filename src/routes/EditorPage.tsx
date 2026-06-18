@@ -1,13 +1,16 @@
 /**
- * /editor — scenario authoring canvas (VROL-262 + VROL-265).
+ * /editor — scenario authoring canvas.
  *
- * Phase 0 scaffolding: react-flow canvas with a station palette on the left.
- * Drag a station from the palette onto the canvas to drop a new node; connect
- * with edges. Persisted to localStorage so reloads survive.
+ * - VROL-262/265: react-flow canvas with a station palette on the left.
+ * - VROL-577: graph → runChain translation + a Run button that executes
+ *   the simulation and surfaces a KPI strip below the canvas.
+ * - VROL-578: side inspector panel that opens on node click — edit label,
+ *   cycle time, defect rate.
  *
- * Real engine integration (turn the graph into a chain config + run it) lands
- * in a later sprint. This story is about the canvas being mountable + the
- * palette being draggable — the foundation.
+ * Graph state persists to localStorage so reloads keep the user's last graph.
+ * Only linear chains are runnable for now (chain harness limitation); the
+ * translator (graphToChainOptions) picks the longest linear path and toasts
+ * about anything it skipped.
  */
 import "@xyflow/react/dist/style.css";
 
@@ -200,7 +203,7 @@ function EditorCanvas() {
         id,
         type: "default",
         position,
-        data: { label: item.label },
+        data: { label: item.label, cycleMs: 100, defectRate: 0 },
       };
       setNodes((nds) => nds.concat(newNode));
     },
