@@ -37,20 +37,47 @@ import {
   Combine,
   ConciergeBell,
   Factory,
+  Package,
   PackageCheck,
   Play,
+  Settings2,
   Truck,
   Wrench,
   X,
+  Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { type ChainResult, constant, runChain, SeededPrng } from "@/engine";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  asMaterialId,
+  type ChainBreakdownConfig,
+  type ChainMaterialConfig,
+  type ChainResult,
+  constant,
+  runChain,
+  SeededPrng,
+} from "@/engine";
 import { graphToChainOptions } from "@/lib/graph-to-chain";
 import { toast } from "@/lib/toast";
+import {
+  DEFAULT_RUN_SETTINGS,
+  loadRunSettings,
+  type RunSettings,
+  saveRunSettings,
+} from "./editor-run-settings";
+
+const BOTTLES_ID = asMaterialId("bottles");
+const CAPS_ID = asMaterialId("caps");
 
 const STORAGE_KEY = "vrolen.editor-graph";
 
@@ -134,6 +161,12 @@ function EditorCanvas() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [result, setResult] = useState<ChainResult | null>(null);
   const [isRunning, setIsRunning] = useState<boolean>(false);
+  const [settings, setSettings] = useState<RunSettings>(loadRunSettings);
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    saveRunSettings(settings);
+  }, [settings]);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flow = useReactFlow();
   const nodeIdRef = useRef<number>(
@@ -233,19 +266,70 @@ function EditorCanvas() {
         { description: "Disconnected or branching nodes aren't part of the linear chain." },
       );
     }
+
+    // Materials apply to whichever node is selected in the inspector — find its
+    // chain index and skip the materials block entirely if it isn't in the chain.
+    let materialsCfg: ChainMaterialConfig | undefined;
+    if (settings.materials.enabled) {
+      const stationIndex = selectedNodeId ? translation.chainNodeIds.indexOf(selectedNodeId) : -1;
+      if (stationIndex < 0) {
+        toast.warning("Materials skipped", {
+          description: "Select a node in the chain before enabling materials in the drawer.",
+        });
+      } else {
+        materialsCfg = {
+          initialInventory: [
+            [BOTTLES_ID, settings.materials.bottles],
+            [CAPS_ID, settings.materials.caps],
+          ],
+          stationRecipes: [
+            {
+              stationIndex,
+              requirements: [
+                { materialId: BOTTLES_ID, qtyPerPart: 1 },
+                { materialId: CAPS_ID, qtyPerPart: 1 },
+              ],
+            },
+          ],
+          ...(settings.materials.replenishment.enabled
+            ? {
+                replenishments: [
+                  {
+                    materialId: BOTTLES_ID,
+                    amount: settings.materials.replenishment.amount,
+                    atMs: settings.materials.replenishment.atMs,
+                  },
+                ],
+              }
+            : {}),
+        };
+      }
+    }
+
+    const breakdownsCfg: ChainBreakdownConfig | undefined = settings.breakdowns.enabled
+      ? {
+          mtbfMs: {
+            kind: "exponential",
+            rate: 1 / Math.max(1, settings.breakdowns.mtbfMs),
+          },
+          mttrMs: constant(Math.max(1, settings.breakdowns.mttrMs)),
+        }
+      : undefined;
+
     setIsRunning(true);
     setResult(null);
     setTimeout(() => {
       try {
         const t0 = performance.now();
-        const horizonMs = 60_000;
         const r = runChain({
           stationCycleTimes: translation.cycleTimes.map((ms) => constant(ms)),
-          interStationBufferCapacity: 10,
-          horizonMs,
-          warmupMs: 5_000,
-          prng: new SeededPrng(0xc0ffee),
+          interStationBufferCapacity: settings.interStationBufferCapacity,
+          horizonMs: settings.horizonMs,
+          warmupMs: Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2)),
+          prng: new SeededPrng(settings.seed),
           stationLabels: [...translation.stationLabels],
+          ...(materialsCfg ? { materials: materialsCfg } : {}),
+          ...(breakdownsCfg ? { breakdowns: breakdownsCfg } : {}),
         });
         const wallMs = performance.now() - t0;
         setResult(r);
@@ -259,7 +343,7 @@ function EditorCanvas() {
         setIsRunning(false);
       }
     }, 0);
-  }, [nodes, edges]);
+  }, [nodes, edges, selectedNodeId, settings]);
 
   return (
     <div className="space-y-3">
@@ -296,6 +380,17 @@ function EditorCanvas() {
               <Button onClick={handleRun} disabled={isRunning} className="w-full gap-2" size="sm">
                 <Play className="h-4 w-4" />
                 {isRunning ? "Running…" : "Run simulation"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSettingsOpen(true);
+                }}
+                className="w-full gap-2"
+              >
+                <Settings2 className="h-4 w-4" />
+                Run settings
               </Button>
               <Button variant="outline" size="sm" onClick={handleReset} className="w-full">
                 Reset canvas
@@ -419,6 +514,376 @@ function EditorCanvas() {
       </div>
 
       {result ? <KpiStrip result={result} /> : null}
+
+      <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <SheetContent side="right" className="w-[24rem] sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle>Run settings</SheetTitle>
+            <SheetDescription>
+              Applied to every Run from /editor. Persisted to localStorage. /run page has its own
+              independent fixture.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="space-y-5 px-4 pb-6">
+            <section className="space-y-3">
+              <h3 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+                Engine
+              </h3>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="rs-horizon" className="text-muted-foreground text-xs font-medium">
+                    Horizon (ms)
+                  </label>
+                  <Input
+                    id="rs-horizon"
+                    type="number"
+                    min={1000}
+                    step={1000}
+                    value={settings.horizonMs}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      if (Number.isFinite(n) && n > 0) {
+                        setSettings((s) => ({ ...s, horizonMs: Math.floor(n) }));
+                      }
+                    }}
+                    className="font-mono tabular-nums"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="rs-warmup" className="text-muted-foreground text-xs font-medium">
+                    Warm-up (ms)
+                  </label>
+                  <Input
+                    id="rs-warmup"
+                    type="number"
+                    min={0}
+                    step={1000}
+                    value={settings.warmupMs}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      if (Number.isFinite(n) && n >= 0) {
+                        setSettings((s) => ({ ...s, warmupMs: Math.floor(n) }));
+                      }
+                    }}
+                    className="font-mono tabular-nums"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="rs-seed" className="text-muted-foreground text-xs font-medium">
+                    Seed
+                  </label>
+                  <Input
+                    id="rs-seed"
+                    type="number"
+                    min={0}
+                    value={settings.seed}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      if (Number.isFinite(n)) {
+                        setSettings((s) => ({ ...s, seed: Math.floor(n) }));
+                      }
+                    }}
+                    className="font-mono tabular-nums"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="rs-buf" className="text-muted-foreground text-xs font-medium">
+                    Buffer capacity
+                  </label>
+                  <Input
+                    id="rs-buf"
+                    type="number"
+                    min={1}
+                    value={settings.interStationBufferCapacity}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      if (Number.isFinite(n) && n > 0) {
+                        setSettings((s) => ({
+                          ...s,
+                          interStationBufferCapacity: Math.floor(n),
+                        }));
+                      }
+                    }}
+                    className="font-mono tabular-nums"
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section className="border-border space-y-3 rounded-md border border-dashed p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={settings.materials.enabled}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    setSettings((s) => ({
+                      ...s,
+                      materials: { ...s.materials, enabled },
+                    }));
+                  }}
+                  className="accent-sim-running h-4 w-4"
+                />
+                <Package className="h-4 w-4" />
+                Materials (1 bottle + 1 cap per part)
+              </label>
+              {settings.materials.enabled ? (
+                <>
+                  <p className="text-muted-foreground text-xs">
+                    Applies to the node currently selected in the inspector{" "}
+                    {selectedNodeId ? (
+                      <strong className="text-foreground">({String(selectedNodeId)})</strong>
+                    ) : (
+                      <em>(no node selected — select one before running)</em>
+                    )}
+                    .
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="flex flex-col gap-1">
+                      <label
+                        htmlFor="rs-bottles"
+                        className="text-muted-foreground text-xs font-medium"
+                      >
+                        Starting bottles
+                      </label>
+                      <Input
+                        id="rs-bottles"
+                        type="number"
+                        min={0}
+                        value={settings.materials.bottles}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (Number.isFinite(n) && n >= 0) {
+                            setSettings((s) => ({
+                              ...s,
+                              materials: { ...s.materials, bottles: Math.floor(n) },
+                            }));
+                          }
+                        }}
+                        className="font-mono tabular-nums"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label
+                        htmlFor="rs-caps"
+                        className="text-muted-foreground text-xs font-medium"
+                      >
+                        Starting caps
+                      </label>
+                      <Input
+                        id="rs-caps"
+                        type="number"
+                        min={0}
+                        value={settings.materials.caps}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (Number.isFinite(n) && n >= 0) {
+                            setSettings((s) => ({
+                              ...s,
+                              materials: { ...s.materials, caps: Math.floor(n) },
+                            }));
+                          }
+                        }}
+                        className="font-mono tabular-nums"
+                      />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs font-medium">
+                    <input
+                      type="checkbox"
+                      checked={settings.materials.replenishment.enabled}
+                      onChange={(e) => {
+                        const enabled = e.target.checked;
+                        setSettings((s) => ({
+                          ...s,
+                          materials: {
+                            ...s.materials,
+                            replenishment: { ...s.materials.replenishment, enabled },
+                          },
+                        }));
+                      }}
+                      className="accent-sim-running h-4 w-4"
+                    />
+                    Schedule a single bottle replenishment
+                  </label>
+                  {settings.materials.replenishment.enabled ? (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="flex flex-col gap-1">
+                        <label
+                          htmlFor="rs-rep-at"
+                          className="text-muted-foreground text-xs font-medium"
+                        >
+                          Replenish at (ms)
+                        </label>
+                        <Input
+                          id="rs-rep-at"
+                          type="number"
+                          min={0}
+                          step={1000}
+                          value={settings.materials.replenishment.atMs}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            if (Number.isFinite(n) && n >= 0) {
+                              setSettings((s) => ({
+                                ...s,
+                                materials: {
+                                  ...s.materials,
+                                  replenishment: {
+                                    ...s.materials.replenishment,
+                                    atMs: Math.floor(n),
+                                  },
+                                },
+                              }));
+                            }
+                          }}
+                          className="font-mono tabular-nums"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label
+                          htmlFor="rs-rep-amt"
+                          className="text-muted-foreground text-xs font-medium"
+                        >
+                          Bottles delivered
+                        </label>
+                        <Input
+                          id="rs-rep-amt"
+                          type="number"
+                          min={1}
+                          value={settings.materials.replenishment.amount}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            if (Number.isFinite(n) && n >= 1) {
+                              setSettings((s) => ({
+                                ...s,
+                                materials: {
+                                  ...s.materials,
+                                  replenishment: {
+                                    ...s.materials.replenishment,
+                                    amount: Math.floor(n),
+                                  },
+                                },
+                              }));
+                            }
+                          }}
+                          className="font-mono tabular-nums"
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </section>
+
+            <section className="border-border space-y-3 rounded-md border border-dashed p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={settings.breakdowns.enabled}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    setSettings((s) => ({
+                      ...s,
+                      breakdowns: { ...s.breakdowns, enabled },
+                    }));
+                  }}
+                  className="accent-sim-running h-4 w-4"
+                />
+                <Zap className="h-4 w-4" />
+                Stochastic breakdowns
+              </label>
+              {settings.breakdowns.enabled ? (
+                <>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="flex flex-col gap-1">
+                      <label
+                        htmlFor="rs-mtbf"
+                        className="text-muted-foreground text-xs font-medium"
+                      >
+                        MTBF (ms)
+                      </label>
+                      <Input
+                        id="rs-mtbf"
+                        type="number"
+                        min={100}
+                        step={1000}
+                        value={settings.breakdowns.mtbfMs}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (Number.isFinite(n) && n >= 100) {
+                            setSettings((s) => ({
+                              ...s,
+                              breakdowns: { ...s.breakdowns, mtbfMs: Math.floor(n) },
+                            }));
+                          }
+                        }}
+                        className="font-mono tabular-nums"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label
+                        htmlFor="rs-mttr"
+                        className="text-muted-foreground text-xs font-medium"
+                      >
+                        MTTR (ms)
+                      </label>
+                      <Input
+                        id="rs-mttr"
+                        type="number"
+                        min={100}
+                        step={500}
+                        value={settings.breakdowns.mttrMs}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (Number.isFinite(n) && n >= 100) {
+                            setSettings((s) => ({
+                              ...s,
+                              breakdowns: { ...s.breakdowns, mttrMs: Math.floor(n) },
+                            }));
+                          }
+                        }}
+                        className="font-mono tabular-nums"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-muted-foreground text-xs">
+                    Availability ceiling: MTBF / (MTBF + MTTR) ={" "}
+                    <span className="font-mono tabular-nums">
+                      {(
+                        (settings.breakdowns.mtbfMs /
+                          Math.max(1, settings.breakdowns.mtbfMs + settings.breakdowns.mttrMs)) *
+                        100
+                      ).toFixed(1)}
+                      %
+                    </span>
+                  </p>
+                </>
+              ) : null}
+            </section>
+
+            <div className="flex justify-between gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSettings(DEFAULT_RUN_SETTINGS);
+                  toast.info("Run settings reset");
+                }}
+              >
+                Reset to defaults
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setSettingsOpen(false);
+                }}
+              >
+                Done
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
@@ -434,12 +899,48 @@ function KpiStrip({ result }: { result: ChainResult }) {
   const throughputPerHour = result.throughputLambda * 3_600_000;
   const fmt = (n: number, digits = 1) =>
     n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  const totalBreakdowns = (result.perStationBreakdowns ?? []).reduce((a, b) => a + b, 0);
+  const finalByMat = result.materialFinal ? new Map(result.materialFinal) : null;
+  const finalBottles = finalByMat?.get(BOTTLES_ID) ?? null;
+  const finalCaps = finalByMat?.get(CAPS_ID) ?? null;
+  const hasMaterials = result.materialFinal !== undefined;
+  const hasBreakdowns = result.perStationBreakdowns !== undefined;
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {tile("Completed", result.completed.toLocaleString(), "during measurement window")}
-      {tile("Throughput", fmt(throughputPerHour, 0), "parts / hour")}
-      {tile("Line OEE", `${fmt(result.lineOee * 100)}%`, "geometric mean")}
-      {tile("Time-in-system", `${fmt(result.avgTimeInSystemW, 0)} ms`, "average W per part")}
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {tile("Completed", result.completed.toLocaleString(), "during measurement window")}
+        {tile("Throughput", fmt(throughputPerHour, 0), "parts / hour")}
+        {tile("Line OEE", `${fmt(result.lineOee * 100)}%`, "geometric mean")}
+        {tile("Time-in-system", `${fmt(result.avgTimeInSystemW, 0)} ms`, "average W per part")}
+      </div>
+      {hasMaterials || hasBreakdowns ? (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {finalBottles !== null
+            ? tile(
+                "Bottles left",
+                finalBottles.toLocaleString(),
+                finalBottles === 0 ? "depleted" : "of starting inventory",
+              )
+            : null}
+          {finalCaps !== null
+            ? tile(
+                "Caps left",
+                finalCaps.toLocaleString(),
+                finalCaps === 0 ? "depleted" : "of starting inventory",
+              )
+            : null}
+          {hasBreakdowns
+            ? tile("Breakdowns", totalBreakdowns.toLocaleString(), "total across chain")
+            : null}
+          {result.replenishmentsFired !== undefined
+            ? tile(
+                "Replenishments",
+                result.replenishmentsFired.toLocaleString(),
+                "fired during run",
+              )
+            : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -450,9 +951,9 @@ export default function EditorPage() {
       <header className="space-y-1">
         <h1 className="font-heading text-2xl font-bold tracking-tight">Editor</h1>
         <p className="text-muted-foreground max-w-2xl text-sm">
-          Drag stations from the palette onto the canvas. Connect with edges. Run integration (turn
-          the graph into a chain config + execute it) ships in a later sprint — for now this is the
-          scaffolding.
+          Drag stations from the palette onto the canvas. Click a node to edit its parameters in the
+          inspector. Open <strong>Run settings</strong> for horizon / materials / breakdowns, then
+          click <strong>Run simulation</strong>.
         </p>
       </header>
       <ReactFlowProvider>
