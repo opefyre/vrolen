@@ -88,6 +88,12 @@ import {
 } from "@/lib/export-run";
 import { graphToChainOptions } from "@/lib/graph-to-chain";
 import {
+  addRun as addRunToHistory,
+  listRuns as listRunHistory,
+  type RunHistoryEntry,
+} from "@/lib/run-history";
+import { runScenario, type ScenarioRunOutcome } from "@/lib/run-scenario";
+import {
   deleteScenario,
   listScenarios,
   loadScenario,
@@ -289,6 +295,22 @@ function EditorCanvas() {
   const [scenariosOpen, setScenariosOpen] = useState<boolean>(false);
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>(() => listScenarios());
   const [saveNameDraft, setSaveNameDraft] = useState<string>("");
+  const [activeScenarioName, setActiveScenarioName] = useState<string | null>(null);
+  const [comparison, setComparison] = useState<{
+    aName: string;
+    aOutcome: ScenarioRunOutcome;
+    bName: string;
+    bOutcome: ScenarioRunOutcome;
+  } | null>(null);
+  const [historyByScenario, setHistoryByScenario] = useState<Record<string, RunHistoryEntry[]>>(
+    () => {
+      const out: Record<string, RunHistoryEntry[]> = {};
+      for (const s of listScenarios()) {
+        out[s.name] = [...listRunHistory(s.name)];
+      }
+      return out;
+    },
+  );
 
   useEffect(() => {
     saveRunSettings(settings);
@@ -380,6 +402,7 @@ function EditorCanvas() {
     setSelectedNodeId(null);
     setResult(null);
     setRunMeta(null);
+    setActiveScenarioName(null);
     nodeIdRef.current = INITIAL_NODES.length + 1;
     toast.info("Editor reset");
   };
@@ -530,6 +553,21 @@ function EditorCanvas() {
         toast.success("Simulation complete", {
           description: `${r.completed.toLocaleString()} parts in ${wallMs.toFixed(0)}ms wall-clock`,
         });
+        // If a scenario is active, push a compact summary to history.
+        if (activeScenarioName) {
+          const summary: RunHistoryEntry = {
+            completed: r.completed,
+            throughputLambda: r.throughputLambda,
+            lineOee: r.lineOee,
+            avgTimeInSystemW: r.avgTimeInSystemW,
+            runAtMs: Date.now(),
+          };
+          addRunToHistory(activeScenarioName, summary);
+          setHistoryByScenario((prev) => ({
+            ...prev,
+            [activeScenarioName]: [summary, ...(prev[activeScenarioName] ?? [])].slice(0, 5),
+          }));
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         toast.error("Simulation failed", { description: message });
@@ -537,7 +575,49 @@ function EditorCanvas() {
         setIsRunning(false);
       }
     }, 0);
-  }, [nodes, edges, selectedNodeId, settings]);
+  }, [nodes, edges, selectedNodeId, settings, activeScenarioName]);
+
+  const handleCompare = useCallback(
+    (savedName: string): void => {
+      const payload = loadScenario(savedName);
+      if (!payload) {
+        toast.error("Couldn't load scenario for comparison");
+        return;
+      }
+      const aOutcome = runScenario(
+        payload.graph.nodes,
+        payload.graph.edges,
+        payload.settings,
+        null,
+      );
+      if (!("result" in aOutcome)) {
+        toast.error(`Couldn't run "${savedName}"`, {
+          description:
+            aOutcome.kind === "materials-no-selection"
+              ? "Materials are enabled but the saved scenario had no station selected."
+              : aOutcome.kind === "translation"
+                ? aOutcome.message
+                : aOutcome.message,
+        });
+        return;
+      }
+      const bOutcome = runScenario(nodes, edges, settings, selectedNodeId);
+      if (!("result" in bOutcome)) {
+        toast.error("Couldn't run the current canvas", {
+          description:
+            bOutcome.kind === "materials-no-selection"
+              ? "Select a station to attach materials to first."
+              : bOutcome.kind === "translation"
+                ? bOutcome.message
+                : bOutcome.message,
+        });
+        return;
+      }
+      setComparison({ aName: savedName, aOutcome, bName: "Current canvas", bOutcome });
+      toast.success(`Comparing "${savedName}" vs current canvas`);
+    },
+    [nodes, edges, settings, selectedNodeId],
+  );
 
   const loadScenarioInto = useCallback(
     (name: string): boolean => {
@@ -552,6 +632,7 @@ function EditorCanvas() {
       setSelectedNodeId(null);
       setResult(null);
       setRunMeta(null);
+      setActiveScenarioName(name);
       nodeIdRef.current =
         payload.graph.nodes.reduce(
           (max, n) => Math.max(max, parseInt(n.id.replace(/\D/g, ""), 10) || 0),
@@ -849,6 +930,33 @@ function EditorCanvas() {
 
       {result && runMeta ? <KpiStrip result={result} runMeta={runMeta} /> : null}
 
+      <Sheet
+        open={comparison !== null}
+        onOpenChange={(open) => {
+          if (!open) setComparison(null);
+        }}
+      >
+        <SheetContent side="right" className="w-[28rem] sm:max-w-lg">
+          <SheetHeader>
+            <SheetTitle>Comparison</SheetTitle>
+            <SheetDescription>
+              Both scenarios were run with their own settings. Deltas are{" "}
+              <span className="font-medium">B − A</span> (current canvas vs saved scenario).
+            </SheetDescription>
+          </SheetHeader>
+          {comparison ? (
+            <div className="space-y-4 px-4 pb-6">
+              <ComparisonTable
+                aName={comparison.aName}
+                aResult={comparison.aOutcome.result}
+                bName={comparison.bName}
+                bResult={comparison.bOutcome.result}
+              />
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
+
       <Sheet open={scenariosOpen} onOpenChange={setScenariosOpen}>
         <SheetContent side="right" className="w-[24rem] sm:max-w-md">
           <SheetHeader>
@@ -909,66 +1017,116 @@ function EditorCanvas() {
               </p>
             ) : (
               <ul className="space-y-2">
-                {scenarios.map((s) => (
-                  <li
-                    key={s.name}
-                    className="border-border bg-card flex items-center justify-between gap-2 rounded-md border p-3"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">{s.name}</div>
-                      <div className="text-muted-foreground text-xs">
-                        {s.nodeCount} node{s.nodeCount === 1 ? "" : "s"} · {s.edgeCount} edge
-                        {s.edgeCount === 1 ? "" : "s"}
+                {scenarios.map((s) => {
+                  const history = historyByScenario[s.name] ?? [];
+                  return (
+                    <li
+                      key={s.name}
+                      className="border-border bg-card flex flex-col gap-2 rounded-md border p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-medium">
+                            {s.name}
+                            {activeScenarioName === s.name ? (
+                              <span className="bg-sim-running text-sim-running-foreground ml-2 rounded-full px-2 py-0.5 text-xs font-medium">
+                                active
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="text-muted-foreground text-xs">
+                            {s.nodeCount} node{s.nodeCount === 1 ? "" : "s"} · {s.edgeCount} edge
+                            {s.edgeCount === 1 ? "" : "s"}
+                          </div>
+                        </div>
+                        <div className="flex gap-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const ok = window.confirm(
+                                `Load "${s.name}"? Unsaved changes to the canvas will be lost.`,
+                              );
+                              if (!ok) return;
+                              loadScenarioInto(s.name);
+                            }}
+                          >
+                            Load
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const ok = window.confirm(
+                                `Load "${s.name}" and run? Unsaved changes to the canvas will be lost.`,
+                              );
+                              if (!ok) return;
+                              if (loadScenarioInto(s.name)) {
+                                setTimeout(() => {
+                                  handleRun();
+                                }, 0);
+                              }
+                            }}
+                          >
+                            Load + Run
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              handleCompare(s.name);
+                            }}
+                          >
+                            Compare
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Delete ${s.name}`}
+                            onClick={() => {
+                              const ok = window.confirm(`Delete saved scenario "${s.name}"?`);
+                              if (!ok) return;
+                              deleteScenario(s.name);
+                              setScenarios(listScenarios());
+                              setHistoryByScenario((prev) => {
+                                const next = { ...prev };
+                                delete next[s.name];
+                                return next;
+                              });
+                              if (activeScenarioName === s.name) setActiveScenarioName(null);
+                              toast.info(`Deleted "${s.name}"`);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex gap-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          const ok = window.confirm(
-                            `Load "${s.name}"? Unsaved changes to the canvas will be lost.`,
-                          );
-                          if (!ok) return;
-                          loadScenarioInto(s.name);
-                        }}
-                      >
-                        Load
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          const ok = window.confirm(
-                            `Load "${s.name}" and run? Unsaved changes to the canvas will be lost.`,
-                          );
-                          if (!ok) return;
-                          if (loadScenarioInto(s.name)) {
-                            // Run on the next tick so state updates settle first.
-                            setTimeout(() => {
-                              handleRun();
-                            }, 0);
-                          }
-                        }}
-                      >
-                        Load + Run
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Delete ${s.name}`}
-                        onClick={() => {
-                          const ok = window.confirm(`Delete saved scenario "${s.name}"?`);
-                          if (!ok) return;
-                          deleteScenario(s.name);
-                          setScenarios(listScenarios());
-                          toast.info(`Deleted "${s.name}"`);
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </li>
-                ))}
+                      {history.length > 0 ? (
+                        <details className="border-border border-t pt-2 text-xs">
+                          <summary className="text-muted-foreground cursor-pointer">
+                            {history.length} recent run{history.length === 1 ? "" : "s"}
+                          </summary>
+                          <ul className="mt-2 space-y-1">
+                            {history.map((h, idx) => (
+                              <li
+                                key={`${h.runAtMs}-${String(idx)}`}
+                                className="text-muted-foreground flex items-center justify-between gap-2"
+                              >
+                                <span className="font-mono tabular-nums">
+                                  {new Date(h.runAtMs).toLocaleString()}
+                                </span>
+                                <span>
+                                  {h.completed.toLocaleString()} parts ·{" "}
+                                  {(h.lineOee * 100).toFixed(1)}% OEE
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -2233,6 +2391,109 @@ function BottleneckExplanationCard({ result }: { result: ChainResult }) {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function ComparisonTable({
+  aName,
+  aResult,
+  bName,
+  bResult,
+}: {
+  aName: string;
+  aResult: ChainResult;
+  bName: string;
+  bResult: ChainResult;
+}) {
+  const fmt = (n: number, digits = 1) =>
+    n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+
+  type Row = {
+    label: string;
+    a: number;
+    b: number;
+    fmt: (n: number) => string;
+    hideDiffWhenZero?: boolean;
+  };
+  const rows: Row[] = [
+    {
+      label: "Completed",
+      a: aResult.completed,
+      b: bResult.completed,
+      fmt: (n) => n.toLocaleString(),
+    },
+    {
+      label: "Throughput (parts/hour)",
+      a: aResult.throughputLambda * 3_600_000,
+      b: bResult.throughputLambda * 3_600_000,
+      fmt: (n) => fmt(n, 0),
+    },
+    { label: "Line OEE", a: aResult.lineOee, b: bResult.lineOee, fmt: (n) => `${fmt(n * 100)}%` },
+    {
+      label: "Avg time-in-system (ms)",
+      a: aResult.avgTimeInSystemW,
+      b: bResult.avgTimeInSystemW,
+      fmt: (n) => fmt(n, 0),
+    },
+    {
+      label: "Line scrap rate",
+      a: aResult.lineScrapRate,
+      b: bResult.lineScrapRate,
+      fmt: (n) => `${fmt(n * 100)}%`,
+    },
+  ];
+  if (aResult.laborUtilization !== undefined || bResult.laborUtilization !== undefined) {
+    rows.push({
+      label: "Labor util",
+      a: aResult.laborUtilization ?? 0,
+      b: bResult.laborUtilization ?? 0,
+      fmt: (n) => `${fmt(n * 100)}%`,
+    });
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-muted-foreground border-border border-b text-left text-xs tracking-wide uppercase">
+            <th className="py-2 pr-3 font-medium">Metric</th>
+            <th className="px-3 py-2 text-right font-medium" title={aName}>
+              A · {aName.length > 12 ? `${aName.slice(0, 11)}…` : aName}
+            </th>
+            <th className="px-3 py-2 text-right font-medium">B · {bName}</th>
+            <th className="py-2 pl-3 text-right font-medium">Δ (B−A)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const delta = row.b - row.a;
+            const pctDelta = row.a !== 0 ? (delta / Math.abs(row.a)) * 100 : 0;
+            const isUp = delta > 0;
+            return (
+              <tr key={row.label} className="border-border/50 border-b last:border-0">
+                <td className="py-2 pr-3">{row.label}</td>
+                <td className="px-3 py-2 text-right font-mono tabular-nums">{row.fmt(row.a)}</td>
+                <td className="px-3 py-2 text-right font-mono tabular-nums">{row.fmt(row.b)}</td>
+                <td
+                  className={`py-2 pl-3 text-right font-mono tabular-nums ${
+                    delta === 0
+                      ? "text-muted-foreground"
+                      : isUp
+                        ? "text-sim-running-foreground"
+                        : "text-sim-down-foreground"
+                  }`}
+                >
+                  {delta === 0 ? "0" : `${isUp ? "+" : ""}${row.fmt(delta)}`}
+                  {row.a !== 0 && delta !== 0 ? (
+                    <span className="text-muted-foreground ml-1">({fmt(pctDelta, 0)}%)</span>
+                  ) : null}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
