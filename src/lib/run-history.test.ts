@@ -58,6 +58,21 @@ describe("run-history", () => {
     expect(listRuns("   ")).toEqual([]);
   });
 
+  it("payload round-trips through addRun + listRuns (VROL-611)", () => {
+    const payload = {
+      graph: { nodes: [], edges: [] },
+      settings: {} as RunHistoryEntry["payload"] extends infer P
+        ? P extends { settings: infer S }
+          ? S
+          : never
+        : never,
+    };
+    addRun("scenP", { ...entry(100), payload });
+    const runs = listRuns("scenP");
+    expect(runs[0]?.payload).toBeDefined();
+    expect(runs[0]?.payload?.graph.nodes).toEqual([]);
+  });
+
   it("clearRuns removes the scenario's history", () => {
     addRun("scenA", entry(100));
     addRun("scenA", entry(200));

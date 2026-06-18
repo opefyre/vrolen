@@ -14,12 +14,25 @@
 const STORAGE_KEY = "vrolen.run-history";
 const MAX_RUNS_PER_SCENARIO = 5;
 
+import type { Edge, Node } from "@xyflow/react";
+
+import type { RunSettings } from "@/routes/editor-run-settings";
+
 export interface RunHistoryEntry {
   readonly completed: number;
   readonly throughputLambda: number;
   readonly lineOee: number;
   readonly avgTimeInSystemW: number;
   readonly runAtMs: number;
+  /**
+   * Snapshot of the graph + settings at the moment of this run (VROL-611).
+   * Optional for back-compat with entries persisted before this field landed —
+   * those entries can be listed but not replayed.
+   */
+  readonly payload?: {
+    readonly graph: { readonly nodes: readonly Node[]; readonly edges: readonly Edge[] };
+    readonly settings: RunSettings;
+  };
 }
 
 type Store = Record<string, RunHistoryEntry[]>;
