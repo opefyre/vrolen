@@ -30,6 +30,13 @@ export interface GraphToChainResult {
   /** Node ids in chain order (source → sink). Empty when error is set. */
   readonly chainNodeIds: readonly string[];
   /**
+   * Stable per-station keys aligned with chainNodeIds. Read from
+   * node.data.stationKey when present, falls back to the node id when not.
+   * Used by comparison views to match stations across runs even when labels
+   * change (VROL-604).
+   */
+  readonly stationKeys: readonly string[];
+  /**
    * Per-station cycle time distribution (matches chainNodeIds by index).
    * Reads `node.data.cycleDistribution` first; falls back to `constant(cycleMs)`
    * for graphs persisted before VROL-581 added the picker.
@@ -142,12 +149,18 @@ function labelOf(node: Node): string {
   return typeof raw === "string" && raw.length > 0 ? raw : node.id;
 }
 
+function stationKeyOf(node: Node): string {
+  const raw = (node.data as { stationKey?: unknown } | undefined)?.stationKey;
+  return typeof raw === "string" && raw.length > 0 ? raw : node.id;
+}
+
 export function graphToChainOptions(
   nodes: ReadonlyArray<Node>,
   edges: ReadonlyArray<Edge>,
 ): GraphToChainResult {
   const empty: GraphToChainResult = {
     chainNodeIds: [],
+    stationKeys: [],
     cycleDistributions: [],
     cycleTimes: [],
     stationLabels: [],
@@ -281,8 +294,11 @@ export function graphToChainOptions(
       const skippedNodeIds = nodes.filter((n) => !topoSet.has(n.id)).map((n) => n.id);
       const maintenanceWindows = topoOrder.map((id) => maintenanceWindowsOf(nodeById.get(id)!));
 
+      const stationKeys = topoOrder.map((id) => stationKeyOf(nodeById.get(id)!));
+
       return {
         chainNodeIds: topoOrder,
+        stationKeys,
         cycleDistributions,
         cycleTimes,
         stationLabels,
@@ -321,9 +337,11 @@ export function graphToChainOptions(
   const chainSet = new Set(bestChain);
   const skippedNodeIds = nodes.filter((n) => !chainSet.has(n.id)).map((n) => n.id);
   const maintenanceWindows = bestChain.map((id) => maintenanceWindowsOf(nodeById.get(id)!));
+  const stationKeys = bestChain.map((id) => stationKeyOf(nodeById.get(id)!));
 
   return {
     chainNodeIds: bestChain,
+    stationKeys,
     cycleDistributions,
     cycleTimes,
     stationLabels,

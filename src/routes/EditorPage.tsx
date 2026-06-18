@@ -215,6 +215,7 @@ function saveGraph(g: PersistedGraph): void {
 interface RunMeta {
   chainNodeIds: string[];
   stationLabels: string[];
+  stationKeys: string[];
   /** "sourceNodeId arrow targetNodeId" keys, in the order the engine returned them. */
   edgeKeys: string[];
 }
@@ -282,6 +283,12 @@ function StationNode({ data, selected }: NodeProps) {
 
 const NODE_TYPES = { station: StationNode };
 
+// Lazy-import AnimatedEdge so its react-flow getBezierPath dependency doesn't
+// bloat the first non-editor route. It's used inside this lazy-loaded file,
+// so a normal import is fine.
+import { AnimatedEdge } from "./AnimatedEdge";
+const EDGE_TYPES = { animated: AnimatedEdge };
+
 function EditorCanvas() {
   const initial = useMemo(() => loadGraph(), []);
   const [nodes, setNodes] = useState<Node[]>(initial.nodes);
@@ -296,6 +303,14 @@ function EditorCanvas() {
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>(() => listScenarios());
   const [saveNameDraft, setSaveNameDraft] = useState<string>("");
   const [activeScenarioName, setActiveScenarioName] = useState<string | null>(null);
+  /** Inline-confirm state for destructive scenario actions (VROL-605). */
+  const [confirmAction, setConfirmAction] = useState<{
+    scenario: string;
+    kind: "load" | "load-run" | "delete";
+  } | null>(null);
+  const [confirmReset, setConfirmReset] = useState<boolean>(false);
+  /** When true, edges render as animated bezier paths with SVG dots flowing along (VROL-606). */
+  const [animateFlow, setAnimateFlow] = useState<boolean>(false);
   /** Snapshot of the active scenario as JSON; used to detect drift for the modified badge. */
   const [activeScenarioSnapshot, setActiveScenarioSnapshot] = useState<string | null>(null);
   const [comparison, setComparison] = useState<{
@@ -419,6 +434,7 @@ function EditorCanvas() {
     setRunMeta({
       chainNodeIds: [...translation.chainNodeIds],
       stationLabels: [...translation.stationLabels],
+      stationKeys: [...translation.stationKeys],
       edgeKeys: translation.topology
         ? translation.topology.edges.map((e) => `${e.source}→${e.target}`)
         : translation.chainNodeIds
@@ -657,6 +673,8 @@ function EditorCanvas() {
   }, [activeScenarioName, activeScenarioSnapshot, nodes, edges, settings]);
 
   // Render edges with per-edge throughput labels from the last run, if we have one.
+  // When animateFlow is on, also assign the animated custom edge type so dots
+  // travel along the path at a speed tied to the edge's flow rate.
   const edgesForFlow = useMemo<Edge[]>(() => {
     if (!result || !runMeta || result.elapsedMs <= 0) return edges;
     const flowByKey = new Map<string, number>();
@@ -667,11 +685,17 @@ function EditorCanvas() {
       const key = `${e.source}→${e.target}`;
       const flowed = flowByKey.get(key);
       if (flowed === undefined) return e;
+      const flowRate = result.elapsedMs > 0 ? flowed / result.elapsedMs : 0;
       const perHour = (flowed / result.elapsedMs) * 3_600_000;
       const label = `${perHour.toLocaleString("en-US", { maximumFractionDigits: 0 })}/h`;
-      return { ...e, label, animated: flowed > 0 };
+      return {
+        ...e,
+        label,
+        animated: !animateFlow && flowed > 0,
+        ...(animateFlow && flowed > 0 ? { type: "animated", data: { ...e.data, flowRate } } : {}),
+      };
     });
-  }, [edges, result, runMeta]);
+  }, [edges, result, runMeta, animateFlow]);
 
   return (
     <div className="space-y-3">
@@ -732,12 +756,56 @@ function EditorCanvas() {
                 <FolderOpen className="h-4 w-4" />
                 Scenarios
               </Button>
-              <Button variant="outline" size="sm" onClick={handleReset} className="w-full">
-                Reset canvas
-              </Button>
+              {confirmReset ? (
+                <div className="flex items-center justify-between gap-1 text-xs">
+                  <span className="text-muted-foreground">Reset?</span>
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        setConfirmReset(false);
+                        handleReset();
+                      }}
+                    >
+                      Yes
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setConfirmReset(false);
+                      }}
+                    >
+                      No
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setConfirmReset(true);
+                  }}
+                  className="w-full"
+                >
+                  Reset canvas
+                </Button>
+              )}
               {result && runMeta ? (
                 <>
                   <div className="border-border my-2 border-t" />
+                  <label className="flex items-center gap-2 text-xs font-medium">
+                    <input
+                      type="checkbox"
+                      checked={animateFlow}
+                      onChange={(e) => {
+                        setAnimateFlow(e.target.checked);
+                      }}
+                      className="accent-sim-running h-4 w-4"
+                    />
+                    Animate flow on edges
+                  </label>
                   <Button
                     variant="outline"
                     size="sm"
@@ -788,6 +856,7 @@ function EditorCanvas() {
             nodes={nodes}
             edges={edgesForFlow}
             nodeTypes={NODE_TYPES}
+            edgeTypes={EDGE_TYPES}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
@@ -1061,65 +1130,94 @@ function EditorCanvas() {
                           </div>
                         </div>
                         <div className="flex gap-1">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              const ok = window.confirm(
-                                `Load "${s.name}"? Unsaved changes to the canvas will be lost.`,
-                              );
-                              if (!ok) return;
-                              loadScenarioInto(s.name);
-                            }}
-                          >
-                            Load
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              const ok = window.confirm(
-                                `Load "${s.name}" and run? Unsaved changes to the canvas will be lost.`,
-                              );
-                              if (!ok) return;
-                              if (loadScenarioInto(s.name)) {
-                                setTimeout(() => {
-                                  handleRun();
-                                }, 0);
-                              }
-                            }}
-                          >
-                            Load + Run
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              handleCompare(s.name);
-                            }}
-                          >
-                            Compare
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`Delete ${s.name}`}
-                            onClick={() => {
-                              const ok = window.confirm(`Delete saved scenario "${s.name}"?`);
-                              if (!ok) return;
-                              deleteScenario(s.name);
-                              setScenarios(listScenarios());
-                              setHistoryByScenario((prev) => {
-                                const next = { ...prev };
-                                delete next[s.name];
-                                return next;
-                              });
-                              if (activeScenarioName === s.name) setActiveScenarioName(null);
-                              toast.info(`Deleted "${s.name}"`);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          {confirmAction && confirmAction.scenario === s.name ? (
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="text-muted-foreground">
+                                {confirmAction.kind === "load"
+                                  ? "Load? Unsaved canvas lost."
+                                  : confirmAction.kind === "load-run"
+                                    ? "Load + Run? Unsaved canvas lost."
+                                    : "Delete?"}
+                              </span>
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  const action = confirmAction;
+                                  setConfirmAction(null);
+                                  if (action.kind === "delete") {
+                                    deleteScenario(s.name);
+                                    setScenarios(listScenarios());
+                                    setHistoryByScenario((prev) => {
+                                      const next = { ...prev };
+                                      delete next[s.name];
+                                      return next;
+                                    });
+                                    if (activeScenarioName === s.name) setActiveScenarioName(null);
+                                    toast.info(`Deleted "${s.name}"`);
+                                  } else if (action.kind === "load") {
+                                    loadScenarioInto(s.name);
+                                  } else if (action.kind === "load-run") {
+                                    if (loadScenarioInto(s.name)) {
+                                      setTimeout(() => {
+                                        handleRun();
+                                      }, 0);
+                                    }
+                                  }
+                                }}
+                              >
+                                Yes
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setConfirmAction(null);
+                                }}
+                              >
+                                No
+                              </Button>
+                            </div>
+                          ) : (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setConfirmAction({ scenario: s.name, kind: "load" });
+                                }}
+                              >
+                                Load
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setConfirmAction({ scenario: s.name, kind: "load-run" });
+                                }}
+                              >
+                                Load + Run
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  handleCompare(s.name);
+                                }}
+                              >
+                                Compare
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Delete ${s.name}`}
+                                onClick={() => {
+                                  setConfirmAction({ scenario: s.name, kind: "delete" });
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </div>
                       {history.length > 0 ? (

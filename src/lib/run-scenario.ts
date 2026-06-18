@@ -32,6 +32,8 @@ const CAPS_ID = asMaterialId("caps");
 export interface ScenarioRunMeta {
   chainNodeIds: string[];
   stationLabels: string[];
+  /** Stable station keys aligned with chainNodeIds. Used for cross-run matching. */
+  stationKeys: string[];
   /** "sourceNodeId→targetNodeId" keys, in the order the engine returned them. */
   edgeKeys: string[];
 }
@@ -172,6 +174,7 @@ export function runScenario(
       runMeta: {
         chainNodeIds: [...translation.chainNodeIds],
         stationLabels: [...translation.stationLabels],
+        stationKeys: [...translation.stationKeys],
         edgeKeys: translation.topology
           ? translation.topology.edges.map((e) => `${e.source}→${e.target}`)
           : translation.chainNodeIds

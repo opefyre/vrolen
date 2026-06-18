@@ -80,6 +80,16 @@ describe("graphToChainOptions", () => {
     expect([...r.skippedNodeIds].sort()).toEqual(["c", "d"]);
   });
 
+  it("returns stationKeys aligned with chainNodeIds (falls back to id when missing)", () => {
+    // a has an explicit stationKey; b does not — should fall back to its id.
+    const nodes = [node("a", { cycleMs: 50 }), node("b", { cycleMs: 100 })];
+    (nodes[0]!.data as Record<string, unknown>).stationKey = "key-A";
+    const edges = [edge("a", "b")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.stationKeys).toEqual(["key-A", "b"]);
+  });
+
   it("ignores self-loops and edges referencing unknown ids", () => {
     const nodes = [node("a", { cycleMs: 50 }), node("b", { cycleMs: 100 })];
     const edges = [
