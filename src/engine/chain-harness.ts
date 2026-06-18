@@ -17,6 +17,7 @@
  * the public barrel.
  */
 
+import { detectBottlenecks, type BottleneckCandidate } from "./bottleneck";
 import { Buffer, TrackedBuffer } from "./buffer";
 import { CycleExecutor } from "./cycle-execution";
 import type { Distribution } from "./distribution";
@@ -26,6 +27,7 @@ import { newStationId } from "./ids";
 import type { Prng } from "./prng";
 import { Scheduler } from "./scheduler";
 import { StationStateMachine } from "./state-machine";
+import { StateTimeTracker } from "./state-time-tracker";
 
 interface TrackedPart {
   readonly id: number;
@@ -42,6 +44,8 @@ export interface ChainResult {
   /** W — average time-in-system (exit - enter) per exited part. */
   readonly avgTimeInSystemW: number;
   readonly perStationCompleted: readonly number[];
+  /** Bottleneck candidates ranked by time-in-Running descending. */
+  readonly bottlenecks: readonly BottleneckCandidate[];
 }
 
 export interface ChainOptions {
@@ -50,6 +54,8 @@ export interface ChainOptions {
   readonly horizonMs: number;
   readonly warmupMs: number;
   readonly prng: Prng;
+  /** Optional labels for each station (matches stationCycleTimes by index). */
+  readonly stationLabels?: readonly string[];
 }
 
 export function runChain(opts: ChainOptions): ChainResult {
@@ -58,6 +64,17 @@ export function runChain(opts: ChainOptions): ChainResult {
 
   const stationIds: StationId[] = Array.from({ length: n }, () => newStationId());
   const stateMachines = stationIds.map((id) => new StationStateMachine(id));
+  const stateTimeTrackers: StateTimeTracker[] = stateMachines.map(
+    (sm) => new StateTimeTracker(sm.state, 0),
+  );
+  // Wire each tracker to its state machine.
+  for (let i = 0; i < n; i++) {
+    const tracker = stateTimeTrackers[i] as StateTimeTracker;
+    const sm = stateMachines[i] as StationStateMachine;
+    sm.onStateChange((e) => {
+      tracker.recordTransition(e.toState, e.timeMs);
+    });
+  }
   const scheduler = new Scheduler<EngineEvent>();
 
   const inputBuffer = new Buffer<TrackedPart>(10_000_000);
@@ -182,6 +199,18 @@ export function runChain(opts: ChainOptions): ChainResult {
   const inFlightApprox = executors.reduce((s, e) => s + e.config.capacity, 0);
   const averageWipL = bufferWipL + inFlightApprox;
 
+  // Finalize trackers up to the horizon and compute bottlenecks.
+  for (const tracker of stateTimeTrackers) {
+    tracker.finalize(endTimeMs);
+  }
+  const bottlenecks = detectBottlenecks(
+    stationIds.map((id, i) => {
+      const label = opts.stationLabels?.[i];
+      const tracker = stateTimeTrackers[i] as StateTimeTracker;
+      return label !== undefined ? { stationId: id, label, tracker } : { stationId: id, tracker };
+    }),
+  );
+
   return {
     completed: exitsInWindow.length,
     elapsedMs: measureWindowMs,
@@ -189,5 +218,6 @@ export function runChain(opts: ChainOptions): ChainResult {
     throughputLambda,
     avgTimeInSystemW,
     perStationCompleted: executors.map((e) => e.completed),
+    bottlenecks,
   };
 }

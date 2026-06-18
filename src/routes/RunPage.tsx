@@ -9,7 +9,7 @@
  * so the numbers shown here mirror what the test suite asserts. Real scenario
  * authoring lives behind the editor (E08, future sprints).
  */
-import { Activity, Gauge, Layers, Play, Timer } from "lucide-react";
+import { Activity, AlertTriangle, Gauge, Layers, Play, Timer } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,26 @@ function formatNumber(n: number, digits = 2): string {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
+}
+
+function stateToColorClass(state: string): string {
+  switch (state) {
+    case "Running":
+      return "bg-sim-running";
+    case "Starved":
+      return "bg-sim-starved";
+    case "BlockedOut":
+      return "bg-sim-blocked";
+    case "Down":
+      return "bg-sim-down";
+    case "Setup":
+      return "bg-sim-setup";
+    case "Maintenance":
+      return "bg-sim-maintenance";
+    case "Idle":
+    default:
+      return "bg-sim-idle";
+  }
 }
 
 function KpiCard({
@@ -81,6 +101,7 @@ export default function RunPage() {
           horizonMs: HORIZON_MS,
           warmupMs: WARMUP_MS,
           prng: new SeededPrng(0xc0ffee),
+          stationLabels: FIXTURE_LABELS,
         });
         const wallMs = performance.now() - t0;
         setResult(r);
@@ -168,6 +189,63 @@ export default function RunPage() {
               hint="per exited part, on average"
             />
           </div>
+
+          {result.bottlenecks.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="font-heading flex items-center gap-2 text-base">
+                  <AlertTriangle className="text-sim-blocked-foreground h-4 w-4" />
+                  Bottleneck analysis
+                </CardTitle>
+                <CardDescription>
+                  Station with the highest running % is the constraint. For non-bottleneck stations,
+                  the dominant non-Running state explains why they aren&apos;t running more.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {result.bottlenecks.map((b, idx) => (
+                    <div
+                      key={String(b.stationId)}
+                      className="border-border bg-card flex flex-col gap-2 rounded-md border p-3"
+                    >
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-muted-foreground font-mono text-xs">
+                            #{idx + 1}
+                          </span>
+                          <span className="font-medium">{b.label ?? String(b.stationId)}</span>
+                          {idx === 0 ? (
+                            <span className="bg-sim-running text-sim-running-foreground rounded-full px-2 py-0.5 text-xs font-medium">
+                              bottleneck
+                            </span>
+                          ) : null}
+                        </div>
+                        <span className="font-mono text-sm tabular-nums">
+                          {formatNumber(b.runningPct * 100, 1)}% running
+                        </span>
+                      </div>
+                      <div className="text-muted-foreground text-xs">
+                        Primary {idx === 0 ? "non-running state" : "reason"}:{" "}
+                        <span className="text-foreground font-medium">{b.primaryReason}</span> ·{" "}
+                        {formatNumber(b.primaryReasonPct * 100, 1)}% of time
+                      </div>
+                      <div className="flex gap-1">
+                        {b.breakdown.map((seg) => (
+                          <div
+                            key={seg.state}
+                            title={`${seg.state}: ${(seg.pct * 100).toFixed(1)}%`}
+                            className={`h-2 rounded-sm ${stateToColorClass(seg.state)}`}
+                            style={{ width: `${String(Math.max(seg.pct * 100, 1))}%` }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
 
           <Card>
             <CardHeader>

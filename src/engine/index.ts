@@ -161,6 +161,11 @@ export { MaintenanceManager } from "./maintenance";
 export type { PoolWorker, ShiftWindow } from "./worker-pool";
 export { WorkerPool } from "./worker-pool";
 
+// Time-in-state tracking + bottleneck identification.
+export { StateTimeTracker } from "./state-time-tracker";
+export type { BottleneckCandidate, BottleneckReason } from "./bottleneck";
+export { detectBottlenecks, topBottlenecks } from "./bottleneck";
+
 // Multi-station chain harness — wires N CycleExecutors and reports Little's-Law metrics.
 // Originally test-only; promoted to public API in VROL-573 (the first UI consumer of the engine).
 export type { ChainResult, ChainOptions } from "./chain-harness";
