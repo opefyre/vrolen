@@ -69,6 +69,12 @@ function distributionOf(node: Node): Distribution {
   return constant(Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_CYCLE_MS);
 }
 
+function setupDistributionOf(node: Node): Distribution | undefined {
+  const data = node.data as { setupDistribution?: unknown } | undefined;
+  if (isDistribution(data?.setupDistribution)) return data.setupDistribution;
+  return undefined;
+}
+
 function labelOf(node: Node): string {
   const raw = (node.data as { label?: unknown } | undefined)?.label;
   return typeof raw === "string" && raw.length > 0 ? raw : node.id;
@@ -181,10 +187,12 @@ export function graphToChainOptions(
 
       const topoNodes: ChainTopologyNode[] = topoOrder.map((id) => {
         const node = nodeById.get(id)!;
+        const setup = setupDistributionOf(node);
         return {
           id,
           label: labelOf(node),
           cycleTimeMs: distributionOf(node),
+          ...(setup ? { setupTimeMs: setup } : {}),
         };
       });
       const topoEdges: ChainTopologyEdge[] = edges

@@ -70,6 +70,7 @@ import {
   type ChainWorkerConfig,
   constant,
   type Distribution,
+  meanOf,
   runChain,
   SeededPrng,
 } from "@/engine";
@@ -186,6 +187,7 @@ function EditorCanvas() {
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [scenariosOpen, setScenariosOpen] = useState<boolean>(false);
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>(() => listScenarios());
+  const [saveNameDraft, setSaveNameDraft] = useState<string>("");
 
   useEffect(() => {
     saveRunSettings(settings);
@@ -357,20 +359,20 @@ function EditorCanvas() {
       if (Array.isArray(raw)) return raw.filter((s): s is string => typeof s === "string");
       return [];
     });
-    const workerSkills = settings.workers.skills.length > 0 ? settings.workers.skills : ["any"];
-    const workersCfg: ChainWorkerConfig | undefined = settings.workers.enabled
-      ? {
-          workers: Array.from({ length: Math.max(1, settings.workers.count) }, (_, i) => ({
-            id: asResourceId(`w${String(i + 1)}`),
-            name: `Worker ${String(i + 1)}`,
-            skills: [...workerSkills],
-            shifts: [{ startMs: 0, endMs: Math.max(1, settings.workers.shiftEndMs) }],
-          })),
-          perStationSkills,
-          // Default = empty → any worker on shift can take an unannotated station
-          requireDefault: [],
-        }
-      : undefined;
+    const workersCfg: ChainWorkerConfig | undefined =
+      settings.workers.enabled && settings.workers.list.length > 0
+        ? {
+            workers: settings.workers.list.map((entry, i) => ({
+              id: asResourceId(`w${String(i + 1)}`),
+              name: entry.name || `Worker ${String(i + 1)}`,
+              skills: entry.skills.length > 0 ? entry.skills : ["any"],
+              shifts: [{ startMs: 0, endMs: Math.max(1, entry.shiftEndMs) }],
+            })),
+            perStationSkills,
+            // Default = empty → any worker on shift can take an unannotated station
+            requireDefault: [],
+          }
+        : undefined;
 
     setIsRunning(true);
     setResult(null);
@@ -408,6 +410,31 @@ function EditorCanvas() {
       }
     }, 0);
   }, [nodes, edges, selectedNodeId, settings]);
+
+  const loadScenarioInto = useCallback(
+    (name: string): boolean => {
+      const payload = loadScenario(name);
+      if (!payload) {
+        toast.error("Couldn't load scenario");
+        return false;
+      }
+      setNodes(payload.graph.nodes);
+      setEdges(payload.graph.edges);
+      setSettings(payload.settings);
+      setSelectedNodeId(null);
+      setResult(null);
+      setRunMeta(null);
+      nodeIdRef.current =
+        payload.graph.nodes.reduce(
+          (max, n) => Math.max(max, parseInt(n.id.replace(/\D/g, ""), 10) || 0),
+          0,
+        ) + 1;
+      setScenariosOpen(false);
+      toast.success(`Loaded "${name}"`);
+      return true;
+    },
+    [setNodes, setEdges, setSettings],
+  );
 
   // Render edges with per-edge throughput labels from the last run, if we have one.
   const edgesForFlow = useMemo<Edge[]>(() => {
@@ -566,6 +593,15 @@ function EditorCanvas() {
                   updateSelectedNodeData({ cycleDistribution: d });
                 }}
               />
+              <SetupTimeEditor
+                value={
+                  (selectedNode.data as { setupDistribution?: Distribution }).setupDistribution ??
+                  null
+                }
+                onChange={(d) => {
+                  updateSelectedNodeData({ setupDistribution: d ?? undefined });
+                }}
+              />
             </CardContent>
             <CardContent className="border-border space-y-3 border-t pt-3">
               <SkillsField
@@ -625,31 +661,49 @@ function EditorCanvas() {
             </SheetDescription>
           </SheetHeader>
           <div className="space-y-4 px-4 pb-6">
-            <div className="space-y-2">
-              <Button
-                size="sm"
-                className="w-full gap-2"
-                onClick={() => {
-                  const name = window.prompt("Save current scenario as:");
-                  if (!name) return;
-                  try {
-                    saveScenario(name, {
-                      graph: { nodes, edges },
-                      settings,
-                      savedAtMs: performance.now(),
-                    });
-                    setScenarios(listScenarios());
-                    toast.success(`Saved "${name.trim()}"`);
-                  } catch (e) {
-                    const message = e instanceof Error ? e.message : String(e);
-                    toast.error("Couldn't save scenario", { description: message });
-                  }
-                }}
-              >
+            <form
+              className="flex items-end gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const name = saveNameDraft.trim();
+                if (!name) {
+                  toast.error("Scenario name required");
+                  return;
+                }
+                try {
+                  saveScenario(name, {
+                    graph: { nodes, edges },
+                    settings,
+                    savedAtMs: performance.now(),
+                  });
+                  setScenarios(listScenarios());
+                  setSaveNameDraft("");
+                  toast.success(`Saved "${name}"`);
+                } catch (err) {
+                  const message = err instanceof Error ? err.message : String(err);
+                  toast.error("Couldn't save scenario", { description: message });
+                }
+              }}
+            >
+              <div className="flex flex-1 flex-col gap-1">
+                <label htmlFor="rs-save-name" className="text-muted-foreground text-xs font-medium">
+                  Save current as
+                </label>
+                <Input
+                  id="rs-save-name"
+                  type="text"
+                  value={saveNameDraft}
+                  placeholder="e.g. diamond-demo"
+                  onChange={(e) => {
+                    setSaveNameDraft(e.target.value);
+                  }}
+                />
+              </div>
+              <Button type="submit" size="sm" className="gap-2">
                 <Save className="h-4 w-4" />
-                Save current
+                Save
               </Button>
-            </div>
+            </form>
             {scenarios.length === 0 ? (
               <p className="text-muted-foreground text-sm">
                 No saved scenarios yet. Click <strong>Save current</strong> to capture the graph +
@@ -678,28 +732,27 @@ function EditorCanvas() {
                             `Load "${s.name}"? Unsaved changes to the canvas will be lost.`,
                           );
                           if (!ok) return;
-                          const payload = loadScenario(s.name);
-                          if (!payload) {
-                            toast.error("Couldn't load scenario");
-                            return;
-                          }
-                          setNodes(payload.graph.nodes);
-                          setEdges(payload.graph.edges);
-                          setSettings(payload.settings);
-                          setSelectedNodeId(null);
-                          setResult(null);
-                          setRunMeta(null);
-                          // Update the node-id counter to avoid duplicates.
-                          nodeIdRef.current =
-                            payload.graph.nodes.reduce(
-                              (max, n) => Math.max(max, parseInt(n.id.replace(/\D/g, ""), 10) || 0),
-                              0,
-                            ) + 1;
-                          setScenariosOpen(false);
-                          toast.success(`Loaded "${s.name}"`);
+                          loadScenarioInto(s.name);
                         }}
                       >
                         Load
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          const ok = window.confirm(
+                            `Load "${s.name}" and run? Unsaved changes to the canvas will be lost.`,
+                          );
+                          if (!ok) return;
+                          if (loadScenarioInto(s.name)) {
+                            // Run on the next tick so state updates settle first.
+                            setTimeout(() => {
+                              handleRun();
+                            }, 0);
+                          }
+                        }}
+                      >
+                        Load + Run
                       </Button>
                       <Button
                         variant="ghost"
@@ -1002,80 +1055,126 @@ function EditorCanvas() {
                 Workers (require 1 per station)
               </label>
               {settings.workers.enabled ? (
-                <>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <div className="flex flex-col gap-1">
-                      <label
-                        htmlFor="rs-worker-count"
-                        className="text-muted-foreground text-xs font-medium"
-                      >
-                        Worker count
-                      </label>
-                      <Input
-                        id="rs-worker-count"
-                        type="number"
-                        min={1}
-                        max={20}
-                        value={settings.workers.count}
-                        onChange={(e) => {
-                          const n = Number(e.target.value);
-                          if (Number.isFinite(n) && n >= 1) {
+                <div className="space-y-3">
+                  {settings.workers.list.map((entry, idx) => (
+                    <div key={idx} className="border-border space-y-2 rounded-md border p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <Input
+                          type="text"
+                          value={entry.name}
+                          onChange={(e) => {
+                            const v = e.target.value;
                             setSettings((s) => ({
                               ...s,
-                              workers: { ...s.workers, count: Math.floor(n) },
+                              workers: {
+                                ...s.workers,
+                                list: s.workers.list.map((w, i) =>
+                                  i === idx ? { ...w, name: v } : w,
+                                ),
+                              },
                             }));
-                          }
-                        }}
-                        className="font-mono tabular-nums"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label
-                        htmlFor="rs-worker-shift"
-                        className="text-muted-foreground text-xs font-medium"
-                      >
-                        Shift end (ms)
-                      </label>
-                      <Input
-                        id="rs-worker-shift"
-                        type="number"
-                        min={1000}
-                        step={1000}
-                        value={settings.workers.shiftEndMs}
-                        onChange={(e) => {
-                          const n = Number(e.target.value);
-                          if (Number.isFinite(n) && n > 0) {
+                          }}
+                          placeholder={`Worker ${String(idx + 1)}`}
+                          className="text-sm"
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Remove worker ${String(idx + 1)}`}
+                          disabled={settings.workers.list.length <= 1}
+                          onClick={() => {
                             setSettings((s) => ({
                               ...s,
-                              workers: { ...s.workers, shiftEndMs: Math.floor(n) },
+                              workers: {
+                                ...s.workers,
+                                list: s.workers.list.filter((_, i) => i !== idx),
+                              },
                             }));
-                          }
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <SkillsField
+                        value={entry.skills}
+                        onChange={(next) => {
+                          setSettings((s) => ({
+                            ...s,
+                            workers: {
+                              ...s.workers,
+                              list: s.workers.list.map((w, i) =>
+                                i === idx ? { ...w, skills: next.length > 0 ? next : ["any"] } : w,
+                              ),
+                            },
+                          }));
                         }}
-                        className="font-mono tabular-nums"
+                        label="Skills"
+                        placeholder="e.g. capping, qc, any"
+                        id={`rs-worker-${String(idx)}-skills`}
                       />
+                      <div className="flex flex-col gap-1">
+                        <label
+                          htmlFor={`rs-worker-${String(idx)}-shift`}
+                          className="text-muted-foreground text-xs font-medium"
+                        >
+                          Shift end (ms)
+                        </label>
+                        <Input
+                          id={`rs-worker-${String(idx)}-shift`}
+                          type="number"
+                          min={1000}
+                          step={1000}
+                          value={entry.shiftEndMs}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            if (Number.isFinite(n) && n > 0) {
+                              setSettings((s) => ({
+                                ...s,
+                                workers: {
+                                  ...s.workers,
+                                  list: s.workers.list.map((w, i) =>
+                                    i === idx ? { ...w, shiftEndMs: Math.floor(n) } : w,
+                                  ),
+                                },
+                              }));
+                            }
+                          }}
+                          className="font-mono tabular-nums"
+                        />
+                      </div>
                     </div>
-                  </div>
-                  <p className="text-muted-foreground text-xs">
-                    {settings.workers.count >= 3
-                      ? "≥3 workers — no labor bottleneck on a 3-station chain."
-                      : settings.workers.count === 1
-                        ? "Single worker — chain is rate-limited by labor."
-                        : `${String(settings.workers.count)} workers — partial labor contention.`}
-                  </p>
-                  <SkillsField
-                    value={settings.workers.skills}
-                    onChange={(next) => {
+                  ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full gap-2"
+                    onClick={() => {
                       setSettings((s) => ({
                         ...s,
-                        workers: { ...s.workers, skills: next.length > 0 ? next : ["any"] },
+                        workers: {
+                          ...s.workers,
+                          list: [
+                            ...s.workers.list,
+                            {
+                              name: `Worker ${String(s.workers.list.length + 1)}`,
+                              skills: ["any"],
+                              shiftEndMs: 60_000,
+                            },
+                          ],
+                        },
                       }));
                     }}
-                    label="Worker skills (shared)"
-                    placeholder="e.g. capping, qc, any"
-                    id="rs-worker-skills"
-                    helpText="A worker matches a station only if its skills are a superset of the station's required skills."
-                  />
-                </>
+                  >
+                    Add worker
+                  </Button>
+                  <p className="text-muted-foreground text-xs">
+                    {settings.workers.list.length >= 3
+                      ? "≥3 workers — no labor bottleneck on a 3-station chain."
+                      : settings.workers.list.length === 1
+                        ? "Single worker — chain is rate-limited by labor."
+                        : `${String(settings.workers.list.length)} workers — partial labor contention.`}
+                  </p>
+                </div>
               ) : null}
             </section>
 
@@ -1264,6 +1363,43 @@ function SkillsField({
         </div>
       ) : null}
       {helpText ? <p className="text-muted-foreground text-xs">{helpText}</p> : null}
+    </div>
+  );
+}
+
+function SetupTimeEditor({
+  value,
+  onChange,
+}: {
+  value: Distribution | null;
+  onChange: (d: Distribution | null) => void;
+}) {
+  const enabled = value !== null;
+  return (
+    <div className="border-border space-y-2 rounded-md border border-dashed p-3">
+      <label className="flex items-center gap-2 text-xs font-medium">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => {
+            onChange(e.target.checked ? constant(100) : null);
+          }}
+          className="accent-sim-running h-4 w-4"
+        />
+        Setup / changeover time
+      </label>
+      {enabled ? (
+        <DistributionEditor
+          value={value}
+          onChange={(d) => {
+            onChange(d);
+          }}
+        />
+      ) : (
+        <p className="text-muted-foreground text-xs">
+          When enabled, the station goes Idle → Setup → Running for each cycle.
+        </p>
+      )}
     </div>
   );
 }
@@ -1485,6 +1621,15 @@ function DistributionEditor({
           </p>
         </>
       ) : null}
+      <p className="text-muted-foreground text-xs">
+        Expected ≈{" "}
+        <span className="font-mono tabular-nums">
+          {(3_600_000 / Math.max(1, meanOf(value))).toLocaleString("en-US", {
+            maximumFractionDigits: 0,
+          })}
+        </span>{" "}
+        parts/hour at this station alone (no blocking / starvation).
+      </p>
     </div>
   );
 }

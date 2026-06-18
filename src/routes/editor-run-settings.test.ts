@@ -48,4 +48,29 @@ describe("editor-run-settings — mergeWithDefaults", () => {
     expect(merged.breakdowns.mttrMs).toBe(1_500);
     expect(merged.materials.enabled).toBe(DEFAULT_RUN_SETTINGS.materials.enabled);
   });
+
+  it("migrates legacy workers payload (count + shared skills + shiftEndMs) into list (VROL-587)", () => {
+    const merged = mergeWithDefaults({
+      workers: { enabled: true, count: 3, skills: ["qc"], shiftEndMs: 30_000, list: [] },
+    });
+    expect(merged.workers.enabled).toBe(true);
+    expect(merged.workers.list).toHaveLength(3);
+    expect(merged.workers.list[0]?.name).toBe("Worker 1");
+    expect(merged.workers.list[0]?.skills).toEqual(["qc"]);
+    expect(merged.workers.list[0]?.shiftEndMs).toBe(30_000);
+  });
+
+  it("keeps an explicit workers.list as-is when provided", () => {
+    const merged = mergeWithDefaults({
+      workers: {
+        enabled: true,
+        list: [
+          { name: "Alice", skills: ["filling"], shiftEndMs: 60_000 },
+          { name: "Bob", skills: ["capping"], shiftEndMs: 60_000 },
+        ],
+      },
+    });
+    expect(merged.workers.list.map((w) => w.name)).toEqual(["Alice", "Bob"]);
+    expect(merged.workers.list[1]?.skills).toEqual(["capping"]);
+  });
 });

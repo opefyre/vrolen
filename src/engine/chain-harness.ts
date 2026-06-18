@@ -188,6 +188,11 @@ export interface ChainTopologyNode {
   readonly label?: string;
   /** Cycle-time sampling distribution. */
   readonly cycleTimeMs: Distribution;
+  /**
+   * Optional per-cycle setup / changeover time. When set, the station goes
+   * Idle → Setup → Running for each cycle. Defaults to no setup.
+   */
+  readonly setupTimeMs?: Distribution;
 }
 
 export interface ChainTopologyEdge {
@@ -233,6 +238,7 @@ export interface ChainOptions {
 interface NormalizedTopology {
   nodeIds: string[];
   cycleTimes: Distribution[];
+  setupTimes: (Distribution | undefined)[];
   labels: (string | undefined)[];
   /** Edges in input order; each carries source + target as node-array indices. */
   edges: { sourceIdx: number; targetIdx: number }[];
@@ -303,6 +309,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     return {
       nodeIds: nodes.map((n) => n.id),
       cycleTimes: nodes.map((n) => n.cycleTimeMs),
+      setupTimes: nodes.map((n) => n.setupTimeMs),
       labels: nodes.map((n) => n.label),
       edges: normalizedEdges,
       outgoing,
@@ -327,6 +334,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
   return {
     nodeIds: Array.from({ length: n }, (_, i) => `s${String(i)}`),
     cycleTimes: [...times],
+    setupTimes: Array.from({ length: n }, () => undefined),
     labels: Array.from({ length: n }, (_, i) => opts.stationLabels?.[i]),
     edges,
     outgoing,
@@ -442,6 +450,7 @@ export function runChain(opts: ChainOptions): ChainResult {
     const recipe = recipeByStation.get(i);
     const requiredSkills =
       opts.workers?.perStationSkills?.[i] ?? opts.workers?.requireDefault ?? undefined;
+    const setupTimeMs = topology.setupTimes[i];
     const cfg: CycleConfig<TrackedPart> = {
       stationId: stationIds[i] as StationId,
       cycleTimeMs: topology.cycleTimes[i] as Distribution,
@@ -449,6 +458,7 @@ export function runChain(opts: ChainOptions): ChainResult {
       capacity: 1,
       upstream: upstreamFor(i),
       downstream: downstreamFor(i),
+      ...(setupTimeMs ? { setupTimeMs } : {}),
       ...(materialPool && recipe?.length ? { materialPool, materialRequirements: recipe } : {}),
       ...(workerPool ? { workerPool, ...(requiredSkills ? { requiredSkills } : {}) } : {}),
     };
@@ -541,8 +551,12 @@ export function runChain(opts: ChainOptions): ChainResult {
     if (ev.payload.kind === "breakdown-start") {
       const idx = stationIds.indexOf(ev.payload.stationId);
       const manager = breakdownManagers?.[idx];
+      const executor = executors[idx];
       if (manager) {
         manager.handleBreakdown(ev.timeMs);
+        // VROL-125 — pause in-flight parts so the resume on repair can pick up
+        // where they left off, instead of losing them on the Down-state scrap path.
+        if (executor) executor.handleBreakdown(ev.timeMs);
         if (breakdownCounts) breakdownCounts[idx] = (breakdownCounts[idx] ?? 0) + 1;
       }
       continue;
@@ -552,7 +566,10 @@ export function runChain(opts: ChainOptions): ChainResult {
       const manager = breakdownManagers?.[idx];
       const executor = executors[idx];
       if (manager) manager.handleRepair(ev.timeMs);
-      if (executor) executor.attemptStart(ev.timeMs);
+      if (executor) {
+        executor.handleRepair(ev.timeMs);
+        executor.attemptStart(ev.timeMs);
+      }
       continue;
     }
     if (ev.payload.kind !== "cycle-complete") continue;
@@ -561,7 +578,7 @@ export function runChain(opts: ChainOptions): ChainResult {
     const executor = executors[idx];
     if (!executor) continue;
 
-    executor.handleCycleComplete(ev.timeMs);
+    executor.handleCycleComplete(ev.timeMs, ev.payload.partIndex);
 
     // After this station pulled from each of its upstream buffers (inside
     // attemptStart), each of those upstream stations' downstream just gained

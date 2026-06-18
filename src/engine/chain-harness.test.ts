@@ -219,6 +219,44 @@ describe("runChain — breakdowns (VROL-576)", () => {
     expect(breakdownAvailability).toBeLessThan(baseAvailability);
   });
 
+  it("part-resume on repair preserves in-flight parts across a breakdown (VROL-125)", () => {
+    // Single-station chain with a long cycle time. A breakdown fires shortly after
+    // the cycle starts; once repaired, the part should still complete (no scrap).
+    // Compare scrapped count vs. baseline (a run with the same fixture but no
+    // breakdowns) — with part-resume on, scrapped should be ~0.
+    const cycleMs = 1000;
+    const common = {
+      stationCycleTimes: [constant(cycleMs)],
+      interStationBufferCapacity: 10,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      stationLabels: ["S"],
+    };
+    const baseline = runChain({ ...common, prng: new SeededPrng(0xc0ffee) });
+    const withBreakdowns = runChain({
+      ...common,
+      prng: new SeededPrng(0xc0ffee),
+      breakdowns: {
+        // Frequent breakdowns mid-cycle, fast repair.
+        mtbfMs: { kind: "exponential", rate: 1 / 500 },
+        mttrMs: constant(200),
+      },
+    });
+
+    // Some breakdowns must have happened.
+    expect(withBreakdowns.perStationBreakdowns).toBeDefined();
+    const breakdownCount = (withBreakdowns.perStationBreakdowns ?? [0])[0] ?? 0;
+    expect(breakdownCount).toBeGreaterThan(0);
+
+    // Throughput should drop relative to baseline (breakdowns DO cost time), but
+    // far less than a "scrap-on-breakdown" implementation: comparing total parts
+    // produced before vs after, we should still complete plenty.
+    expect(withBreakdowns.completed).toBeGreaterThan(baseline.completed * 0.4);
+    // OEE Performance might not be perfect because cycles were paused, but it
+    // shouldn't reflect a part-by-part scrap (which would crater Quality).
+    expect(withBreakdowns.perStationOee[0]!.quality).toBe(1);
+  });
+
   it("back-compat: no perStationBreakdowns field when breakdowns config omitted", () => {
     const result = runChain({
       stationCycleTimes: [constant(100), constant(100)],
@@ -484,6 +522,38 @@ describe("runChain — DAG topology (VROL-582)", () => {
         },
       }),
     ).toThrow(/source/);
+  });
+
+  it("per-node setup time is honored on a DAG node (VROL-586)", () => {
+    // Diamond fixture; QC1 has a 100ms setup before every cycle, QC2 does not.
+    // Expected: QC1 completes fewer parts than QC2 given the same cycle time.
+    const result = runChain({
+      interStationBufferCapacity: 10,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xc0ffee),
+      topology: {
+        nodes: [
+          { id: "src", cycleTimeMs: constant(50) },
+          {
+            id: "qc1",
+            cycleTimeMs: constant(200),
+            setupTimeMs: constant(100),
+          },
+          { id: "qc2", cycleTimeMs: constant(200) },
+          { id: "sink", cycleTimeMs: constant(50) },
+        ],
+        edges: [
+          { source: "src", target: "qc1" },
+          { source: "src", target: "qc2" },
+          { source: "qc1", target: "sink" },
+          { source: "qc2", target: "sink" },
+        ],
+      },
+    });
+    const qc1Completed = result.perStationCompleted[1] ?? 0;
+    const qc2Completed = result.perStationCompleted[2] ?? 0;
+    expect(qc2Completed).toBeGreaterThan(qc1Completed);
   });
 
   it("perEdgeFlowed counts parts that traversed each edge in a diamond", () => {

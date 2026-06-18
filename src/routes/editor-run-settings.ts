@@ -29,16 +29,23 @@ export interface BreakdownsSettings {
   mttrMs: number;
 }
 
+export interface WorkerEntry {
+  name: string;
+  skills: string[];
+  shiftEndMs: number;
+}
+
 export interface WorkersSettings {
   enabled: boolean;
-  count: number;
-  shiftEndMs: number;
+  list: WorkerEntry[];
   /**
-   * Skills shared across every generated worker. Station required skills are
-   * checked against this set; a station whose required skills aren't a subset
-   * of these starves with no-skill-available.
+   * @deprecated Kept for back-compat with older payloads. The list field is
+   * canonical from VROL-587 onward; mergeWithDefaults migrates the old shape
+   * (count + shared skills) into list and drops these fields after.
    */
-  skills: string[];
+  count?: number;
+  shiftEndMs?: number;
+  skills?: string[];
 }
 
 export interface RunSettings {
@@ -73,9 +80,7 @@ export const DEFAULT_RUN_SETTINGS: RunSettings = {
   },
   workers: {
     enabled: false,
-    count: 1,
-    shiftEndMs: 60_000,
-    skills: ["any"],
+    list: [{ name: "Worker 1", skills: ["any"], shiftEndMs: 60_000 }],
   },
 };
 
@@ -128,12 +133,38 @@ export function mergeWithDefaults(parsed: Partial<RunSettings>): RunSettings {
     },
     workers: {
       enabled: w.enabled ?? DEFAULT_RUN_SETTINGS.workers.enabled,
-      count: w.count ?? DEFAULT_RUN_SETTINGS.workers.count,
-      shiftEndMs: w.shiftEndMs ?? DEFAULT_RUN_SETTINGS.workers.shiftEndMs,
-      skills:
-        Array.isArray(w.skills) && w.skills.length > 0
-          ? w.skills.filter((s): s is string => typeof s === "string")
-          : DEFAULT_RUN_SETTINGS.workers.skills.slice(),
+      list: migrateWorkerList(w),
     },
   };
+}
+
+/**
+ * Bring legacy WorkersSettings (count + shared skills + shiftEndMs) up to the
+ * canonical list shape. New saves go through the list directly; this function
+ * only kicks in when a localStorage payload from before VROL-587 is loaded.
+ */
+function migrateWorkerList(w: Partial<WorkersSettings>): WorkerEntry[] {
+  if (Array.isArray(w.list) && w.list.length > 0) {
+    return w.list
+      .filter((e): e is WorkerEntry => !!e && typeof e === "object")
+      .map((e) => ({
+        name: typeof e.name === "string" && e.name.length > 0 ? e.name : "Worker",
+        skills:
+          Array.isArray(e.skills) && e.skills.length > 0
+            ? e.skills.filter((s): s is string => typeof s === "string")
+            : ["any"],
+        shiftEndMs: typeof e.shiftEndMs === "number" && e.shiftEndMs > 0 ? e.shiftEndMs : 60_000,
+      }));
+  }
+  const legacyCount = typeof w.count === "number" && w.count >= 1 ? Math.floor(w.count) : 1;
+  const legacySkills =
+    Array.isArray(w.skills) && w.skills.length > 0
+      ? w.skills.filter((s): s is string => typeof s === "string")
+      : ["any"];
+  const legacyShift = typeof w.shiftEndMs === "number" && w.shiftEndMs > 0 ? w.shiftEndMs : 60_000;
+  return Array.from({ length: legacyCount }, (_, i) => ({
+    name: `Worker ${String(i + 1)}`,
+    skills: [...legacySkills],
+    shiftEndMs: legacyShift,
+  }));
 }

@@ -83,10 +83,20 @@ export interface CompletionEvent<P> {
 
 export type CompletionListener<P> = (event: CompletionEvent<P>) => void;
 
+interface InFlightEntry<P> {
+  readonly partIdx: number;
+  readonly part: P;
+  readonly workerId: import("./ids").ResourceId | null;
+  scheduledAt: number;
+  isPaused: boolean;
+  remainingMs: number;
+}
+
 export class CycleExecutor<P> {
   private inProgress_ = 0;
   private completed_ = 0;
   private scrapped_ = 0;
+  private nextPartIdx_ = 0;
   /** Parts that finished their cycle but couldn't push (downstream was full). Drained when downstream clears. */
   private pendingPush: P[] = [];
   private listeners: CompletionListener<P>[] = [];
@@ -182,16 +192,25 @@ export class CycleExecutor<P> {
         return;
       }
 
+      const partIdx = this.nextPartIdx_++;
       this.inProgress_ += 1;
-      this.inFlight.push(part);
-      if (assignedWorkerId) this.assignedWorkers.push(assignedWorkerId);
-      else this.assignedWorkers.push(null);
 
       // If setup time is configured (and non-zero), spend it in Setup state
       // before the cycle clock starts. Otherwise, go straight to Running.
       const setupMs = this.config.setupTimeMs
         ? sample(this.config.setupTimeMs, this.prng, { min: 0 })
         : 0;
+      const cycleTimeMs = sample(this.config.cycleTimeMs, this.prng, { min: 0 });
+      const completeAt = timeMs + setupMs + cycleTimeMs;
+
+      this.inFlight.push({
+        partIdx,
+        part,
+        workerId: assignedWorkerId ?? null,
+        scheduledAt: completeAt,
+        isPaused: false,
+        remainingMs: 0,
+      });
 
       if (setupMs > 0) {
         if (state === "Idle" || state === "Starved") {
@@ -208,24 +227,14 @@ export class CycleExecutor<P> {
           kind: "setup-complete",
           stationId: this.config.stationId,
         });
-        // Also schedule the cycle-complete at setupMs + cycleTime
-        const cycleTimeMs = sample(this.config.cycleTimeMs, this.prng, { min: 0 });
-        this.scheduler.schedule(timeMs + setupMs + cycleTimeMs, {
-          kind: "cycle-complete",
-          stationId: this.config.stationId,
-          partIndex: this.completed_ + this.scrapped_ + this.inProgress_,
-        });
-      } else {
-        if (state === "Idle" || state === "Starved") {
-          this.stateMachine.transition("Running", "start-cycle", timeMs);
-        }
-        const cycleTimeMs = sample(this.config.cycleTimeMs, this.prng, { min: 0 });
-        this.scheduler.schedule(timeMs + cycleTimeMs, {
-          kind: "cycle-complete",
-          stationId: this.config.stationId,
-          partIndex: this.completed_ + this.scrapped_ + this.inProgress_,
-        });
+      } else if (state === "Idle" || state === "Starved") {
+        this.stateMachine.transition("Running", "start-cycle", timeMs);
       }
+      this.scheduler.schedule(completeAt, {
+        kind: "cycle-complete",
+        stationId: this.config.stationId,
+        partIndex: partIdx,
+      });
 
       // Loop — try to start another cycle if we have capacity + upstream parts.
     }
@@ -238,22 +247,51 @@ export class CycleExecutor<P> {
     }
   }
 
-  /** Called by the orchestrator when a cycle-complete event for this station fires. */
-  handleCycleComplete(timeMs: number): void {
-    if (this.inFlight.length === 0) {
-      throw new Error(
-        `cycle-complete fired for station ${String(this.config.stationId)} with no parts in flight`,
-      );
+  /**
+   * Called by the orchestrator when a cycle-complete event for this station fires.
+   *
+   * The optional `partIndex` is the event's payload.partIndex — when provided,
+   * the executor looks up the corresponding in-flight entry by id (rather than
+   * FIFO-shifting the head). This is required for VROL-125 part-resume:
+   * pre-breakdown cycle-complete events that were already scheduled stay in
+   * the scheduler and fire DURING/AFTER the Down period. The executor uses
+   * partIndex + scheduledAt to recognize them as stale and ignore them.
+   *
+   * Legacy callers (older tests) pass no partIndex and get FIFO behavior;
+   * paused entries are skipped at the head so the legacy path stays well-
+   * defined when breakdown handling is enabled.
+   */
+  handleCycleComplete(timeMs: number, partIndex?: number): void {
+    let entryIdx: number;
+    if (partIndex !== undefined) {
+      entryIdx = this.inFlight.findIndex((e) => e.partIdx === partIndex);
+      if (entryIdx === -1) return; // already removed (replaced by a fresh schedule or already drained)
+      const entry = this.inFlight[entryIdx] as InFlightEntry<P>;
+      // Stale event: the part is paused, or this event's timestamp doesn't match
+      // the entry's current scheduledAt (the entry was rescheduled post-repair).
+      if (entry.isPaused || entry.scheduledAt !== timeMs) return;
+    } else {
+      // Legacy FIFO path. Skip any paused entries at the head — they were
+      // paused by a breakdown handler and will reschedule on repair.
+      entryIdx = this.inFlight.findIndex((e) => !e.isPaused);
+      if (entryIdx === -1) {
+        throw new Error(
+          `cycle-complete fired for station ${String(this.config.stationId)} with no active parts in flight`,
+        );
+      }
     }
-    const part = this.inFlight.shift() as P;
-    this.inProgress_ -= 1;
-    const workerId = this.assignedWorkers.shift();
-    if (workerId && this.config.workerPool) this.config.workerPool.release(workerId, timeMs);
 
-    // If a breakdown or maintenance kicked in after this cycle started, the
-    // part is lost (per breakdown.ts Phase-0 scope). We can't push or
-    // BlockedOut from a Down/Maintenance state — both transitions are
-    // explicitly disallowed.
+    const entry = this.inFlight[entryIdx] as InFlightEntry<P>;
+    this.inFlight.splice(entryIdx, 1);
+    this.inProgress_ -= 1;
+    if (entry.workerId && this.config.workerPool) {
+      this.config.workerPool.release(entry.workerId, timeMs);
+    }
+
+    const part = entry.part;
+
+    // Maintenance-during-cycle: same Phase-0 scope as breakdown originally had —
+    // scrap the part since we can't push from Maintenance state.
     const state = this.stateMachine.state;
     if (state === "Down" || state === "Maintenance") {
       this.scrapped_ += 1;
@@ -270,7 +308,6 @@ export class CycleExecutor<P> {
       return;
     }
 
-    // Try to push to downstream.
     const pushed = this.config.downstream.push(part);
     if (pushed) {
       this.completed_ += 1;
@@ -283,6 +320,39 @@ export class CycleExecutor<P> {
     this.pendingPush.push(part);
     if (this.stateMachine.state !== "BlockedOut") {
       this.stateMachine.transition("BlockedOut", "blocked-downstream", timeMs);
+    }
+  }
+
+  /**
+   * Pause every in-flight part. Used by the chain harness when a breakdown-start
+   * fires for this station — each entry's remaining cycle time is captured so
+   * a subsequent handleRepair can reschedule the cycle-complete from the same
+   * point (VROL-125).
+   */
+  handleBreakdown(timeMs: number): void {
+    for (const entry of this.inFlight) {
+      if (entry.isPaused) continue;
+      entry.isPaused = true;
+      entry.remainingMs = Math.max(0, entry.scheduledAt - timeMs);
+    }
+  }
+
+  /**
+   * Resume any paused in-flight parts: schedule a fresh cycle-complete event
+   * for each at `timeMs + remainingMs`. The original pre-breakdown event will
+   * still fire from the scheduler but handleCycleComplete ignores it because
+   * the entry's scheduledAt no longer matches the event's timeMs.
+   */
+  handleRepair(timeMs: number): void {
+    for (const entry of this.inFlight) {
+      if (!entry.isPaused) continue;
+      entry.isPaused = false;
+      entry.scheduledAt = timeMs + entry.remainingMs;
+      this.scheduler.schedule(entry.scheduledAt, {
+        kind: "cycle-complete",
+        stationId: this.config.stationId,
+        partIndex: entry.partIdx,
+      });
     }
   }
 
@@ -319,9 +389,7 @@ export class CycleExecutor<P> {
     };
   }
 
-  private inFlight: P[] = [];
-  /** Per-in-flight-part worker id (null when no worker pool configured). */
-  private assignedWorkers: Array<ResourceId | null> = [];
+  private inFlight: InFlightEntry<P>[] = [];
 
   private notifyCompletion(event: CompletionEvent<P>): void {
     for (const fn of [...this.listeners]) fn(event);
