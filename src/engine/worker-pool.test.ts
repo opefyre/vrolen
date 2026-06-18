@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { asResourceId } from "./ids";
-import { WorkerPool, type PoolWorker } from "./worker-pool";
+import { effectiveAvailableMs, isOnBreak, WorkerPool, type PoolWorker } from "./worker-pool";
 
 function worker(
   name: string,
@@ -111,5 +111,89 @@ describe("WorkerPool — determinism", () => {
     // The point of the test is just that the pool serves both consistently.
     expect(stationA).toBe(1000);
     expect(stationB).toBe(1000);
+  });
+});
+
+describe("WorkerPool — breaks (VROL-616)", () => {
+  function workerWithBreaks(
+    name: string,
+    skills: string[],
+    shifts: { startMs: number; endMs: number }[],
+    breaks: { startMs: number; endMs: number }[],
+  ): PoolWorker {
+    return { id: asResourceId(`w-${name}`), name, skills, shifts, breaks };
+  }
+
+  it("request() rejects a worker on break, accepts before/after the window", () => {
+    const pool = new WorkerPool([
+      workerWithBreaks("Alice", ["any"], ALWAYS_ON, [{ startMs: 10_000, endMs: 20_000 }]),
+    ]);
+    expect(pool.request(["any"], 5_000)?.name).toBe("Alice");
+    pool.release(asResourceId("w-Alice"));
+    expect(pool.request(["any"], 15_000)).toBeNull();
+    expect(pool.request(["any"], 20_000)?.name).toBe("Alice"); // half-open: endMs is back on
+  });
+
+  it("isOnBreak respects the half-open convention", () => {
+    const w = {
+      id: asResourceId("w"),
+      name: "w",
+      skills: [],
+      shifts: ALWAYS_ON,
+      breaks: [{ startMs: 100, endMs: 200 }],
+    };
+    expect(isOnBreak(w, 99)).toBe(false);
+    expect(isOnBreak(w, 100)).toBe(true);
+    expect(isOnBreak(w, 199)).toBe(true);
+    expect(isOnBreak(w, 200)).toBe(false);
+  });
+
+  it("effectiveAvailableMs subtracts break ms from shift ms within the window", () => {
+    const w = {
+      id: asResourceId("w"),
+      name: "w",
+      skills: [],
+      shifts: [{ startMs: 0, endMs: 60_000 }],
+      breaks: [{ startMs: 0, endMs: 30_000 }],
+    };
+    // 60s shift, 30s break → 30s available.
+    expect(effectiveAvailableMs(w, 0, 60_000)).toBe(30_000);
+  });
+
+  it("effectiveAvailableMs merges overlapping breaks (no double-counting)", () => {
+    const w = {
+      id: asResourceId("w"),
+      name: "w",
+      skills: [],
+      shifts: [{ startMs: 0, endMs: 60_000 }],
+      breaks: [
+        { startMs: 0, endMs: 10_000 }, // 10s
+        { startMs: 5_000, endMs: 15_000 }, // overlaps; merged: [0, 15_000]
+      ],
+    };
+    // 60s shift, merged break is 15s → 45s available (NOT 40s).
+    expect(effectiveAvailableMs(w, 0, 60_000)).toBe(45_000);
+  });
+
+  it("effectiveAvailableMs clamps out-of-shift breaks to zero impact", () => {
+    const w = {
+      id: asResourceId("w"),
+      name: "w",
+      skills: [],
+      shifts: [{ startMs: 0, endMs: 60_000 }],
+      breaks: [{ startMs: 60_000, endMs: 120_000 }], // entirely after shift
+    };
+    expect(effectiveAvailableMs(w, 0, 60_000)).toBe(60_000);
+  });
+
+  it("workers without breaks have shift-only availability (back-compat)", () => {
+    const w = {
+      id: asResourceId("w"),
+      name: "w",
+      skills: [],
+      shifts: [{ startMs: 0, endMs: 60_000 }],
+    };
+    expect(effectiveAvailableMs(w, 0, 60_000)).toBe(60_000);
+    expect(isOnBreak(w, 30_000)).toBe(false);
   });
 });

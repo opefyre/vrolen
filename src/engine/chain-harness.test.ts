@@ -393,6 +393,10 @@ describe("runChain — workers (VROL-580)", () => {
 
   it("starves after the shift window closes", () => {
     // Single worker, shift ends at 2 seconds. After that no station can run.
+    // VROL-616 changed the denominator from workers × horizon to "effectively
+    // available ms" — a worker fully utilized during their shift reports
+    // utilization ≈ 1.0, not 0.2. The starvation invariant is now expressed
+    // via the throughput surface: the bulk of completed parts land before 2s.
     const result = runChain({
       stationCycleTimes: [constant(100), constant(100), constant(100)],
       interStationBufferCapacity: 10,
@@ -405,11 +409,40 @@ describe("runChain — workers (VROL-580)", () => {
         requireDefault: ["any"],
       },
     });
-    // Worker is on shift for ~2s; after that no progress. Labor util should
-    // be ~2s / (1 worker × 10s) = 0.2 (with some scheduling jitter).
     expect(result.laborUtilization).toBeDefined();
-    expect(result.laborUtilization!).toBeGreaterThan(0.1);
-    expect(result.laborUtilization!).toBeLessThan(0.3);
+    // Worker fully engaged during their 2s window → util close to 1.0.
+    expect(result.laborUtilization!).toBeGreaterThan(0.7);
+    // Throughput is capped by the shift — completed count is far below what
+    // a 10s run with 100ms cycles would deliver if the worker were always on.
+    expect(result.completed).toBeLessThan(40); // would be ~95 on a full shift
+  });
+
+  it("per-worker breaks shrink the labor-util denominator, not the numerator (VROL-616)", () => {
+    // 60s run, 1 worker on shift for the full 60s with a break at [30s, 60s].
+    // Worker is available + busy for the first 30s, then the break Starves
+    // the station — busyMs ≈ 30s, denom = shift - break = 30s, util ≈ 1.0.
+    // Pre-VROL-616 denom would have been 60s and util would be a misleading 0.5.
+    const result = runChain({
+      stationCycleTimes: [constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xdecade),
+      workers: {
+        workers: [
+          {
+            ...worker("w1", ["any"], 60_000),
+            breaks: [{ startMs: 30_000, endMs: 60_000 }],
+          },
+        ],
+        requireDefault: ["any"],
+      },
+    });
+    expect(result.laborUtilization).toBeDefined();
+    // Available 30s of the shift, busy ~30s → util ~1.0 (NOT 0.5).
+    expect(result.laborUtilization!).toBeGreaterThan(0.8);
+    // Throughput is capped by the pre-break window — far short of a full 60s run.
+    expect(result.completed).toBeLessThan(350); // would be ~590 if break absent
   });
 });
 

@@ -619,6 +619,8 @@ function EditorCanvas() {
               name: entry.name || `Worker ${String(i + 1)}`,
               skills: entry.skills.length > 0 ? entry.skills : ["any"],
               shifts: [{ startMs: 0, endMs: Math.max(1, entry.shiftEndMs) }],
+              // VROL-616 — pass any per-worker breaks through to the engine.
+              ...(entry.breaks && entry.breaks.length > 0 ? { breaks: entry.breaks } : {}),
             })),
             perStationSkills,
             // Default = empty → any worker on shift can take an unannotated station

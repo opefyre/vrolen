@@ -30,6 +30,17 @@ export interface PoolWorker {
   readonly name: string;
   readonly skills: readonly string[];
   readonly shifts: readonly ShiftWindow[];
+  /**
+   * Optional break windows (VROL-616). During a break the worker is unavailable
+   * for new assignments — request() rejects them. Breaks outside the worker's
+   * shift are silently ignored when computing labor utilization denominators.
+   *
+   * The pool does NOT yank workers mid-cycle: a break that starts while a
+   * worker is mid-assignment kicks in only when the current cycle completes
+   * (workers are released at handleCycleComplete; the next request() then sees
+   * the break window).
+   */
+  readonly breaks?: readonly ShiftWindow[];
 }
 
 export class WorkerPool {
@@ -54,6 +65,10 @@ export class WorkerPool {
     for (const worker of this.workers) {
       if (this.assigned.has(worker.id)) continue;
       if (!this.isOnShift(worker, timeMs)) continue;
+      // VROL-616 — workers on break are unavailable for NEW assignments.
+      // (An already-running cycle isn't interrupted; release happens at
+      // cycle complete, after which subsequent requests see the break window.)
+      if (isOnBreak(worker, timeMs)) continue;
       if (!hasAllSkills(worker, requiredSkills)) continue;
       this.assigned.add(worker.id);
       return worker;
@@ -94,4 +109,84 @@ function hasAllSkills(worker: PoolWorker, required: readonly string[]): boolean 
     if (!set.has(skill)) return false;
   }
   return true;
+}
+
+/**
+ * True if any break window contains timeMs (VROL-616). Break-half-open
+ * convention matches shifts: [startMs, endMs).
+ */
+export function isOnBreak(worker: PoolWorker, timeMs: number): boolean {
+  if (!worker.breaks) return false;
+  for (const brk of worker.breaks) {
+    if (timeMs >= brk.startMs && timeMs < brk.endMs) return true;
+  }
+  return false;
+}
+
+/**
+ * Compute the worker's effective availability ms within [windowStartMs,
+ * windowEndMs] (VROL-616): time inside ANY shift, minus time inside ANY break
+ * (intersected with a shift, since out-of-shift breaks don't reduce util).
+ *
+ * Both shift and break lists are merged on the fly so overlapping or
+ * touching windows count once, not twice.
+ */
+export function effectiveAvailableMs(
+  worker: PoolWorker,
+  windowStartMs: number,
+  windowEndMs: number,
+): number {
+  const onShift = intersectAndMerge(worker.shifts, windowStartMs, windowEndMs);
+  if (onShift.length === 0) return 0;
+  if (!worker.breaks || worker.breaks.length === 0) {
+    return totalMs(onShift);
+  }
+  const onBreak = intersectAndMerge(worker.breaks, windowStartMs, windowEndMs);
+  if (onBreak.length === 0) return totalMs(onShift);
+  // Subtract: for each on-shift window, remove its intersection with merged breaks.
+  let available = 0;
+  for (const shift of onShift) {
+    let shiftAvailable = shift.endMs - shift.startMs;
+    for (const brk of onBreak) {
+      const ovStart = Math.max(shift.startMs, brk.startMs);
+      const ovEnd = Math.min(shift.endMs, brk.endMs);
+      if (ovEnd > ovStart) shiftAvailable -= ovEnd - ovStart;
+    }
+    available += Math.max(0, shiftAvailable);
+  }
+  return available;
+}
+
+function intersectAndMerge(
+  windows: readonly ShiftWindow[],
+  windowStartMs: number,
+  windowEndMs: number,
+): ShiftWindow[] {
+  const clipped: ShiftWindow[] = [];
+  for (const w of windows) {
+    const start = Math.max(w.startMs, windowStartMs);
+    const end = Math.min(w.endMs, windowEndMs);
+    if (end > start) clipped.push({ startMs: start, endMs: end });
+  }
+  if (clipped.length <= 1) return clipped;
+  clipped.sort((a, b) => a.startMs - b.startMs);
+  const merged: ShiftWindow[] = [];
+  for (const w of clipped) {
+    const last = merged[merged.length - 1];
+    if (last && w.startMs <= last.endMs) {
+      merged[merged.length - 1] = {
+        startMs: last.startMs,
+        endMs: Math.max(last.endMs, w.endMs),
+      };
+    } else {
+      merged.push(w);
+    }
+  }
+  return merged;
+}
+
+function totalMs(windows: readonly ShiftWindow[]): number {
+  let sum = 0;
+  for (const w of windows) sum += w.endMs - w.startMs;
+  return sum;
 }

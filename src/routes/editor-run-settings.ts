@@ -29,10 +29,21 @@ export interface BreakdownsSettings {
   mttrMs: number;
 }
 
+export interface WorkerBreak {
+  startMs: number;
+  endMs: number;
+}
+
 export interface WorkerEntry {
   name: string;
   skills: string[];
   shiftEndMs: number;
+  /**
+   * Optional break windows during the shift (VROL-616). Each break has
+   * inclusive startMs and exclusive endMs. Out-of-shift breaks are silently
+   * ignored when computing labor utilization; UI validation enforces end > start.
+   */
+  breaks?: WorkerBreak[];
 }
 
 export interface ProductsSettings {
@@ -197,14 +208,19 @@ function migrateWorkerList(w: Partial<WorkersSettings>): WorkerEntry[] {
   if (Array.isArray(w.list) && w.list.length > 0) {
     return w.list
       .filter((e): e is WorkerEntry => !!e && typeof e === "object")
-      .map((e) => ({
-        name: typeof e.name === "string" && e.name.length > 0 ? e.name : "Worker",
-        skills:
-          Array.isArray(e.skills) && e.skills.length > 0
-            ? e.skills.filter((s): s is string => typeof s === "string")
-            : ["any"],
-        shiftEndMs: typeof e.shiftEndMs === "number" && e.shiftEndMs > 0 ? e.shiftEndMs : 60_000,
-      }));
+      .map((e) => {
+        const base: WorkerEntry = {
+          name: typeof e.name === "string" && e.name.length > 0 ? e.name : "Worker",
+          skills:
+            Array.isArray(e.skills) && e.skills.length > 0
+              ? e.skills.filter((s): s is string => typeof s === "string")
+              : ["any"],
+          shiftEndMs: typeof e.shiftEndMs === "number" && e.shiftEndMs > 0 ? e.shiftEndMs : 60_000,
+        };
+        const breaks = sanitizeBreaks(e.breaks);
+        if (breaks.length > 0) base.breaks = breaks;
+        return base;
+      });
   }
   const legacyCount = typeof w.count === "number" && w.count >= 1 ? Math.floor(w.count) : 1;
   const legacySkills =
@@ -217,4 +233,29 @@ function migrateWorkerList(w: Partial<WorkersSettings>): WorkerEntry[] {
     skills: [...legacySkills],
     shiftEndMs: legacyShift,
   }));
+}
+
+/**
+ * Strip malformed break entries (VROL-616): non-objects, non-numeric / negative
+ * bounds, end <= start. Returns a fresh array so callers can safely mutate.
+ */
+function sanitizeBreaks(raw: unknown): WorkerBreak[] {
+  if (!Array.isArray(raw)) return [];
+  const out: WorkerBreak[] = [];
+  for (const b of raw) {
+    if (!b || typeof b !== "object") continue;
+    const r = b as { startMs?: unknown; endMs?: unknown };
+    if (
+      typeof r.startMs !== "number" ||
+      typeof r.endMs !== "number" ||
+      !Number.isFinite(r.startMs) ||
+      !Number.isFinite(r.endMs) ||
+      r.startMs < 0 ||
+      r.endMs <= r.startMs
+    ) {
+      continue;
+    }
+    out.push({ startMs: Math.floor(r.startMs), endMs: Math.floor(r.endMs) });
+  }
+  return out;
 }

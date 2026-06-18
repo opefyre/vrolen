@@ -37,7 +37,7 @@ import { Scheduler } from "./scheduler";
 import { StationStateMachine } from "./state-machine";
 import { StateTimeTracker } from "./state-time-tracker";
 import type { ResourceId } from "./ids";
-import { WorkerPool, type PoolWorker } from "./worker-pool";
+import { effectiveAvailableMs, WorkerPool, type PoolWorker } from "./worker-pool";
 
 /**
  * WorkerPool variant that records each worker's accumulated busy time so the
@@ -892,11 +892,16 @@ export function runChain(opts: ChainOptions): ChainResult {
   let laborUtilization: number | undefined;
   if (trackingPool && opts.workers) {
     trackingPool.finalize(endTimeMs);
-    const denom = opts.workers.workers.length * measureWindowMs;
+    // VROL-616 — denominator is sum across workers of "effectively available
+    // ms in the measurement window" = shift ∩ [warmup, horizon], minus break ∩
+    // shift ∩ [warmup, horizon]. A 50%-break worker no longer drags util to
+    // 50%; we just don't count their break time as available capacity.
+    // Pre-VROL-616 workers (no breaks) fall through to shift-only math.
+    let denom = 0;
+    for (const w of opts.workers.workers) {
+      denom += effectiveAvailableMs(w, opts.warmupMs, endTimeMs);
+    }
     if (denom > 0) {
-      // Note: busyMs is accumulated across the full run, while denom is the
-      // measurement window — for Phase 0 this slight overcount in low-warmup
-      // cases is acceptable; the test fixture uses warmupMs=0 anyway.
       laborUtilization = Math.min(1, trackingPool.busyMs / denom);
     }
   }
