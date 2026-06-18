@@ -81,6 +81,20 @@ interface TrackedPart {
   readonly enteredSystemAtMs: number;
 }
 
+/**
+ * TrackedBuffer variant that counts every successful push. Used by the chain
+ * harness to surface per-edge flow counts so the editor can label each edge
+ * with throughput.
+ */
+class CountingTrackedBuffer<T> extends TrackedBuffer<T> {
+  public flowed = 0;
+  override push(item: T): boolean {
+    const ok = super.push(item);
+    if (ok) this.flowed += 1;
+    return ok;
+  }
+}
+
 export interface ChainResult {
   readonly completed: number;
   readonly elapsedMs: number;
@@ -115,6 +129,11 @@ export interface ChainResult {
    * Caps at 1.0 (every worker busy every moment).
    */
   readonly laborUtilization?: number;
+  /**
+   * Per-edge parts flowed. Matches topology.edges by index (or, in linear
+   * mode, the implicit i → i+1 edges in stationCycleTimes order).
+   */
+  readonly perEdgeFlowed: readonly number[];
 }
 
 export interface ChainWorkerConfig {
@@ -362,9 +381,9 @@ export function runChain(opts: ChainOptions): ChainResult {
 
   const inputBuffer = new Buffer<TrackedPart>(10_000_000);
   const sinkBuffer = new Buffer<TrackedPart>(10_000_000);
-  // One TrackedBuffer per topology edge.
-  const edgeBuffers: TrackedBuffer<TrackedPart>[] = topology.edges.map(
-    () => new TrackedBuffer<TrackedPart>(opts.interStationBufferCapacity),
+  // One CountingTrackedBuffer per topology edge.
+  const edgeBuffers: CountingTrackedBuffer<TrackedPart>[] = topology.edges.map(
+    () => new CountingTrackedBuffer<TrackedPart>(opts.interStationBufferCapacity),
   );
 
   // Workers — optional. The TrackingWorkerPool below extends WorkerPool with
@@ -404,17 +423,17 @@ export function runChain(opts: ChainOptions): ChainResult {
   function upstreamFor(nodeIdx: number): Buffer<TrackedPart> {
     if (nodeIdx === topology.sourceIdx) return inputBuffer;
     const ins = incomingEdgeIdx[nodeIdx]!;
-    if (ins.length === 1) return edgeBuffers[ins[0]!] as TrackedBuffer<TrackedPart>;
+    if (ins.length === 1) return edgeBuffers[ins[0]!] as CountingTrackedBuffer<TrackedPart>;
     return new MultiInputBuffer<TrackedPart>(
-      ins.map((idx) => edgeBuffers[idx] as TrackedBuffer<TrackedPart>),
+      ins.map((idx) => edgeBuffers[idx] as CountingTrackedBuffer<TrackedPart>),
     );
   }
   function downstreamFor(nodeIdx: number): Buffer<TrackedPart> {
     if (nodeIdx === topology.sinkIdx) return sinkBuffer;
     const outs = outgoingEdgeIdx[nodeIdx]!;
-    if (outs.length === 1) return edgeBuffers[outs[0]!] as TrackedBuffer<TrackedPart>;
+    if (outs.length === 1) return edgeBuffers[outs[0]!] as CountingTrackedBuffer<TrackedPart>;
     return new MultiOutputBuffer<TrackedPart>(
-      outs.map((idx) => edgeBuffers[idx] as TrackedBuffer<TrackedPart>),
+      outs.map((idx) => edgeBuffers[idx] as CountingTrackedBuffer<TrackedPart>),
     );
   }
 
@@ -657,6 +676,7 @@ export function runChain(opts: ChainOptions): ChainResult {
     perStationOee,
     lineOee,
     aggregateBufferWipL,
+    perEdgeFlowed: edgeBuffers.map((b) => b.flowed),
     ...(materialFinal ? { materialFinal, replenishmentsFired } : {}),
     ...(breakdownCounts ? { perStationBreakdowns: breakdownCounts } : {}),
     ...(laborUtilization !== undefined ? { laborUtilization } : {}),

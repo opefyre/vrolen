@@ -33,6 +33,12 @@ export interface WorkersSettings {
   enabled: boolean;
   count: number;
   shiftEndMs: number;
+  /**
+   * Skills shared across every generated worker. Station required skills are
+   * checked against this set; a station whose required skills aren't a subset
+   * of these starves with no-skill-available.
+   */
+  skills: string[];
 }
 
 export interface RunSettings {
@@ -69,6 +75,7 @@ export const DEFAULT_RUN_SETTINGS: RunSettings = {
     enabled: false,
     count: 1,
     shiftEndMs: 60_000,
+    skills: ["any"],
   },
 };
 
@@ -123,6 +130,10 @@ export function mergeWithDefaults(parsed: Partial<RunSettings>): RunSettings {
       enabled: w.enabled ?? DEFAULT_RUN_SETTINGS.workers.enabled,
       count: w.count ?? DEFAULT_RUN_SETTINGS.workers.count,
       shiftEndMs: w.shiftEndMs ?? DEFAULT_RUN_SETTINGS.workers.shiftEndMs,
+      skills:
+        Array.isArray(w.skills) && w.skills.length > 0
+          ? w.skills.filter((s): s is string => typeof s === "string")
+          : DEFAULT_RUN_SETTINGS.workers.skills.slice(),
     },
   };
 }

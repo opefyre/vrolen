@@ -310,6 +310,49 @@ describe("runChain — workers (VROL-580)", () => {
     expect(withWorkers.completed).toBeLessThanOrEqual(baseline.completed + 1);
   });
 
+  it("per-station skills route only matching workers (subset rule)", () => {
+    // Station 0 needs "filling", station 1 needs "capping", station 2 needs nothing.
+    // Worker w1 only has "filling" → station 1 starves (no capping worker).
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100), constant(100)],
+      interStationBufferCapacity: 10,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xabcdef),
+      stationLabels: ["Filler", "Capper", "Labeler"],
+      workers: {
+        workers: [worker("w1", ["filling"])],
+        perStationSkills: [["filling"], ["capping"], []],
+        requireDefault: [],
+      },
+    });
+    // Station 0 (filling) runs; station 1 (capping) cannot proceed; nothing exits the sink.
+    expect(result.completed).toBe(0);
+    // Station 0 should have non-zero completed (parts produced into the inter-buffer)
+    expect(result.perStationCompleted[0]).toBeGreaterThan(0);
+    expect(result.perStationCompleted[1]).toBe(0);
+  });
+
+  it("a worker with union skills satisfies multiple stations", () => {
+    // Station 0 needs "filling", station 1 needs "capping". Worker has BOTH.
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100), constant(100)],
+      interStationBufferCapacity: 10,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xabcdef),
+      stationLabels: ["Filler", "Capper", "Labeler"],
+      workers: {
+        workers: [worker("multi", ["filling", "capping"])],
+        perStationSkills: [["filling"], ["capping"], []],
+        requireDefault: [],
+      },
+    });
+    // Chain should produce parts at the sink — both skill requirements are satisfied
+    // by the same union-skilled worker.
+    expect(result.completed).toBeGreaterThan(0);
+  });
+
   it("starves after the shift window closes", () => {
     // Single worker, shift ends at 2 seconds. After that no station can run.
     const result = runChain({
@@ -441,6 +484,40 @@ describe("runChain — DAG topology (VROL-582)", () => {
         },
       }),
     ).toThrow(/source/);
+  });
+
+  it("perEdgeFlowed counts parts that traversed each edge in a diamond", () => {
+    const result = runChain({
+      interStationBufferCapacity: 10,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xc0ffee),
+      topology: {
+        nodes: [
+          { id: "src", cycleTimeMs: constant(50) },
+          { id: "qc1", cycleTimeMs: constant(200) },
+          { id: "qc2", cycleTimeMs: constant(200) },
+          { id: "sink", cycleTimeMs: constant(50) },
+        ],
+        edges: [
+          { source: "src", target: "qc1" },
+          { source: "src", target: "qc2" },
+          { source: "qc1", target: "sink" },
+          { source: "qc2", target: "sink" },
+        ],
+      },
+    });
+    expect(result.perEdgeFlowed).toHaveLength(4);
+    // Sum of source→QC* must be >= sum of QC*→sink (parts in-flight at QCs at
+    // horizon stay in the input edges; the upper-bound is bounded by inter-station
+    // buffer capacity (10) × 2 inputs + 2 in-cycle = ~22 in worst case).
+    const fromSrc = (result.perEdgeFlowed[0] ?? 0) + (result.perEdgeFlowed[1] ?? 0);
+    const toSink = (result.perEdgeFlowed[2] ?? 0) + (result.perEdgeFlowed[3] ?? 0);
+    expect(fromSrc).toBeGreaterThanOrEqual(toSink);
+    expect(fromSrc - toSink).toBeLessThan(30);
+    // Both QC branches should have non-trivial flow
+    expect(result.perEdgeFlowed[0]).toBeGreaterThan(0);
+    expect(result.perEdgeFlowed[1]).toBeGreaterThan(0);
   });
 
   it("rejects a topology with multiple sinks", () => {

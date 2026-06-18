@@ -37,10 +37,13 @@ import {
   Combine,
   ConciergeBell,
   Factory,
+  FolderOpen,
   Package,
   PackageCheck,
   Play,
+  Save,
   Settings2,
+  Trash2,
   Truck,
   Wrench,
   X,
@@ -71,6 +74,13 @@ import {
   SeededPrng,
 } from "@/engine";
 import { graphToChainOptions } from "@/lib/graph-to-chain";
+import {
+  deleteScenario,
+  listScenarios,
+  loadScenario,
+  saveScenario,
+  type ScenarioSummary,
+} from "@/lib/scenario-store";
 import { toast } from "@/lib/toast";
 import {
   DEFAULT_RUN_SETTINGS,
@@ -157,15 +167,25 @@ function saveGraph(g: PersistedGraph): void {
   }
 }
 
+interface RunMeta {
+  chainNodeIds: string[];
+  stationLabels: string[];
+  /** "sourceNodeId arrow targetNodeId" keys, in the order the engine returned them. */
+  edgeKeys: string[];
+}
+
 function EditorCanvas() {
   const initial = useMemo(() => loadGraph(), []);
   const [nodes, setNodes] = useState<Node[]>(initial.nodes);
   const [edges, setEdges] = useState<Edge[]>(initial.edges);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [result, setResult] = useState<ChainResult | null>(null);
+  const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [settings, setSettings] = useState<RunSettings>(loadRunSettings);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  const [scenariosOpen, setScenariosOpen] = useState<boolean>(false);
+  const [scenarios, setScenarios] = useState<ScenarioSummary[]>(() => listScenarios());
 
   useEffect(() => {
     saveRunSettings(settings);
@@ -251,6 +271,7 @@ function EditorCanvas() {
     setEdges(INITIAL_EDGES);
     setSelectedNodeId(null);
     setResult(null);
+    setRunMeta(null);
     nodeIdRef.current = INITIAL_NODES.length + 1;
     toast.info("Editor reset");
   };
@@ -261,6 +282,16 @@ function EditorCanvas() {
       toast.error("Can't run", { description: translation.error });
       return;
     }
+    // Stash the chain-order + edges-used for labeling after the run completes.
+    setRunMeta({
+      chainNodeIds: [...translation.chainNodeIds],
+      stationLabels: [...translation.stationLabels],
+      edgeKeys: translation.topology
+        ? translation.topology.edges.map((e) => `${e.source}→${e.target}`)
+        : translation.chainNodeIds
+            .slice(0, -1)
+            .map((id, i) => `${id}→${String(translation.chainNodeIds[i + 1])}`),
+    });
     if (translation.skippedNodeIds.length > 0) {
       toast.warning(
         `Skipped ${String(translation.skippedNodeIds.length)} node${
@@ -319,15 +350,25 @@ function EditorCanvas() {
         }
       : undefined;
 
+    // Build per-station required skills from node.data.skills in topology order.
+    const perStationSkills: string[][] = translation.chainNodeIds.map((id) => {
+      const node = nodes.find((n) => n.id === id);
+      const raw = (node?.data as { skills?: unknown } | undefined)?.skills;
+      if (Array.isArray(raw)) return raw.filter((s): s is string => typeof s === "string");
+      return [];
+    });
+    const workerSkills = settings.workers.skills.length > 0 ? settings.workers.skills : ["any"];
     const workersCfg: ChainWorkerConfig | undefined = settings.workers.enabled
       ? {
           workers: Array.from({ length: Math.max(1, settings.workers.count) }, (_, i) => ({
             id: asResourceId(`w${String(i + 1)}`),
             name: `Worker ${String(i + 1)}`,
-            skills: ["any"],
+            skills: [...workerSkills],
             shifts: [{ startMs: 0, endMs: Math.max(1, settings.workers.shiftEndMs) }],
           })),
-          requireDefault: ["any"],
+          perStationSkills,
+          // Default = empty → any worker on shift can take an unannotated station
+          requireDefault: [],
         }
       : undefined;
 
@@ -367,6 +408,23 @@ function EditorCanvas() {
       }
     }, 0);
   }, [nodes, edges, selectedNodeId, settings]);
+
+  // Render edges with per-edge throughput labels from the last run, if we have one.
+  const edgesForFlow = useMemo<Edge[]>(() => {
+    if (!result || !runMeta || result.elapsedMs <= 0) return edges;
+    const flowByKey = new Map<string, number>();
+    runMeta.edgeKeys.forEach((key, i) => {
+      flowByKey.set(key, result.perEdgeFlowed[i] ?? 0);
+    });
+    return edges.map((e) => {
+      const key = `${e.source}→${e.target}`;
+      const flowed = flowByKey.get(key);
+      if (flowed === undefined) return e;
+      const perHour = (flowed / result.elapsedMs) * 3_600_000;
+      const label = `${perHour.toLocaleString("en-US", { maximumFractionDigits: 0 })}/h`;
+      return { ...e, label, animated: flowed > 0 };
+    });
+  }, [edges, result, runMeta]);
 
   return (
     <div className="space-y-3">
@@ -415,6 +473,18 @@ function EditorCanvas() {
                 <Settings2 className="h-4 w-4" />
                 Run settings
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setScenarios(listScenarios());
+                  setScenariosOpen(true);
+                }}
+                className="w-full gap-2"
+              >
+                <FolderOpen className="h-4 w-4" />
+                Scenarios
+              </Button>
               <Button variant="outline" size="sm" onClick={handleReset} className="w-full">
                 Reset canvas
               </Button>
@@ -430,7 +500,7 @@ function EditorCanvas() {
         >
           <ReactFlow
             nodes={nodes}
-            edges={edges}
+            edges={edgesForFlow}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
@@ -498,6 +568,20 @@ function EditorCanvas() {
               />
             </CardContent>
             <CardContent className="border-border space-y-3 border-t pt-3">
+              <SkillsField
+                value={
+                  Array.isArray((selectedNode.data as { skills?: unknown }).skills)
+                    ? ((selectedNode.data as { skills: string[] }).skills as string[])
+                    : []
+                }
+                onChange={(next) => {
+                  updateSelectedNodeData({ skills: next });
+                }}
+                label="Required skills"
+                placeholder="e.g. capping, qc"
+                id="inspector-skills"
+                helpText="Empty = any worker on shift can take the station."
+              />
               <div className="flex flex-col gap-1">
                 <label
                   htmlFor="inspector-defect"
@@ -529,7 +613,116 @@ function EditorCanvas() {
         ) : null}
       </div>
 
-      {result ? <KpiStrip result={result} /> : null}
+      {result && runMeta ? <KpiStrip result={result} runMeta={runMeta} /> : null}
+
+      <Sheet open={scenariosOpen} onOpenChange={setScenariosOpen}>
+        <SheetContent side="right" className="w-[24rem] sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle>Scenarios</SheetTitle>
+            <SheetDescription>
+              Save and restore named scenarios. Persisted locally in your browser; cloud sync lands
+              later (E10).
+            </SheetDescription>
+          </SheetHeader>
+          <div className="space-y-4 px-4 pb-6">
+            <div className="space-y-2">
+              <Button
+                size="sm"
+                className="w-full gap-2"
+                onClick={() => {
+                  const name = window.prompt("Save current scenario as:");
+                  if (!name) return;
+                  try {
+                    saveScenario(name, {
+                      graph: { nodes, edges },
+                      settings,
+                      savedAtMs: performance.now(),
+                    });
+                    setScenarios(listScenarios());
+                    toast.success(`Saved "${name.trim()}"`);
+                  } catch (e) {
+                    const message = e instanceof Error ? e.message : String(e);
+                    toast.error("Couldn't save scenario", { description: message });
+                  }
+                }}
+              >
+                <Save className="h-4 w-4" />
+                Save current
+              </Button>
+            </div>
+            {scenarios.length === 0 ? (
+              <p className="text-muted-foreground text-sm">
+                No saved scenarios yet. Click <strong>Save current</strong> to capture the graph +
+                run settings under a name.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {scenarios.map((s) => (
+                  <li
+                    key={s.name}
+                    className="border-border bg-card flex items-center justify-between gap-2 rounded-md border p-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">{s.name}</div>
+                      <div className="text-muted-foreground text-xs">
+                        {s.nodeCount} node{s.nodeCount === 1 ? "" : "s"} · {s.edgeCount} edge
+                        {s.edgeCount === 1 ? "" : "s"}
+                      </div>
+                    </div>
+                    <div className="flex gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const ok = window.confirm(
+                            `Load "${s.name}"? Unsaved changes to the canvas will be lost.`,
+                          );
+                          if (!ok) return;
+                          const payload = loadScenario(s.name);
+                          if (!payload) {
+                            toast.error("Couldn't load scenario");
+                            return;
+                          }
+                          setNodes(payload.graph.nodes);
+                          setEdges(payload.graph.edges);
+                          setSettings(payload.settings);
+                          setSelectedNodeId(null);
+                          setResult(null);
+                          setRunMeta(null);
+                          // Update the node-id counter to avoid duplicates.
+                          nodeIdRef.current =
+                            payload.graph.nodes.reduce(
+                              (max, n) => Math.max(max, parseInt(n.id.replace(/\D/g, ""), 10) || 0),
+                              0,
+                            ) + 1;
+                          setScenariosOpen(false);
+                          toast.success(`Loaded "${s.name}"`);
+                        }}
+                      >
+                        Load
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Delete ${s.name}`}
+                        onClick={() => {
+                          const ok = window.confirm(`Delete saved scenario "${s.name}"?`);
+                          if (!ok) return;
+                          deleteScenario(s.name);
+                          setScenarios(listScenarios());
+                          toast.info(`Deleted "${s.name}"`);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
         <SheetContent side="right" className="w-[24rem] sm:max-w-md">
@@ -869,6 +1062,19 @@ function EditorCanvas() {
                         ? "Single worker — chain is rate-limited by labor."
                         : `${String(settings.workers.count)} workers — partial labor contention.`}
                   </p>
+                  <SkillsField
+                    value={settings.workers.skills}
+                    onChange={(next) => {
+                      setSettings((s) => ({
+                        ...s,
+                        workers: { ...s.workers, skills: next.length > 0 ? next : ["any"] },
+                      }));
+                    }}
+                    label="Worker skills (shared)"
+                    placeholder="e.g. capping, qc, any"
+                    id="rs-worker-skills"
+                    helpText="A worker matches a station only if its skills are a superset of the station's required skills."
+                  />
                 </>
               ) : null}
             </section>
@@ -982,6 +1188,82 @@ function EditorCanvas() {
           </div>
         </SheetContent>
       </Sheet>
+    </div>
+  );
+}
+
+function SkillsField({
+  value,
+  onChange,
+  label,
+  placeholder,
+  id,
+  helpText,
+}: {
+  value: readonly string[];
+  onChange: (next: string[]) => void;
+  label: string;
+  placeholder?: string;
+  id: string;
+  helpText?: string;
+}) {
+  const joined = value.join(", ");
+  const [draft, setDraft] = useState<string>(joined);
+  const [lastJoined, setLastJoined] = useState<string>(joined);
+  // Sync external value changes into the input WITHOUT using an effect
+  // (avoids the react-hooks/no-setstate-in-effect lint rule). When the parent
+  // edits the underlying array externally, we'll see a new `joined` and
+  // adopt it during render before the user edits.
+  if (joined !== lastJoined) {
+    setLastJoined(joined);
+    setDraft(joined);
+  }
+
+  const commit = (raw: string): void => {
+    const tags = raw
+      .split(/[\s,]+/g)
+      .map((t) => t.trim().toLowerCase())
+      .filter((t) => t.length > 0);
+    onChange(Array.from(new Set(tags)));
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={id} className="text-muted-foreground text-xs font-medium">
+        {label}
+      </label>
+      <Input
+        id={id}
+        type="text"
+        value={draft}
+        placeholder={placeholder}
+        onChange={(e) => {
+          setDraft(e.target.value);
+        }}
+        onBlur={(e) => {
+          commit(e.target.value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit((e.target as HTMLInputElement).value);
+          }
+        }}
+        className="font-mono text-sm tabular-nums"
+      />
+      {value.length > 0 ? (
+        <div className="flex flex-wrap gap-1 pt-1">
+          {value.map((tag) => (
+            <span
+              key={tag}
+              className="border-border bg-muted text-muted-foreground rounded-full border px-2 py-0.5 text-xs"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {helpText ? <p className="text-muted-foreground text-xs">{helpText}</p> : null}
     </div>
   );
 }
@@ -1207,7 +1489,7 @@ function DistributionEditor({
   );
 }
 
-function KpiStrip({ result }: { result: ChainResult }) {
+function KpiStrip({ result, runMeta }: { result: ChainResult; runMeta: RunMeta }) {
   const tile = (label: string, value: string, hint?: string) => (
     <div className="border-border bg-card rounded-md border p-3">
       <div className="text-muted-foreground text-xs tracking-wide uppercase">{label}</div>
@@ -1233,6 +1515,38 @@ function KpiStrip({ result }: { result: ChainResult }) {
         {tile("Line OEE", `${fmt(result.lineOee * 100)}%`, "geometric mean")}
         {tile("Time-in-system", `${fmt(result.avgTimeInSystemW, 0)} ms`, "average W per part")}
       </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-heading text-base">Per-station completed</CardTitle>
+          <CardDescription>
+            Counts at each station in topology order. Lower values downstream usually mean
+            BlockedOut or warm-up bleed; lower upstream means Starved.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            {result.perStationCompleted.map((count, i) => {
+              const label = runMeta.stationLabels[i] ?? `Station ${String(i + 1)}`;
+              const max = Math.max(...result.perStationCompleted, 1);
+              const pct = (count / max) * 100;
+              return (
+                <div key={i} className="space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-foreground/80">{label}</span>
+                    <span className="font-mono tabular-nums">{count.toLocaleString()}</span>
+                  </div>
+                  <div className="bg-muted h-2 overflow-hidden rounded-full">
+                    <div
+                      className="bg-sim-running h-full rounded-full transition-[width]"
+                      style={{ width: `${String(pct)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
       {hasMaterials || hasBreakdowns || hasLabor ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {finalBottles !== null
