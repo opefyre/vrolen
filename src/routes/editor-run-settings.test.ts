@@ -67,6 +67,64 @@ describe("editor-run-settings — mergeWithDefaults", () => {
     expect(set.animateFlow).toBe(true);
   });
 
+  it("preserves valid per-worker breaks through mergeWithDefaults (VROL-617)", () => {
+    const merged = mergeWithDefaults({
+      workers: {
+        enabled: true,
+        list: [
+          {
+            name: "Alice",
+            skills: ["any"],
+            shiftEndMs: 60_000,
+            breaks: [{ startMs: 10_000, endMs: 20_000 }],
+          },
+        ],
+      },
+    });
+    expect(merged.workers.list[0]?.breaks).toEqual([{ startMs: 10_000, endMs: 20_000 }]);
+  });
+
+  it("strips malformed breaks (non-objects, invalid bounds, end ≤ start)", () => {
+    const merged = mergeWithDefaults({
+      workers: {
+        enabled: true,
+        list: [
+          {
+            name: "Eve",
+            skills: ["any"],
+            shiftEndMs: 60_000,
+            // Mix of valid + every kind of malformed entry mergeWithDefaults sees in the wild.
+            breaks: [
+              { startMs: 10_000, endMs: 20_000 }, // valid
+              { startMs: 5_000, endMs: 5_000 }, // end == start
+              { startMs: 30_000, endMs: 20_000 }, // end < start
+              { startMs: -1, endMs: 5_000 }, // negative
+              null as unknown as { startMs: number; endMs: number },
+            ],
+          },
+        ],
+      },
+    });
+    expect(merged.workers.list[0]?.breaks).toEqual([{ startMs: 10_000, endMs: 20_000 }]);
+  });
+
+  it("drops the breaks field entirely when no breaks survive sanitization", () => {
+    const merged = mergeWithDefaults({
+      workers: {
+        enabled: true,
+        list: [
+          {
+            name: "Bob",
+            skills: ["any"],
+            shiftEndMs: 60_000,
+            breaks: [{ startMs: 5_000, endMs: 4_000 }],
+          },
+        ],
+      },
+    });
+    expect(merged.workers.list[0]?.breaks).toBeUndefined();
+  });
+
   it("samplerIntervalMs defaults to 0 (off) and round-trips a positive value (VROL-613)", () => {
     expect(mergeWithDefaults({}).samplerIntervalMs).toBe(0);
     expect(mergeWithDefaults({ samplerIntervalMs: 1_000 }).samplerIntervalMs).toBe(1_000);
