@@ -28,6 +28,7 @@ import { meanOf } from "./distribution";
 import type { EngineEvent } from "./events";
 import type { MaterialId, StationId } from "./ids";
 import { newStationId } from "./ids";
+import { MaintenanceManager, type MaintenanceWindow } from "./maintenance";
 import { MaterialPool, type MaterialRequirement } from "./material-pool";
 import { MultiInputBuffer, MultiOutputBuffer } from "./multi-buffer";
 import { computeOee, type OeeMetrics } from "./oee";
@@ -123,6 +124,12 @@ export interface ChainResult {
   readonly aggregateBufferWipL: number;
   /** Per-station breakdown count fired during the run. Undefined when no breakdowns config given. */
   readonly perStationBreakdowns?: readonly number[];
+  /** Per-station total ms spent in Maintenance. Undefined when no maintenance config given. */
+  readonly perStationMaintenanceMs?: readonly number[];
+  /** Per-station scrap count (defective parts). Always present. */
+  readonly perStationScrapped: readonly number[];
+  /** Line scrap rate: total scrapped / (total completed + total scrapped). */
+  readonly lineScrapRate: number;
   /**
    * Labor utilization — total worker-busy ms across the run, normalized by
    * (worker count × elapsed ms). Undefined when no workers config provided.
@@ -159,6 +166,15 @@ export interface ChainBreakdownConfig {
   readonly mtbfMs: Distribution;
   /** Mean time to repair (sampled distribution). */
   readonly mttrMs: Distribution;
+}
+
+export interface ChainMaintenanceConfig {
+  /**
+   * Per-station maintenance windows. Key is the topology node index (matches
+   * stationCycleTimes ordering in linear mode, or topology.nodes ordering in
+   * DAG mode). Empty / missing entry = no maintenance for that station.
+   */
+  readonly perStationWindows: ReadonlyMap<number, readonly MaintenanceWindow[]>;
 }
 
 export interface ChainMaterialConfig {
@@ -227,6 +243,8 @@ export interface ChainOptions {
   readonly materials?: ChainMaterialConfig;
   /** Optional stochastic breakdowns (MTBF / MTTR per station). */
   readonly breakdowns?: ChainBreakdownConfig;
+  /** Optional planned-maintenance windows per station. */
+  readonly maintenance?: ChainMaintenanceConfig;
   /** Optional worker pool — stations request workers before each cycle starts. */
   readonly workers?: ChainWorkerConfig;
 }
@@ -376,6 +394,13 @@ export function runChain(opts: ChainOptions): ChainResult {
     ? new Array(n).fill(0)
     : undefined;
 
+  // Maintenance — one manager per station that has at least one window.
+  const maintenanceManagers: (MaintenanceManager | undefined)[] = stationIds.map((id, i) => {
+    const windows = opts.maintenance?.perStationWindows.get(i);
+    if (!windows || windows.length === 0) return undefined;
+    return new MaintenanceManager(id, windows, stateMachines[i] as StationStateMachine, scheduler);
+  });
+
   // Wire each tracker (and, if applicable, breakdown manager) to its state machine.
   for (let i = 0; i < n; i++) {
     const tracker = stateTimeTrackers[i] as StateTimeTracker;
@@ -385,6 +410,12 @@ export function runChain(opts: ChainOptions): ChainResult {
       tracker.recordTransition(e.toState, e.timeMs);
       if (manager && e.toState === "Running") manager.arm(e.timeMs);
     });
+  }
+
+  // Schedule planned maintenance events upfront. Managers don't repeat — windows
+  // are deterministic and fire exactly once each per the input config.
+  for (const mgr of maintenanceManagers) {
+    if (mgr) mgr.schedule(0);
   }
 
   const inputBuffer = new Buffer<TrackedPart>(10_000_000);
@@ -572,6 +603,27 @@ export function runChain(opts: ChainOptions): ChainResult {
       }
       continue;
     }
+    if (ev.payload.kind === "maintenance-start") {
+      const idx = stationIds.indexOf(ev.payload.stationId);
+      const mgr = maintenanceManagers[idx];
+      const executor = executors[idx];
+      if (mgr) mgr.handleMaintenanceStart(ev.timeMs);
+      // Reuse the part-resume primitive — Maintenance and Down both want to
+      // pause in-flight parts so they can resume after the window ends.
+      if (executor) executor.handleBreakdown(ev.timeMs);
+      continue;
+    }
+    if (ev.payload.kind === "maintenance-end") {
+      const idx = stationIds.indexOf(ev.payload.stationId);
+      const mgr = maintenanceManagers[idx];
+      const executor = executors[idx];
+      if (mgr) mgr.handleMaintenanceEnd(ev.timeMs);
+      if (executor) {
+        executor.handleRepair(ev.timeMs);
+        executor.attemptStart(ev.timeMs);
+      }
+      continue;
+    }
     if (ev.payload.kind !== "cycle-complete") continue;
     const idx = stationIds.indexOf(ev.payload.stationId);
     if (idx === -1) continue;
@@ -694,8 +746,20 @@ export function runChain(opts: ChainOptions): ChainResult {
     lineOee,
     aggregateBufferWipL,
     perEdgeFlowed: edgeBuffers.map((b) => b.flowed),
+    perStationScrapped: executors.map((e) => e.scrapped),
+    lineScrapRate: (() => {
+      const totalCompleted = executors.reduce((s, e) => s + e.completed, 0);
+      const totalScrapped = executors.reduce((s, e) => s + e.scrapped, 0);
+      const denom = totalCompleted + totalScrapped;
+      return denom > 0 ? totalScrapped / denom : 0;
+    })(),
     ...(materialFinal ? { materialFinal, replenishmentsFired } : {}),
     ...(breakdownCounts ? { perStationBreakdowns: breakdownCounts } : {}),
+    ...(opts.maintenance
+      ? {
+          perStationMaintenanceMs: stateTimeTrackers.map((t) => t.timeInState("Maintenance")),
+        }
+      : {}),
     ...(laborUtilization !== undefined ? { laborUtilization } : {}),
   };
 }

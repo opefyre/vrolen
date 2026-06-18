@@ -413,6 +413,78 @@ describe("runChain — workers (VROL-580)", () => {
   });
 });
 
+describe("runChain — maintenance (VROL-589)", () => {
+  it("station enters Maintenance during the configured window and exits at the end", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100), constant(100)],
+      interStationBufferCapacity: 10,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xc0ffee),
+      stationLabels: ["Filler", "Capper", "Labeler"],
+      maintenance: {
+        perStationWindows: new Map([[1, [{ startMs: 5_000, endMs: 10_000 }]]]),
+      },
+    });
+    expect(result.perStationMaintenanceMs).toBeDefined();
+    const capperMaint = result.perStationMaintenanceMs?.[1] ?? 0;
+    expect(capperMaint).toBeGreaterThan(4_500);
+    expect(capperMaint).toBeLessThan(5_500);
+  });
+
+  it("part-resume across maintenance keeps Quality at 1.0 (no scrap)", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(1000)],
+      interStationBufferCapacity: 10,
+      horizonMs: 20_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xc0ffee),
+      maintenance: {
+        // Several short windows mid-cycle
+        perStationWindows: new Map([
+          [
+            0,
+            [
+              { startMs: 300, endMs: 600 },
+              { startMs: 2_500, endMs: 3_000 },
+              { startMs: 6_400, endMs: 6_800 },
+            ],
+          ],
+        ]),
+      },
+    });
+    // Should still produce parts; none should be scrapped (defectRate=0 + part-resume)
+    expect(result.completed).toBeGreaterThan(10);
+    expect(result.perStationOee[0]!.quality).toBe(1);
+  });
+
+  it("no maintenance field when no windows configured", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(),
+    });
+    expect(result.perStationMaintenanceMs).toBeUndefined();
+  });
+});
+
+describe("runChain — defect rate KPI (VROL-591)", () => {
+  it("perStationScrapped is always present + matches executor scrap counts", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(),
+    });
+    expect(result.perStationScrapped).toHaveLength(2);
+    expect(result.perStationScrapped.every((n) => n === 0)).toBe(true);
+    expect(result.lineScrapRate).toBe(0);
+  });
+});
+
 describe("runChain — DAG topology (VROL-582)", () => {
   it("topology mode reproduces a linear chain identically to stationCycleTimes mode", () => {
     const base = {

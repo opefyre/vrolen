@@ -173,6 +173,7 @@ export type {
   ChainOptions,
   ChainMaterialConfig,
   ChainBreakdownConfig,
+  ChainMaintenanceConfig,
   ChainWorkerConfig,
   ChainTopology,
   ChainTopologyNode,

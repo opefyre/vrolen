@@ -1634,6 +1634,26 @@ function DistributionEditor({
   );
 }
 
+function stateColor(state: string): string {
+  switch (state) {
+    case "Running":
+      return "bg-sim-running";
+    case "Starved":
+      return "bg-sim-starved";
+    case "BlockedOut":
+      return "bg-sim-blocked";
+    case "Down":
+      return "bg-sim-down";
+    case "Setup":
+      return "bg-sim-setup";
+    case "Maintenance":
+      return "bg-sim-maintenance";
+    case "Idle":
+    default:
+      return "bg-sim-idle";
+  }
+}
+
 function KpiStrip({ result, runMeta }: { result: ChainResult; runMeta: RunMeta }) {
   const tile = (label: string, value: string, hint?: string) => (
     <div className="border-border bg-card rounded-md border p-3">
@@ -1645,6 +1665,7 @@ function KpiStrip({ result, runMeta }: { result: ChainResult; runMeta: RunMeta }
   const throughputPerHour = result.throughputLambda * 3_600_000;
   const fmt = (n: number, digits = 1) =>
     n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  const totalScrapped = result.perStationScrapped.reduce((a, b) => a + b, 0);
   const totalBreakdowns = (result.perStationBreakdowns ?? []).reduce((a, b) => a + b, 0);
   const finalByMat = result.materialFinal ? new Map(result.materialFinal) : null;
   const finalBottles = finalByMat?.get(BOTTLES_ID) ?? null;
@@ -1674,11 +1695,19 @@ function KpiStrip({ result, runMeta }: { result: ChainResult; runMeta: RunMeta }
               const label = runMeta.stationLabels[i] ?? `Station ${String(i + 1)}`;
               const max = Math.max(...result.perStationCompleted, 1);
               const pct = (count / max) * 100;
+              const scrap = result.perStationScrapped[i] ?? 0;
               return (
                 <div key={i} className="space-y-1">
-                  <div className="flex justify-between text-sm">
+                  <div className="flex items-baseline justify-between text-sm">
                     <span className="text-foreground/80">{label}</span>
-                    <span className="font-mono tabular-nums">{count.toLocaleString()}</span>
+                    <span className="font-mono tabular-nums">
+                      {count.toLocaleString()}
+                      {scrap > 0 ? (
+                        <span className="text-sim-down-foreground ml-2 text-xs">
+                          · {scrap.toLocaleString()} scrap
+                        </span>
+                      ) : null}
+                    </span>
                   </div>
                   <div className="bg-muted h-2 overflow-hidden rounded-full">
                     <div
@@ -1692,7 +1721,48 @@ function KpiStrip({ result, runMeta }: { result: ChainResult; runMeta: RunMeta }
           </div>
         </CardContent>
       </Card>
-      {hasMaterials || hasBreakdowns || hasLabor ? (
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-heading text-base">Per-station state breakdown</CardTitle>
+          <CardDescription>
+            Time-weighted share of each state across the measurement window. Hover a segment to see
+            exact percentages.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {result.bottlenecks.map((b) => (
+              <div key={String(b.stationId)} className="space-y-1">
+                <div className="text-foreground/80 text-sm">{b.label ?? String(b.stationId)}</div>
+                <div className="bg-muted flex h-2 overflow-hidden rounded-full">
+                  {b.breakdown
+                    .filter((seg) => seg.pct > 0.001)
+                    .map((seg) => (
+                      <div
+                        key={seg.state}
+                        title={`${seg.state}: ${(seg.pct * 100).toFixed(1)}%`}
+                        className={`h-full ${stateColor(seg.state)}`}
+                        style={{ width: `${String(seg.pct * 100)}%` }}
+                      />
+                    ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="text-muted-foreground mt-3 flex flex-wrap gap-2 text-xs">
+            {["Running", "Setup", "Maintenance", "Down", "BlockedOut", "Starved", "Idle"].map(
+              (state) => (
+                <span key={state} className="flex items-center gap-1.5">
+                  <span className={`h-2.5 w-2.5 rounded-sm ${stateColor(state)}`} />
+                  {state}
+                </span>
+              ),
+            )}
+          </div>
+        </CardContent>
+      </Card>
+      {hasMaterials || hasBreakdowns || hasLabor || totalScrapped > 0 ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {finalBottles !== null
             ? tile(
@@ -1723,6 +1793,13 @@ function KpiStrip({ result, runMeta }: { result: ChainResult; runMeta: RunMeta }
                 "Labor util",
                 `${fmt((result.laborUtilization ?? 0) * 100, 1)}%`,
                 "total worker-busy / capacity",
+              )
+            : null}
+          {totalScrapped > 0
+            ? tile(
+                "Scrap",
+                totalScrapped.toLocaleString(),
+                `${fmt(result.lineScrapRate * 100, 1)}% line scrap rate`,
               )
             : null}
         </div>
