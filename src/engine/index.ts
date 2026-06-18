@@ -121,3 +121,18 @@ export { SeededPrng } from "./prng";
 // Distribution samplers — Constant/Uniform/Normal/Triangular/Exponential.
 export type { SampleOptions } from "./sampling";
 export { sample } from "./sampling";
+
+// Station state machine.
+export type {
+  StationState,
+  TransitionReason,
+  StationStateChange,
+  StateChangeListener,
+} from "./state-machine";
+export {
+  StationStateMachine,
+  InvalidTransitionError,
+  isProductive,
+  isUnavailable,
+  isUnplannedDowntime,
+} from "./state-machine";
