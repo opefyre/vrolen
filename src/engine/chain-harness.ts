@@ -696,6 +696,21 @@ export function runChain(opts: ChainOptions): ChainResult {
     }
   }
 
+  // VROL-618 — schedule a break-end event for every worker break. Without this,
+  // a station that Starved because all workers were on break stays Starved
+  // forever after the break window closes (the engine has no other nudge).
+  // Mirrors how maintenance-end events wake stations after planned downtime.
+  if (opts.workers) {
+    for (const w of opts.workers.workers) {
+      if (!w.breaks) continue;
+      for (const brk of w.breaks) {
+        if (brk.endMs > 0 && brk.endMs <= opts.horizonMs) {
+          scheduler.schedule(brk.endMs, { kind: "break-end" });
+        }
+      }
+    }
+  }
+
   // Kick off — every station attempts to start so Starved transitions fire correctly.
   for (const ex of executors) ex.attemptStart(0);
 
@@ -793,6 +808,13 @@ export function runChain(opts: ChainOptions): ChainResult {
       // Reuse the part-resume primitive — Maintenance and Down both want to
       // pause in-flight parts so they can resume after the window ends.
       if (executor) executor.handleBreakdown(ev.timeMs);
+      continue;
+    }
+    if (ev.payload.kind === "break-end") {
+      // VROL-618 — wake every executor; whichever ones were Starved on
+      // "no-skill-available" will retry the worker pool, which now sees the
+      // break window has closed.
+      for (const ex of executors) ex.attemptStart(ev.timeMs);
       continue;
     }
     if (ev.payload.kind === "maintenance-end") {

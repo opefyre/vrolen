@@ -36,7 +36,15 @@ export type EngineEvent =
       readonly kind: "material-replenishment";
       readonly materialId: MaterialId;
       readonly amount: number;
-    };
+    }
+  /**
+   * A scheduled worker break has ended (VROL-618). The orchestrator handling
+   * this event nudges every executor's attemptStart so stations that were
+   * Starved because all workers were on break can resume now that the break
+   * window has closed. Not tied to any single station/worker — workers
+   * become re-available implicitly via WorkerPool.isOnBreak's time check.
+   */
+  | { readonly kind: "break-end" };
 
 // Future event kinds (added in their own stories):
 //   - "shift-start" / "shift-end"                   (VROL-133)

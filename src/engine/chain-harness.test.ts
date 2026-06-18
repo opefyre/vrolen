@@ -417,6 +417,65 @@ describe("runChain — workers (VROL-580)", () => {
     expect(result.completed).toBeLessThan(40); // would be ~95 on a full shift
   });
 
+  it("schedules break-end events that wake Starved stations (VROL-618)", () => {
+    // 1 worker, shift [0, 60s], break [10s, 30s]. Pre-VROL-618: station goes
+    // Starved at t≈10s when the worker requests are rejected and never wakes —
+    // completed stays at whatever was produced in [0, 10s].
+    // With VROL-618: at t=30s the break-end event fires, executor retries,
+    // worker pool now allows assignment, station resumes. completed grows
+    // through [30s, 60s] too.
+    const withBreak = runChain({
+      stationCycleTimes: [constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xb517),
+      workers: {
+        workers: [
+          {
+            ...worker("w1", ["any"], 60_000),
+            breaks: [{ startMs: 10_000, endMs: 30_000 }],
+          },
+        ],
+        requireDefault: ["any"],
+      },
+    });
+    // ~10s of cycles before the break + ~30s of cycles after → well above the
+    // ~95 a 10s-only stretch would deliver.
+    expect(withBreak.completed).toBeGreaterThan(200);
+    // Sanity: still less than a no-break shift since 20s are lost to the break.
+    expect(withBreak.completed).toBeLessThan(500);
+  });
+
+  it("multi-worker break-end events fire independently (VROL-618)", () => {
+    // 2 stations both need "any"; 2 workers with non-overlapping breaks.
+    // At any instant, at least one worker is on shift and off break — the
+    // chain never fully stalls. Just asserting the multi-event path doesn't
+    // crash or skip wake-ups for one worker.
+    const result = runChain({
+      stationCycleTimes: [constant(80), constant(80)],
+      interStationBufferCapacity: 5,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xb518),
+      workers: {
+        workers: [
+          {
+            ...worker("w1", ["any"], 60_000),
+            breaks: [{ startMs: 10_000, endMs: 20_000 }],
+          },
+          {
+            ...worker("w2", ["any"], 60_000),
+            breaks: [{ startMs: 30_000, endMs: 40_000 }],
+          },
+        ],
+        requireDefault: ["any"],
+      },
+    });
+    expect(result.completed).toBeGreaterThan(0);
+    expect(result.laborUtilization).toBeDefined();
+  });
+
   it("per-worker breaks shrink the labor-util denominator, not the numerator (VROL-616)", () => {
     // 60s run, 1 worker on shift for the full 60s with a break at [30s, 60s].
     // Worker is available + busy for the first 30s, then the break Starves
