@@ -1,4 +1,6 @@
 import { AppShell } from "@/components/AppShell";
+import { Toaster } from "@/components/Toaster";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,6 +34,24 @@ function HomePage() {
             </DialogHeader>
           </DialogContent>
         </Dialog>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => toast.success("Toast wired up", { description: "VROL-43 done" })}
+          >
+            Success toast
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              toast.error("Something exploded", { description: "But this is just a demo" })
+            }
+          >
+            Error toast
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -42,6 +62,7 @@ export default function App() {
   return (
     <TooltipProvider>
       <AppShell>{pathname === "/design-tokens" ? <DesignTokens /> : <HomePage />}</AppShell>
+      <Toaster />
     </TooltipProvider>
   );
 }
