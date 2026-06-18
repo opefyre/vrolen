@@ -7,6 +7,11 @@
  * broken everywhere.
  */
 
+import { Inbox } from "lucide-react";
+
+import { EmptyState } from "@/components/EmptyState";
+import { Skeleton } from "@/components/Skeleton";
+
 type SimState = "idle" | "setup" | "running" | "blocked" | "starved" | "down" | "maintenance";
 
 const SIM_STATES: { key: SimState; label: string }[] = [
@@ -96,6 +101,26 @@ export default function DesignTokens() {
                 label={s.label}
               />
             ))}
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="font-heading text-xl font-semibold tracking-tight">Loading skeletons</h2>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-32" label="Loading title" />
+              <Skeleton className="h-3 w-full" label="Loading row 1" />
+              <Skeleton className="h-3 w-full" label="Loading row 2" />
+              <Skeleton className="h-3 w-3/4" label="Loading row 3" />
+            </div>
+            <EmptyState
+              icon={Inbox}
+              title="No scenarios yet"
+              body="Create one or pick a template to start simulating your line."
+              action={
+                <span className="text-primary text-sm font-medium underline">Create scenario</span>
+              }
+            />
           </div>
         </section>
 
