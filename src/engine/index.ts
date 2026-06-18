@@ -152,3 +152,7 @@ export { ThroughputKPI } from "./kpi";
 
 // Stochastic breakdowns (MTBF/MTTR).
 export { BreakdownManager } from "./breakdown";
+
+// Planned maintenance (deterministic windows).
+export type { MaintenanceWindow } from "./maintenance";
+export { MaintenanceManager } from "./maintenance";

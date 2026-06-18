@@ -21,10 +21,13 @@ export type EngineEvent =
   /** Station's MTTR clock has elapsed — repair is complete. */
   | { readonly kind: "repair-complete"; readonly stationId: StationId }
   /** Station's pre-cycle setup time has elapsed — ready to begin Running. */
-  | { readonly kind: "setup-complete"; readonly stationId: StationId };
+  | { readonly kind: "setup-complete"; readonly stationId: StationId }
+  /** A scheduled maintenance window for the station has begun. */
+  | { readonly kind: "maintenance-start"; readonly stationId: StationId }
+  /** A scheduled maintenance window for the station has ended. */
+  | { readonly kind: "maintenance-end"; readonly stationId: StationId };
 
 // Future event kinds (added in their own stories):
-//   - "maintenance-start" / "maintenance-end"       (VROL-130)
 //   - "shift-start" / "shift-end"                   (VROL-133)
 //   - "material-replenishment"                      (VROL-153)
 //   - "worker-arrived"                              (VROL-174, agent overlay)
