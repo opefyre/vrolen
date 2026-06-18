@@ -70,11 +70,11 @@ export interface StationStateChange {
  * allowed (catch infinite-loop bugs).
  */
 const ALLOWED_TRANSITIONS: Readonly<Record<StationState, ReadonlySet<StationState>>> = {
-  Idle: new Set<StationState>(["Setup", "Running", "Down", "Maintenance"]),
+  Idle: new Set<StationState>(["Setup", "Running", "Starved", "Down", "Maintenance"]),
   Setup: new Set<StationState>(["Running", "Down", "Maintenance", "Idle"]),
   Running: new Set<StationState>(["Idle", "Setup", "BlockedOut", "Starved", "Down", "Maintenance"]),
-  BlockedOut: new Set<StationState>(["Running", "Down", "Maintenance"]),
-  Starved: new Set<StationState>(["Running", "Down", "Maintenance"]),
+  BlockedOut: new Set<StationState>(["Running", "Idle", "Down", "Maintenance"]),
+  Starved: new Set<StationState>(["Running", "Idle", "Down", "Maintenance"]),
   Down: new Set<StationState>(["Idle", "Running"]),
   Maintenance: new Set<StationState>(["Idle", "Running"]),
 };

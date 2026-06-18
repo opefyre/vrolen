@@ -136,3 +136,13 @@ export {
   isUnavailable,
   isUnplannedDowntime,
 } from "./state-machine";
+
+// Bounded FIFO buffer (between stations and on edges).
+export { Buffer } from "./buffer";
+
+// Engine event union — payloads carried by the Scheduler.
+export type { EngineEvent } from "./events";
+
+// Cycle execution — the per-station core loop.
+export type { CycleConfig, CompletionEvent, CompletionListener } from "./cycle-execution";
+export { CycleExecutor } from "./cycle-execution";
