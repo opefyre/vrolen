@@ -137,8 +137,8 @@ export {
   isUnplannedDowntime,
 } from "./state-machine";
 
-// Bounded FIFO buffer (between stations and on edges).
-export { Buffer } from "./buffer";
+// Bounded FIFO buffer (between stations and on edges) + WIP-tracking variant.
+export { Buffer, TrackedBuffer } from "./buffer";
 
 // Engine event union — payloads carried by the Scheduler.
 export type { EngineEvent } from "./events";
