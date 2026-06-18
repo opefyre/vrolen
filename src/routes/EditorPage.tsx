@@ -254,6 +254,8 @@ interface StationNodeData {
   skills?: string[];
   setupDistribution?: Distribution;
   changeoverMatrix?: Record<string, Record<string, Distribution>>;
+  /** Cumulative-completed series injected by EditorPage when samples exist (VROL-614). */
+  sparklineSeries?: number[];
   [key: string]: unknown;
 }
 
@@ -303,6 +305,11 @@ function StationNode({ data, selected }: NodeProps) {
           ) : null}
         </div>
       ) : null}
+      {Array.isArray(d.sparklineSeries) && d.sparklineSeries.length > 1 ? (
+        <div className="mt-1.5">
+          <Sparkline series={d.sparklineSeries} />
+        </div>
+      ) : null}
       <Handle type="source" position={Position.Right} className="!h-3 !w-3" />
     </div>
   );
@@ -314,6 +321,7 @@ const NODE_TYPES = { station: StationNode };
 // bloat the first non-editor route. It's used inside this lazy-loaded file,
 // so a normal import is fine.
 import { AnimatedEdge } from "./AnimatedEdge";
+import { Sparkline } from "./Sparkline";
 import { ThroughputChart } from "./ThroughputChart";
 const EDGE_TYPES = { animated: AnimatedEdge };
 
@@ -756,6 +764,31 @@ function EditorCanvas() {
   // Render edges with per-edge throughput labels from the last run, if we have one.
   // When animateFlow is on, also assign the animated custom edge type so dots
   // travel along the path at a speed tied to the edge's flow rate.
+  // VROL-614 — feed each station's cumulative-completed series into its node
+  // data so StationNode can render a sparkline. Hidden when no result, no
+  // samples, or the station isn't on the analysed chain.
+  const nodesForFlow = useMemo<Node[]>(() => {
+    if (!result || !runMeta || result.samples.length === 0) return nodes;
+    const idxByNodeId = new Map<string, number>();
+    runMeta.chainNodeIds.forEach((id, i) => idxByNodeId.set(id, i));
+    return nodes.map((n) => {
+      const stationIdx = idxByNodeId.get(n.id);
+      if (stationIdx === undefined) {
+        // Off-chain (e.g. unconnected palette drop) — strip any stale series.
+        const data = n.data as Record<string, unknown>;
+        if (!("sparklineSeries" in data)) return n;
+        const next = { ...data };
+        delete next.sparklineSeries;
+        return { ...n, data: next };
+      }
+      const series = result.samples.map((s) => s.perStationCompleted[stationIdx] ?? 0);
+      return {
+        ...n,
+        data: { ...(n.data as Record<string, unknown>), sparklineSeries: series },
+      };
+    });
+  }, [nodes, result, runMeta]);
+
   const edgesForFlow = useMemo<Edge[]>(() => {
     if (!result || !runMeta || result.elapsedMs <= 0) return edges;
     const flowByKey = new Map<string, number>();
@@ -954,7 +987,7 @@ function EditorCanvas() {
           className="border-border bg-background overflow-hidden rounded-md border"
         >
           <ReactFlow
-            nodes={nodes}
+            nodes={nodesForFlow}
             edges={edgesForFlow}
             nodeTypes={NODE_TYPES}
             edgeTypes={EDGE_TYPES}
