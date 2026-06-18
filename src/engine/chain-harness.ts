@@ -19,6 +19,7 @@
  */
 
 import { detectBottlenecks, type BottleneckCandidate } from "./bottleneck";
+import { BreakdownManager } from "./breakdown";
 import { Buffer, TrackedBuffer } from "./buffer";
 import type { CycleConfig } from "./cycle-execution";
 import { CycleExecutor } from "./cycle-execution";
@@ -65,6 +66,18 @@ export interface ChainResult {
   readonly lineOee: number;
   /** Aggregate time-weighted WIP across inter-station buffers, taken from TrackedBuffer integrals. */
   readonly aggregateBufferWipL: number;
+  /** Per-station breakdown count fired during the run. Undefined when no breakdowns config given. */
+  readonly perStationBreakdowns?: readonly number[];
+}
+
+export interface ChainBreakdownConfig {
+  /**
+   * Mean time between failures (sampled distribution). Applied identically to
+   * every station — per-station overrides land alongside the editor.
+   */
+  readonly mtbfMs: Distribution;
+  /** Mean time to repair (sampled distribution). */
+  readonly mttrMs: Distribution;
 }
 
 export interface ChainMaterialConfig {
@@ -97,6 +110,8 @@ export interface ChainOptions {
   readonly stationLabels?: readonly string[];
   /** Optional material consumption + replenishment configuration. */
   readonly materials?: ChainMaterialConfig;
+  /** Optional stochastic breakdowns (MTBF / MTTR per station). */
+  readonly breakdowns?: ChainBreakdownConfig;
 }
 
 export function runChain(opts: ChainOptions): ChainResult {
@@ -108,15 +123,39 @@ export function runChain(opts: ChainOptions): ChainResult {
   const stateTimeTrackers: StateTimeTracker[] = stateMachines.map(
     (sm) => new StateTimeTracker(sm.state, 0),
   );
-  // Wire each tracker to its state machine.
+  const scheduler = new Scheduler<EngineEvent>();
+
+  // Breakdown wiring — one manager per station when configured. Each manager
+  // arms on its station's first Running entry; subsequent arms happen after
+  // repair-complete restarts the cycle. Track per-station breakdown counts
+  // for reporting.
+  const breakdownManagers: BreakdownManager[] | undefined = opts.breakdowns
+    ? stationIds.map(
+        (id, i) =>
+          new BreakdownManager(
+            id,
+            opts.breakdowns!.mtbfMs,
+            opts.breakdowns!.mttrMs,
+            stateMachines[i] as StationStateMachine,
+            scheduler,
+            opts.prng,
+          ),
+      )
+    : undefined;
+  const breakdownCounts: number[] | undefined = breakdownManagers
+    ? new Array(n).fill(0)
+    : undefined;
+
+  // Wire each tracker (and, if applicable, breakdown manager) to its state machine.
   for (let i = 0; i < n; i++) {
     const tracker = stateTimeTrackers[i] as StateTimeTracker;
     const sm = stateMachines[i] as StationStateMachine;
+    const manager = breakdownManagers?.[i];
     sm.onStateChange((e) => {
       tracker.recordTransition(e.toState, e.timeMs);
+      if (manager && e.toState === "Running") manager.arm(e.timeMs);
     });
   }
-  const scheduler = new Scheduler<EngineEvent>();
 
   const inputBuffer = new Buffer<TrackedPart>(10_000_000);
   const sinkBuffer = new Buffer<TrackedPart>(10_000_000);
@@ -237,6 +276,23 @@ export function runChain(opts: ChainOptions): ChainResult {
       }
       continue;
     }
+    if (ev.payload.kind === "breakdown-start") {
+      const idx = stationIds.indexOf(ev.payload.stationId);
+      const manager = breakdownManagers?.[idx];
+      if (manager) {
+        manager.handleBreakdown(ev.timeMs);
+        if (breakdownCounts) breakdownCounts[idx] = (breakdownCounts[idx] ?? 0) + 1;
+      }
+      continue;
+    }
+    if (ev.payload.kind === "repair-complete") {
+      const idx = stationIds.indexOf(ev.payload.stationId);
+      const manager = breakdownManagers?.[idx];
+      const executor = executors[idx];
+      if (manager) manager.handleRepair(ev.timeMs);
+      if (executor) executor.attemptStart(ev.timeMs);
+      continue;
+    }
     if (ev.payload.kind !== "cycle-complete") continue;
     const idx = stationIds.indexOf(ev.payload.stationId);
     if (idx === -1) continue;
@@ -335,5 +391,6 @@ export function runChain(opts: ChainOptions): ChainResult {
     lineOee,
     aggregateBufferWipL,
     ...(materialFinal ? { materialFinal, replenishmentsFired } : {}),
+    ...(breakdownCounts ? { perStationBreakdowns: breakdownCounts } : {}),
   };
 }

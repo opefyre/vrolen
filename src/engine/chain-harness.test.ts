@@ -12,6 +12,8 @@ import { constant } from "./distribution";
 import { asMaterialId } from "./ids";
 import { SeededPrng } from "./prng";
 
+const exp = (rate: number) => ({ kind: "exponential" as const, rate });
+
 const BOTTLES = asMaterialId("bottles");
 const CAPS = asMaterialId("caps");
 
@@ -157,5 +159,68 @@ describe("runChain — materials (VROL-575)", () => {
     });
     expect(result.materialFinal).toBeUndefined();
     expect(result.replenishmentsFired).toBeUndefined();
+  });
+});
+
+describe("runChain — breakdowns (VROL-576)", () => {
+  it("fires per-station breakdowns when MTBF + MTTR are configured", () => {
+    // Aggressive MTBF (rate 1/2000 = mean 2s) over 60s horizon → many breakdowns expected.
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100), constant(100)],
+      interStationBufferCapacity: 10,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xabc123),
+      stationLabels: ["Filler", "Capper", "Labeler"],
+      breakdowns: {
+        mtbfMs: exp(1 / 2000),
+        mttrMs: constant(500),
+      },
+    });
+
+    expect(result.perStationBreakdowns).toBeDefined();
+    const total = (result.perStationBreakdowns ?? []).reduce((a, b) => a + b, 0);
+    // At ~2s MTBF over 60s, expect several breakdowns across 3 stations
+    expect(total).toBeGreaterThan(3);
+  });
+
+  it("availability drops below baseline when breakdowns are enabled", () => {
+    const common = {
+      stationCycleTimes: [constant(100), constant(200), constant(100)],
+      interStationBufferCapacity: 10,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      stationLabels: ["Filler", "Capper", "Labeler"],
+    };
+    const baseline = runChain({
+      ...common,
+      prng: new SeededPrng(0xc0ffee),
+    });
+    const withBreakdowns = runChain({
+      ...common,
+      prng: new SeededPrng(0xc0ffee),
+      breakdowns: {
+        mtbfMs: exp(1 / 3000),
+        mttrMs: constant(1000),
+      },
+    });
+
+    // Average availability across stations should drop noticeably
+    const avgA = (oees: readonly { availability: number }[]) =>
+      oees.reduce((s, m) => s + m.availability, 0) / oees.length;
+    const baseAvailability = avgA(baseline.perStationOee);
+    const breakdownAvailability = avgA(withBreakdowns.perStationOee);
+    expect(breakdownAvailability).toBeLessThan(baseAvailability);
+  });
+
+  it("back-compat: no perStationBreakdowns field when breakdowns config omitted", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(),
+    });
+    expect(result.perStationBreakdowns).toBeUndefined();
   });
 });

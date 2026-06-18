@@ -20,6 +20,8 @@ import {
   Play,
   RotateCcw,
   Timer,
+  Wrench,
+  Zap,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -28,6 +30,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import {
   asMaterialId,
+  type ChainBreakdownConfig,
   type ChainMaterialConfig,
   type ChainResult,
   constant,
@@ -48,12 +51,19 @@ interface MaterialsConfig {
   };
 }
 
+interface BreakdownsConfig {
+  enabled: boolean;
+  mtbfMs: number; // mean — used as the rate-source for exponential MTBF
+  mttrMs: number;
+}
+
 interface RunConfig {
   cycleTimes: [number, number, number];
   horizonMs: number;
   warmupMs: number;
   seed: number;
   materials: MaterialsConfig;
+  breakdowns: BreakdownsConfig;
 }
 
 const DEFAULT_CONFIG: RunConfig = {
@@ -71,6 +81,11 @@ const DEFAULT_CONFIG: RunConfig = {
       amount: 500,
     },
   },
+  breakdowns: {
+    enabled: false,
+    mtbfMs: 10_000,
+    mttrMs: 2_000,
+  },
 };
 
 const BOTTLES_ID = asMaterialId("bottles");
@@ -87,6 +102,7 @@ function loadConfig(): RunConfig {
     if (!raw) return DEFAULT_CONFIG;
     const parsed = JSON.parse(raw) as Partial<RunConfig>;
     const materialsParsed = parsed.materials ?? DEFAULT_CONFIG.materials;
+    const breakdownsParsed = parsed.breakdowns ?? DEFAULT_CONFIG.breakdowns;
     return {
       cycleTimes: (parsed.cycleTimes && parsed.cycleTimes.length === 3
         ? parsed.cycleTimes
@@ -106,6 +122,11 @@ function loadConfig(): RunConfig {
           amount:
             materialsParsed.replenishment?.amount ?? DEFAULT_CONFIG.materials.replenishment.amount,
         },
+      },
+      breakdowns: {
+        enabled: breakdownsParsed.enabled ?? DEFAULT_CONFIG.breakdowns.enabled,
+        mtbfMs: breakdownsParsed.mtbfMs ?? DEFAULT_CONFIG.breakdowns.mtbfMs,
+        mttrMs: breakdownsParsed.mttrMs ?? DEFAULT_CONFIG.breakdowns.mttrMs,
       },
     };
   } catch {
@@ -288,6 +309,12 @@ export default function RunPage() {
                 : {}),
             }
           : undefined;
+        const breakdownsCfg: ChainBreakdownConfig | undefined = config.breakdowns.enabled
+          ? {
+              mtbfMs: { kind: "exponential", rate: 1 / Math.max(1, config.breakdowns.mtbfMs) },
+              mttrMs: constant(Math.max(1, config.breakdowns.mttrMs)),
+            }
+          : undefined;
         const r = runChain({
           stationCycleTimes: config.cycleTimes.map((ms) => constant(ms)),
           interStationBufferCapacity: 10,
@@ -296,6 +323,7 @@ export default function RunPage() {
           prng: new SeededPrng(config.seed),
           stationLabels: labels,
           ...(materialsCfg ? { materials: materialsCfg } : {}),
+          ...(breakdownsCfg ? { breakdowns: breakdownsCfg } : {}),
         });
         const wallMs = performance.now() - t0;
         setResult(r);
@@ -543,6 +571,67 @@ export default function RunPage() {
             ) : null}
           </div>
 
+          <div className="border-border space-y-3 rounded-md border border-dashed p-3">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={config.breakdowns.enabled}
+                onChange={(e) => {
+                  const enabled = e.target.checked;
+                  setConfig((c) => ({ ...c, breakdowns: { ...c.breakdowns, enabled } }));
+                }}
+                className="accent-sim-running h-4 w-4"
+              />
+              <Zap className="h-4 w-4" />
+              Stochastic breakdowns (exp MTBF, constant MTTR)
+            </label>
+            {config.breakdowns.enabled ? (
+              <>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <NumberField
+                    label="Mean time between failures"
+                    value={config.breakdowns.mtbfMs}
+                    onChange={(n) => {
+                      setConfig((c) => ({
+                        ...c,
+                        breakdowns: { ...c.breakdowns, mtbfMs: Math.max(1, Math.floor(n)) },
+                      }));
+                    }}
+                    min={100}
+                    step={1000}
+                    suffix="ms"
+                  />
+                  <NumberField
+                    label="Mean time to repair"
+                    value={config.breakdowns.mttrMs}
+                    onChange={(n) => {
+                      setConfig((c) => ({
+                        ...c,
+                        breakdowns: { ...c.breakdowns, mttrMs: Math.max(1, Math.floor(n)) },
+                      }));
+                    }}
+                    min={100}
+                    step={500}
+                    suffix="ms"
+                  />
+                </div>
+                <p className="text-muted-foreground text-xs">
+                  Steady-state availability ceiling: MTBF / (MTBF + MTTR) ={" "}
+                  <span className="font-mono tabular-nums">
+                    {formatNumber(
+                      (config.breakdowns.mtbfMs /
+                        Math.max(1, config.breakdowns.mtbfMs + config.breakdowns.mttrMs)) *
+                        100,
+                      1,
+                    )}
+                    %
+                  </span>
+                  . Parts in flight at the moment of breakdown are scrapped (Phase 0).
+                </p>
+              </>
+            ) : null}
+          </div>
+
           <div className="flex flex-wrap gap-2 pt-2">
             <Button onClick={handleRun} disabled={isRunning} className="gap-2">
               <Play className="h-4 w-4" />
@@ -649,6 +738,48 @@ export default function RunPage() {
               </p>
             </CardContent>
           </Card>
+
+          {result.perStationBreakdowns ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="font-heading flex items-center gap-2 text-base">
+                  <Wrench className="h-4 w-4" />
+                  Breakdowns
+                </CardTitle>
+                <CardDescription>
+                  {result.perStationBreakdowns.reduce((a, b) => a + b, 0)} total breakdown
+                  {result.perStationBreakdowns.reduce((a, b) => a + b, 0) === 1 ? "" : "s"} across
+                  the chain. Each fired at currentTime + sample(MTBF); repair scheduled at failure +
+                  sample(MTTR).
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {result.perStationBreakdowns.map((count, i) => {
+                    const label = `${STATION_BASE_LABELS[i] ?? `Station ${String(i + 1)}`} (${String(config.cycleTimes[i])}ms)`;
+                    const max = Math.max(...result.perStationBreakdowns!, 1);
+                    const pct = (count / max) * 100;
+                    return (
+                      <div key={i} className="space-y-1">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-foreground/80">{label}</span>
+                          <span className="font-mono tabular-nums">
+                            {count.toLocaleString()} breakdowns
+                          </span>
+                        </div>
+                        <div className="bg-muted h-2 overflow-hidden rounded-full">
+                          <div
+                            className="bg-sim-down h-full rounded-full transition-[width]"
+                            style={{ width: `${String(pct)}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
 
           {result.materialFinal ? (
             <Card>

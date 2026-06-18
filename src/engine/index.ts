@@ -168,7 +168,12 @@ export { detectBottlenecks, topBottlenecks } from "./bottleneck";
 
 // Multi-station chain harness — wires N CycleExecutors and reports Little's-Law metrics.
 // Originally test-only; promoted to public API in VROL-573 (the first UI consumer of the engine).
-export type { ChainResult, ChainOptions, ChainMaterialConfig } from "./chain-harness";
+export type {
+  ChainResult,
+  ChainOptions,
+  ChainMaterialConfig,
+  ChainBreakdownConfig,
+} from "./chain-harness";
 export { runChain } from "./chain-harness";
 
 // Material inventory pool (VROL-153). Tracks quantities; consume() is atomic.

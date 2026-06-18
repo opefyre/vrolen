@@ -214,6 +214,17 @@ export class CycleExecutor<P> {
     const part = this.inFlight.shift() as P;
     this.inProgress_ -= 1;
 
+    // If a breakdown or maintenance kicked in after this cycle started, the
+    // part is lost (per breakdown.ts Phase-0 scope). We can't push or
+    // BlockedOut from a Down/Maintenance state — both transitions are
+    // explicitly disallowed.
+    const state = this.stateMachine.state;
+    if (state === "Down" || state === "Maintenance") {
+      this.scrapped_ += 1;
+      this.notifyCompletion({ stationId: this.config.stationId, part, timeMs, defective: true });
+      return;
+    }
+
     const isDefective = this.prng.nextFloat() < this.config.defectRate;
 
     if (isDefective) {
