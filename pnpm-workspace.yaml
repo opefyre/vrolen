@@ -1,0 +1,5 @@
+# pnpm v11+ config. Only allow build scripts from dependencies we explicitly trust.
+# esbuild needs its postinstall to pick the right platform binary.
+
+allowBuilds:
+  esbuild: true
