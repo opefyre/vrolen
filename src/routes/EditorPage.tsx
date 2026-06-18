@@ -142,6 +142,28 @@ const PALETTE: readonly PaletteItem[] = [
   { stationType: "output", label: "Output", icon: Wrench, summary: "Sink" },
 ];
 
+/**
+ * VROL-604 — Stable per-station identity, independent of the node's react-flow
+ * id (which can collide after renames or palette drops). Used by the engine
+ * translator to disambiguate metrics across runs.
+ */
+function generateStationKey(): string {
+  const rand = ((Math.sin(performance.now()) + 1) / 2).toString(36).slice(2, 10);
+  return `sk_${performance.now().toString(36).replace(".", "")}_${rand}`;
+}
+
+/**
+ * Backfill a stationKey on every node that's missing one. Mutates a copy of the
+ * provided array and returns it. Safe to call on already-keyed nodes (no-op).
+ */
+function ensureStationKeys(nodes: Node[]): Node[] {
+  return nodes.map((n) => {
+    const data = (n.data ?? {}) as Record<string, unknown>;
+    if (typeof data.stationKey === "string" && data.stationKey.length > 0) return n;
+    return { ...n, data: { ...data, stationKey: generateStationKey() } };
+  });
+}
+
 const INITIAL_NODES: Node[] = [
   {
     id: "n1",
@@ -194,10 +216,15 @@ function loadGraph(): PersistedGraph {
     const raw = window.localStorage?.getItem?.(STORAGE_KEY);
     if (!raw) return { nodes: INITIAL_NODES, edges: INITIAL_EDGES };
     const parsed = JSON.parse(raw) as Partial<PersistedGraph>;
-    return {
-      nodes: parsed.nodes && parsed.nodes.length > 0 ? parsed.nodes : INITIAL_NODES,
-      edges: parsed.edges ?? [],
-    };
+    const baseNodes = parsed.nodes && parsed.nodes.length > 0 ? parsed.nodes : INITIAL_NODES;
+    // VROL-607 — backfill stationKey before first render so a station's
+    // identity survives even if the user reloads before mutating any state.
+    // If the backfill changes anything, re-persist so the keys stick.
+    const keyed = ensureStationKeys([...baseNodes]);
+    const changed = keyed.some((n, i) => n !== baseNodes[i]);
+    const result: PersistedGraph = { nodes: keyed, edges: parsed.edges ?? [] };
+    if (changed) saveGraph(result);
+    return result;
   } catch {
     return { nodes: INITIAL_NODES, edges: INITIAL_EDGES };
   }
@@ -309,8 +336,20 @@ function EditorCanvas() {
     kind: "load" | "load-run" | "delete";
   } | null>(null);
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
-  /** When true, edges render as animated bezier paths with SVG dots flowing along (VROL-606). */
-  const [animateFlow, setAnimateFlow] = useState<boolean>(false);
+  /** Inline-confirm state for per-history-entry Replay (VROL-611). */
+  const [confirmReplay, setConfirmReplay] = useState<{ scenario: string; idx: number } | null>(
+    null,
+  );
+  /**
+   * When true, edges render as animated bezier paths with SVG dots flowing along
+   * (VROL-606). Persisted via RunSettings.animateFlow so the toggle survives
+   * reload (VROL-607).
+   */
+  const animateFlow = settings.animateFlow;
+  const setAnimateFlow = useCallback(
+    (next: boolean) => setSettings((prev) => ({ ...prev, animateFlow: next })),
+    [setSettings],
+  );
   /** Snapshot of the active scenario as JSON; used to detect drift for the modified badge. */
   const [activeScenarioSnapshot, setActiveScenarioSnapshot] = useState<string | null>(null);
   const [comparison, setComparison] = useState<{
@@ -342,6 +381,42 @@ function EditorCanvas() {
   useEffect(() => {
     saveGraph({ nodes, edges });
   }, [nodes, edges]);
+
+  /**
+   * VROL-608 — DOM element wrapping the currently-open inline confirm row.
+   * Used by the outside-click + Escape effect below to dismiss the confirm
+   * when the user clicks elsewhere or presses Escape.
+   */
+  const confirmTargetRef = useRef<HTMLElement | null>(null);
+  const anyConfirmOpen = confirmAction !== null || confirmReset || confirmReplay !== null;
+  useEffect(() => {
+    if (!anyConfirmOpen) return;
+    const clearAll = () => {
+      setConfirmAction(null);
+      setConfirmReset(false);
+      setConfirmReplay(null);
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target;
+      if (
+        confirmTargetRef.current &&
+        target instanceof Node &&
+        confirmTargetRef.current.contains(target)
+      ) {
+        return;
+      }
+      clearAll();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") clearAll();
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [anyConfirmOpen]);
 
   const selectedNode = selectedNodeId ? (nodes.find((n) => n.id === selectedNodeId) ?? null) : null;
 
@@ -406,6 +481,7 @@ function EditorCanvas() {
           stationType: item.stationType,
           cycleDistribution: constant(100),
           defectRate: 0,
+          stationKey: generateStationKey(),
         },
       };
       setNodes((nds) => nds.concat(newNode));
@@ -579,6 +655,7 @@ function EditorCanvas() {
             lineOee: r.lineOee,
             avgTimeInSystemW: r.avgTimeInSystemW,
             runAtMs: Date.now(),
+            payload: { graph: { nodes, edges }, settings },
           };
           addRunToHistory(activeScenarioName, summary);
           setHistoryByScenario((prev) => ({
@@ -644,7 +721,7 @@ function EditorCanvas() {
         toast.error("Couldn't load scenario");
         return false;
       }
-      setNodes(payload.graph.nodes);
+      setNodes(ensureStationKeys([...payload.graph.nodes]));
       setEdges(payload.graph.edges);
       setSettings(payload.settings);
       setSelectedNodeId(null);
@@ -681,6 +758,19 @@ function EditorCanvas() {
     runMeta.edgeKeys.forEach((key, i) => {
       flowByKey.set(key, result.perEdgeFlowed[i] ?? 0);
     });
+    // VROL-609 — tint animated dots by the worst-station's primary reason
+    // so a clean run paints green and a breakdown-heavy run paints red.
+    const primaryReason = result.bottlenecks[0]?.primaryReason ?? "running";
+    const dotColorClass =
+      primaryReason === "breakdown"
+        ? "text-sim-down"
+        : primaryReason === "setup"
+          ? "text-sim-setup"
+          : primaryReason === "maintenance"
+            ? "text-sim-maintenance"
+            : primaryReason === "blocking" || primaryReason === "starvation"
+              ? "text-sim-blocked"
+              : "text-sim-running";
     return edges.map((e) => {
       const key = `${e.source}→${e.target}`;
       const flowed = flowByKey.get(key);
@@ -692,7 +782,9 @@ function EditorCanvas() {
         ...e,
         label,
         animated: !animateFlow && flowed > 0,
-        ...(animateFlow && flowed > 0 ? { type: "animated", data: { ...e.data, flowRate } } : {}),
+        ...(animateFlow && flowed > 0
+          ? { type: "animated", data: { ...e.data, flowRate, dotColorClass } }
+          : {}),
       };
     });
   }, [edges, result, runMeta, animateFlow]);
@@ -757,7 +849,12 @@ function EditorCanvas() {
                 Scenarios
               </Button>
               {confirmReset ? (
-                <div className="flex items-center justify-between gap-1 text-xs">
+                <div
+                  ref={(el) => {
+                    confirmTargetRef.current = el;
+                  }}
+                  className="flex items-center justify-between gap-1 text-xs"
+                >
                   <span className="text-muted-foreground">Reset?</span>
                   <div className="flex gap-1">
                     <Button
@@ -1131,7 +1228,12 @@ function EditorCanvas() {
                         </div>
                         <div className="flex gap-1">
                           {confirmAction && confirmAction.scenario === s.name ? (
-                            <div className="flex items-center gap-2 text-xs">
+                            <div
+                              ref={(el) => {
+                                confirmTargetRef.current = el;
+                              }}
+                              className="flex items-center gap-2 text-xs"
+                            >
                               <span className="text-muted-foreground">
                                 {confirmAction.kind === "load"
                                   ? "Load? Unsaved canvas lost."
@@ -1226,20 +1328,83 @@ function EditorCanvas() {
                             {history.length} recent run{history.length === 1 ? "" : "s"}
                           </summary>
                           <ul className="mt-2 space-y-1">
-                            {history.map((h, idx) => (
-                              <li
-                                key={`${h.runAtMs}-${String(idx)}`}
-                                className="text-muted-foreground flex items-center justify-between gap-2"
-                              >
-                                <span className="font-mono tabular-nums">
-                                  {new Date(h.runAtMs).toLocaleString()}
-                                </span>
-                                <span>
-                                  {h.completed.toLocaleString()} parts ·{" "}
-                                  {(h.lineOee * 100).toFixed(1)}% OEE
-                                </span>
-                              </li>
-                            ))}
+                            {history.map((h, idx) => {
+                              const canReplay = !!h.payload;
+                              const isConfirming =
+                                confirmReplay !== null &&
+                                confirmReplay.scenario === s.name &&
+                                confirmReplay.idx === idx;
+                              return (
+                                <li
+                                  key={`${String(h.runAtMs)}-${String(idx)}`}
+                                  className="text-muted-foreground flex items-center justify-between gap-2"
+                                >
+                                  <span className="font-mono tabular-nums">
+                                    {new Date(h.runAtMs).toLocaleString()}
+                                  </span>
+                                  <span className="flex items-center gap-2">
+                                    <span>
+                                      {h.completed.toLocaleString()} parts ·{" "}
+                                      {(h.lineOee * 100).toFixed(1)}% OEE
+                                    </span>
+                                    {isConfirming ? (
+                                      <span
+                                        ref={(el) => {
+                                          confirmTargetRef.current = el;
+                                        }}
+                                        className="flex items-center gap-1"
+                                      >
+                                        <span className="text-muted-foreground">
+                                          Replay? Unsaved canvas lost.
+                                        </span>
+                                        <Button
+                                          size="sm"
+                                          onClick={() => {
+                                            const p = h.payload;
+                                            setConfirmReplay(null);
+                                            if (!p) return;
+                                            setNodes(ensureStationKeys([...p.graph.nodes]));
+                                            setEdges([...p.graph.edges]);
+                                            setSettings(p.settings);
+                                            setSelectedNodeId(null);
+                                            setResult(null);
+                                            setRunMeta(null);
+                                            toast.success("Replayed canvas + settings");
+                                          }}
+                                        >
+                                          Yes
+                                        </Button>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => {
+                                            setConfirmReplay(null);
+                                          }}
+                                        >
+                                          No
+                                        </Button>
+                                      </span>
+                                    ) : (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={!canReplay}
+                                        title={
+                                          canReplay
+                                            ? "Restore canvas + settings from this run"
+                                            : "Run too old — no snapshot was captured"
+                                        }
+                                        onClick={() => {
+                                          setConfirmReplay({ scenario: s.name, idx });
+                                        }}
+                                      >
+                                        Replay
+                                      </Button>
+                                    )}
+                                  </span>
+                                </li>
+                              );
+                            })}
                           </ul>
                         </details>
                       ) : null}
