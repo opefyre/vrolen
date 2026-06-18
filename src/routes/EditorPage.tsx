@@ -60,9 +60,11 @@ import {
 } from "@/components/ui/sheet";
 import {
   asMaterialId,
+  asResourceId,
   type ChainBreakdownConfig,
   type ChainMaterialConfig,
   type ChainResult,
+  type ChainWorkerConfig,
   constant,
   runChain,
   SeededPrng,
@@ -316,6 +318,18 @@ function EditorCanvas() {
         }
       : undefined;
 
+    const workersCfg: ChainWorkerConfig | undefined = settings.workers.enabled
+      ? {
+          workers: Array.from({ length: Math.max(1, settings.workers.count) }, (_, i) => ({
+            id: asResourceId(`w${String(i + 1)}`),
+            name: `Worker ${String(i + 1)}`,
+            skills: ["any"],
+            shifts: [{ startMs: 0, endMs: Math.max(1, settings.workers.shiftEndMs) }],
+          })),
+          requireDefault: ["any"],
+        }
+      : undefined;
+
     setIsRunning(true);
     setResult(null);
     setTimeout(() => {
@@ -330,6 +344,7 @@ function EditorCanvas() {
           stationLabels: [...translation.stationLabels],
           ...(materialsCfg ? { materials: materialsCfg } : {}),
           ...(breakdownsCfg ? { breakdowns: breakdownsCfg } : {}),
+          ...(workersCfg ? { workers: workersCfg } : {}),
         });
         const wallMs = performance.now() - t0;
         setResult(r);
@@ -779,6 +794,88 @@ function EditorCanvas() {
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input
                   type="checkbox"
+                  checked={settings.workers.enabled}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    setSettings((s) => ({
+                      ...s,
+                      workers: { ...s.workers, enabled },
+                    }));
+                  }}
+                  className="accent-sim-running h-4 w-4"
+                />
+                <CircleDot className="h-4 w-4" />
+                Workers (require 1 per station)
+              </label>
+              {settings.workers.enabled ? (
+                <>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="flex flex-col gap-1">
+                      <label
+                        htmlFor="rs-worker-count"
+                        className="text-muted-foreground text-xs font-medium"
+                      >
+                        Worker count
+                      </label>
+                      <Input
+                        id="rs-worker-count"
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={settings.workers.count}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (Number.isFinite(n) && n >= 1) {
+                            setSettings((s) => ({
+                              ...s,
+                              workers: { ...s.workers, count: Math.floor(n) },
+                            }));
+                          }
+                        }}
+                        className="font-mono tabular-nums"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label
+                        htmlFor="rs-worker-shift"
+                        className="text-muted-foreground text-xs font-medium"
+                      >
+                        Shift end (ms)
+                      </label>
+                      <Input
+                        id="rs-worker-shift"
+                        type="number"
+                        min={1000}
+                        step={1000}
+                        value={settings.workers.shiftEndMs}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (Number.isFinite(n) && n > 0) {
+                            setSettings((s) => ({
+                              ...s,
+                              workers: { ...s.workers, shiftEndMs: Math.floor(n) },
+                            }));
+                          }
+                        }}
+                        className="font-mono tabular-nums"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-muted-foreground text-xs">
+                    {settings.workers.count >= 3
+                      ? "≥3 workers — no labor bottleneck on a 3-station chain."
+                      : settings.workers.count === 1
+                        ? "Single worker — chain is rate-limited by labor."
+                        : `${String(settings.workers.count)} workers — partial labor contention.`}
+                  </p>
+                </>
+              ) : null}
+            </section>
+
+            <section className="border-border space-y-3 rounded-md border border-dashed p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
                   checked={settings.breakdowns.enabled}
                   onChange={(e) => {
                     const enabled = e.target.checked;
@@ -905,6 +1002,7 @@ function KpiStrip({ result }: { result: ChainResult }) {
   const finalCaps = finalByMat?.get(CAPS_ID) ?? null;
   const hasMaterials = result.materialFinal !== undefined;
   const hasBreakdowns = result.perStationBreakdowns !== undefined;
+  const hasLabor = result.laborUtilization !== undefined;
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -913,7 +1011,7 @@ function KpiStrip({ result }: { result: ChainResult }) {
         {tile("Line OEE", `${fmt(result.lineOee * 100)}%`, "geometric mean")}
         {tile("Time-in-system", `${fmt(result.avgTimeInSystemW, 0)} ms`, "average W per part")}
       </div>
-      {hasMaterials || hasBreakdowns ? (
+      {hasMaterials || hasBreakdowns || hasLabor ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {finalBottles !== null
             ? tile(
@@ -937,6 +1035,13 @@ function KpiStrip({ result }: { result: ChainResult }) {
                 "Replenishments",
                 result.replenishmentsFired.toLocaleString(),
                 "fired during run",
+              )
+            : null}
+          {hasLabor
+            ? tile(
+                "Labor util",
+                `${fmt((result.laborUtilization ?? 0) * 100, 1)}%`,
+                "total worker-busy / capacity",
               )
             : null}
         </div>

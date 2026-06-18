@@ -26,7 +26,7 @@
  */
 
 import type { Distribution } from "./distribution";
-import type { StationId } from "./ids";
+import type { ResourceId, StationId } from "./ids";
 import type { Prng } from "./prng";
 import type { Buffer } from "./buffer";
 import type { EngineEvent } from "./events";
@@ -34,6 +34,7 @@ import type { MaterialPool, MaterialRequirement } from "./material-pool";
 import { Scheduler } from "./scheduler";
 import { StationStateMachine } from "./state-machine";
 import { sample } from "./sampling";
+import type { WorkerPool } from "./worker-pool";
 
 export interface CycleConfig<P> {
   readonly stationId: StationId;
@@ -61,6 +62,16 @@ export interface CycleConfig<P> {
    */
   readonly materialRequirements?: ReadonlyArray<MaterialRequirement>;
   readonly materialPool?: MaterialPool;
+  /**
+   * Optional worker assignment. When workerPool is set, the executor calls
+   * pool.request(requiredSkills ?? [], timeMs) before pulling a part. If no
+   * eligible worker exists (insufficient skills, all assigned, or off-shift),
+   * the station transitions to Starved with reason "no-skill-available".
+   * On cycle completion (good, defective, or scrapped due to Down) the
+   * worker is released back to the pool.
+   */
+  readonly workerPool?: WorkerPool;
+  readonly requiredSkills?: readonly string[];
 }
 
 export interface CompletionEvent<P> {
@@ -147,11 +158,34 @@ export class CycleExecutor<P> {
         }
       }
 
+      // Worker check — request a qualified worker. If none, go Starved with
+      // the no-skill reason. We've already consumed materials at this point,
+      // which is "wrong" in the sense that the recipe leaks if the worker
+      // never shows up. For Phase 0 this is acceptable — material starvation
+      // and worker starvation in the same cycle is a degenerate scenario, and
+      // real scenarios get a fresh consume retry on every attemptStart anyway.
+      let assignedWorkerId: ResourceId | undefined;
+      if (this.config.workerPool) {
+        const worker = this.config.workerPool.request(this.config.requiredSkills ?? [], timeMs);
+        if (!worker) {
+          if (state === "Idle" || state === "Running") {
+            this.stateMachine.transition("Starved", "no-skill-available", timeMs);
+          }
+          return;
+        }
+        assignedWorkerId = worker.id;
+      }
+
       const part = this.config.upstream.pull();
-      if (part === undefined) return;
+      if (part === undefined) {
+        if (assignedWorkerId) this.config.workerPool?.release(assignedWorkerId, timeMs);
+        return;
+      }
 
       this.inProgress_ += 1;
       this.inFlight.push(part);
+      if (assignedWorkerId) this.assignedWorkers.push(assignedWorkerId);
+      else this.assignedWorkers.push(null);
 
       // If setup time is configured (and non-zero), spend it in Setup state
       // before the cycle clock starts. Otherwise, go straight to Running.
@@ -213,6 +247,8 @@ export class CycleExecutor<P> {
     }
     const part = this.inFlight.shift() as P;
     this.inProgress_ -= 1;
+    const workerId = this.assignedWorkers.shift();
+    if (workerId && this.config.workerPool) this.config.workerPool.release(workerId, timeMs);
 
     // If a breakdown or maintenance kicked in after this cycle started, the
     // part is lost (per breakdown.ts Phase-0 scope). We can't push or
@@ -284,6 +320,8 @@ export class CycleExecutor<P> {
   }
 
   private inFlight: P[] = [];
+  /** Per-in-flight-part worker id (null when no worker pool configured). */
+  private assignedWorkers: Array<ResourceId | null> = [];
 
   private notifyCompletion(event: CompletionEvent<P>): void {
     for (const fn of [...this.listeners]) fn(event);

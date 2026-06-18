@@ -9,10 +9,16 @@ import { describe, expect, it } from "vitest";
 
 import { runChain } from "./chain-harness";
 import { constant } from "./distribution";
-import { asMaterialId } from "./ids";
+import { asMaterialId, asResourceId } from "./ids";
 import { SeededPrng } from "./prng";
 
 const exp = (rate: number) => ({ kind: "exponential" as const, rate });
+const worker = (id: string, skills: readonly string[] = [], endMs = 1_000_000) => ({
+  id: asResourceId(id),
+  name: id,
+  skills,
+  shifts: [{ startMs: 0, endMs }],
+});
 
 const BOTTLES = asMaterialId("bottles");
 const CAPS = asMaterialId("caps");
@@ -222,5 +228,106 @@ describe("runChain — breakdowns (VROL-576)", () => {
       prng: new SeededPrng(),
     });
     expect(result.perStationBreakdowns).toBeUndefined();
+  });
+});
+
+describe("runChain — workers (VROL-580)", () => {
+  it("back-compat: no laborUtilization field when workers config omitted", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100), constant(100)],
+      interStationBufferCapacity: 10,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(),
+    });
+    expect(result.laborUtilization).toBeUndefined();
+  });
+
+  it("starves with no-skill-available when no qualified worker exists", () => {
+    // 1 worker on shift but no skill match → all stations starve
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100), constant(100)],
+      interStationBufferCapacity: 10,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(),
+      stationLabels: ["Filler", "Capper", "Labeler"],
+      workers: {
+        workers: [worker("w1", ["packaging"])], // no station requires packaging here
+        requireDefault: ["assembly"], // every station needs assembly
+      },
+    });
+    // Nothing should complete because no worker has the assembly skill
+    expect(result.completed).toBe(0);
+    // Labor utilization should be 0 because no worker was ever assigned
+    expect(result.laborUtilization).toBe(0);
+    // Some Starved time should be recorded on every station
+    for (const oee of result.perStationOee) {
+      expect(oee.runTimeMs).toBe(0);
+    }
+  });
+
+  it("with 1 worker + 3 stations the chain is rate-limited by labor availability", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100), constant(100)],
+      interStationBufferCapacity: 10,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xc0ffee),
+      stationLabels: ["Filler", "Capper", "Labeler"],
+      workers: {
+        workers: [worker("w1", ["any"])],
+        requireDefault: ["any"],
+      },
+    });
+    expect(result.laborUtilization).toBeDefined();
+    // With 1 worker, at any moment ≤1 station runs → labor utilization
+    // approaches 1.0 as the chain stays busy. Allow generous tolerance for
+    // setup / scheduling gaps.
+    expect(result.laborUtilization!).toBeGreaterThan(0.7);
+    expect(result.laborUtilization!).toBeLessThanOrEqual(1);
+  });
+
+  it("with workers >= stations the chain runs at normal throughput", () => {
+    const common = {
+      stationCycleTimes: [constant(100), constant(200), constant(100)],
+      interStationBufferCapacity: 10,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      stationLabels: ["Filler", "Capper", "Labeler"],
+    };
+    const baseline = runChain({ ...common, prng: new SeededPrng(0xc0ffee) });
+    const withWorkers = runChain({
+      ...common,
+      prng: new SeededPrng(0xc0ffee),
+      workers: {
+        workers: [worker("w1", ["any"]), worker("w2", ["any"]), worker("w3", ["any"])],
+        requireDefault: ["any"],
+      },
+    });
+    // 3 workers + 3 stations → no labor bottleneck → throughput matches baseline
+    expect(withWorkers.completed).toBeGreaterThanOrEqual(baseline.completed - 1);
+    expect(withWorkers.completed).toBeLessThanOrEqual(baseline.completed + 1);
+  });
+
+  it("starves after the shift window closes", () => {
+    // Single worker, shift ends at 2 seconds. After that no station can run.
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100), constant(100)],
+      interStationBufferCapacity: 10,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xc0ffee),
+      stationLabels: ["Filler", "Capper", "Labeler"],
+      workers: {
+        workers: [worker("w1", ["any"], 2_000)], // shift ends at 2s
+        requireDefault: ["any"],
+      },
+    });
+    // Worker is on shift for ~2s; after that no progress. Labor util should
+    // be ~2s / (1 worker × 10s) = 0.2 (with some scheduling jitter).
+    expect(result.laborUtilization).toBeDefined();
+    expect(result.laborUtilization!).toBeGreaterThan(0.1);
+    expect(result.laborUtilization!).toBeLessThan(0.3);
   });
 });

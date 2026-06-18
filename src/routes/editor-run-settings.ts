@@ -29,6 +29,12 @@ export interface BreakdownsSettings {
   mttrMs: number;
 }
 
+export interface WorkersSettings {
+  enabled: boolean;
+  count: number;
+  shiftEndMs: number;
+}
+
 export interface RunSettings {
   horizonMs: number;
   warmupMs: number;
@@ -36,6 +42,7 @@ export interface RunSettings {
   interStationBufferCapacity: number;
   materials: MaterialsSettings;
   breakdowns: BreakdownsSettings;
+  workers: WorkersSettings;
 }
 
 export const DEFAULT_RUN_SETTINGS: RunSettings = {
@@ -57,6 +64,11 @@ export const DEFAULT_RUN_SETTINGS: RunSettings = {
     enabled: false,
     mtbfMs: 10_000,
     mttrMs: 2_000,
+  },
+  workers: {
+    enabled: false,
+    count: 1,
+    shiftEndMs: 60_000,
   },
 };
 
@@ -85,6 +97,7 @@ export function mergeWithDefaults(parsed: Partial<RunSettings>): RunSettings {
   const m: Partial<MaterialsSettings> = parsed.materials ?? {};
   const r: Partial<MaterialsSettings["replenishment"]> = m.replenishment ?? {};
   const b: Partial<BreakdownsSettings> = parsed.breakdowns ?? {};
+  const w: Partial<WorkersSettings> = parsed.workers ?? {};
   return {
     horizonMs: parsed.horizonMs ?? DEFAULT_RUN_SETTINGS.horizonMs,
     warmupMs: parsed.warmupMs ?? DEFAULT_RUN_SETTINGS.warmupMs,
@@ -105,6 +118,11 @@ export function mergeWithDefaults(parsed: Partial<RunSettings>): RunSettings {
       enabled: b.enabled ?? DEFAULT_RUN_SETTINGS.breakdowns.enabled,
       mtbfMs: b.mtbfMs ?? DEFAULT_RUN_SETTINGS.breakdowns.mtbfMs,
       mttrMs: b.mttrMs ?? DEFAULT_RUN_SETTINGS.breakdowns.mttrMs,
+    },
+    workers: {
+      enabled: w.enabled ?? DEFAULT_RUN_SETTINGS.workers.enabled,
+      count: w.count ?? DEFAULT_RUN_SETTINGS.workers.count,
+      shiftEndMs: w.shiftEndMs ?? DEFAULT_RUN_SETTINGS.workers.shiftEndMs,
     },
   };
 }

@@ -61,8 +61,15 @@ export class WorkerPool {
     return null;
   }
 
-  /** Release a previously-requested worker back into the pool. */
-  release(workerId: ResourceId): void {
+  /**
+   * Release a previously-requested worker back into the pool.
+   *
+   * The optional `timeMs` is unused by the base pool — it exists so
+   * subclasses (e.g., the tracking pool in chain-harness) can record the
+   * worker's accumulated busy time for utilization KPIs.
+   */
+  release(workerId: ResourceId, _timeMs?: number): void {
+    void _timeMs;
     this.assigned.delete(workerId);
   }
 

@@ -173,6 +173,7 @@ export type {
   ChainOptions,
   ChainMaterialConfig,
   ChainBreakdownConfig,
+  ChainWorkerConfig,
 } from "./chain-harness";
 export { runChain } from "./chain-harness";
 
