@@ -61,9 +61,10 @@ export default function DesignTokens() {
         <section className="space-y-3">
           <h2 className="font-heading text-xl font-semibold tracking-tight">Typography</h2>
           <div className="space-y-2">
-            <p className="font-heading text-4xl">Geist Variable — heading</p>
+            <p className="font-heading text-4xl">Inter Variable — heading</p>
             <p className="font-sans text-base">
-              Geist Variable — body sans (used for most UI text and labels).
+              Inter Variable — body sans (used for most UI text and labels). OpenType features cv11
+              + ss01 + ss03 enabled for a less-generic feel.
             </p>
             <p className="font-mono text-sm">
               JetBrains Mono Variable — used for numbers, KPIs, and code-like values.

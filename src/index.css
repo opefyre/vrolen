@@ -1,16 +1,17 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import "@fontsource-variable/inter";
 @import "@fontsource-variable/jetbrains-mono";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --font-heading: var(--font-sans);
-  --font-sans: "Geist Variable", sans-serif;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono:
     "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  --font-feature-settings: "cv11", "ss01", "ss03";
 
   /* Simulation state colors — exposed as Tailwind utilities (bg-sim-running, text-sim-down, etc.) */
   --color-sim-idle: var(--sim-idle);
@@ -177,6 +178,13 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Inter's OpenType features: cv11 = single-storey 'a', ss01 = open digits,
+       ss03 = lowercase 'l' with tail. Combined they make Inter feel less
+       generic and more readable at UI sizes. */
+    font-feature-settings: "cv11", "ss01", "ss03";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
   html {
     @apply font-sans;
