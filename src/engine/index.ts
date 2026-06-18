@@ -113,3 +113,7 @@ export { formatZodError, formatZodErrorString } from "./errors";
 // Discrete-event scheduler — heart of the simulation engine.
 export type { ScheduledEvent } from "./scheduler";
 export { Scheduler, EventInPastError, SchedulerEmptyError } from "./scheduler";
+
+// Seedable deterministic PRNG — every stochastic decision in the engine goes through this.
+export type { Prng } from "./prng";
+export { SeededPrng } from "./prng";
