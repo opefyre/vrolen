@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import DesignTokens from "@/routes/DesignTokens";
+import RunPage from "@/routes/RunPage";
 
 function HomePage() {
   return (
@@ -59,9 +60,14 @@ function HomePage() {
 
 export default function App() {
   const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
+  let page;
+  if (pathname === "/design-tokens") page = <DesignTokens />;
+  else if (pathname === "/run") page = <RunPage />;
+  else page = <HomePage />;
+
   return (
     <TooltipProvider>
-      <AppShell>{pathname === "/design-tokens" ? <DesignTokens /> : <HomePage />}</AppShell>
+      <AppShell>{page}</AppShell>
       <Toaster />
     </TooltipProvider>
   );

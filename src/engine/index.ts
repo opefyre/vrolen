@@ -160,3 +160,8 @@ export { MaintenanceManager } from "./maintenance";
 // Worker pool with skill-based assignment + shift windows.
 export type { PoolWorker, ShiftWindow } from "./worker-pool";
 export { WorkerPool } from "./worker-pool";
+
+// Multi-station chain harness — wires N CycleExecutors and reports Little's-Law metrics.
+// Originally test-only; promoted to public API in VROL-573 (the first UI consumer of the engine).
+export type { ChainResult, ChainOptions } from "./chain-harness";
+export { runChain } from "./chain-harness";
