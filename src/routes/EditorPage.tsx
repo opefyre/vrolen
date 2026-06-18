@@ -66,6 +66,7 @@ import {
   type ChainResult,
   type ChainWorkerConfig,
   constant,
+  type Distribution,
   runChain,
   SeededPrng,
 } from "@/engine";
@@ -106,19 +107,19 @@ const INITIAL_NODES: Node[] = [
     id: "n1",
     type: "default",
     position: { x: 80, y: 120 },
-    data: { label: "Filler", cycleMs: 50, defectRate: 0 },
+    data: { label: "Filler", cycleDistribution: constant(50), defectRate: 0 },
   },
   {
     id: "n2",
     type: "default",
     position: { x: 320, y: 120 },
-    data: { label: "Capper", cycleMs: 200, defectRate: 0 },
+    data: { label: "Capper", cycleDistribution: constant(200), defectRate: 0 },
   },
   {
     id: "n3",
     type: "default",
     position: { x: 560, y: 120 },
-    data: { label: "Labeler", cycleMs: 50, defectRate: 0 },
+    data: { label: "Labeler", cycleDistribution: constant(50), defectRate: 0 },
   },
 ];
 
@@ -238,7 +239,7 @@ function EditorCanvas() {
         id,
         type: "default",
         position,
-        data: { label: item.label, cycleMs: 100, defectRate: 0 },
+        data: { label: item.label, cycleDistribution: constant(100), defectRate: 0 },
       };
       setNodes((nds) => nds.concat(newNode));
     },
@@ -336,7 +337,7 @@ function EditorCanvas() {
       try {
         const t0 = performance.now();
         const r = runChain({
-          stationCycleTimes: translation.cycleTimes.map((ms) => constant(ms)),
+          stationCycleTimes: [...translation.cycleDistributions],
           interStationBufferCapacity: settings.interStationBufferCapacity,
           horizonMs: settings.horizonMs,
           warmupMs: Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2)),
@@ -477,26 +478,19 @@ function EditorCanvas() {
                   }}
                 />
               </div>
-              <div className="flex flex-col gap-1">
-                <label
-                  htmlFor="inspector-cycle"
-                  className="text-muted-foreground text-xs font-medium"
-                >
-                  Cycle time (ms)
-                </label>
-                <Input
-                  id="inspector-cycle"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={Number((selectedNode.data as { cycleMs?: unknown }).cycleMs ?? 100)}
-                  onChange={(e) => {
-                    const n = Number(e.target.value);
-                    if (Number.isFinite(n) && n > 0) updateSelectedNodeData({ cycleMs: n });
-                  }}
-                  className="font-mono tabular-nums"
-                />
-              </div>
+              <DistributionEditor
+                value={
+                  ((selectedNode.data as { cycleDistribution?: Distribution }).cycleDistribution ??
+                    constant(
+                      Number((selectedNode.data as { cycleMs?: unknown }).cycleMs ?? 100),
+                    )) as Distribution
+                }
+                onChange={(d) => {
+                  updateSelectedNodeData({ cycleDistribution: d });
+                }}
+              />
+            </CardContent>
+            <CardContent className="border-border space-y-3 border-t pt-3">
               <div className="flex flex-col gap-1">
                 <label
                   htmlFor="inspector-defect"
@@ -519,7 +513,7 @@ function EditorCanvas() {
                   className="font-mono tabular-nums"
                 />
               </div>
-              <p className="text-muted-foreground border-border border-t pt-2 text-xs">
+              <p className="text-muted-foreground text-xs">
                 Position: {Math.round(selectedNode.position.x)} ,{" "}
                 {Math.round(selectedNode.position.y)}
               </p>
@@ -981,6 +975,227 @@ function EditorCanvas() {
           </div>
         </SheetContent>
       </Sheet>
+    </div>
+  );
+}
+
+function DistributionEditor({
+  value,
+  onChange,
+}: {
+  value: Distribution;
+  onChange: (d: Distribution) => void;
+}) {
+  const numberField = (
+    label: string,
+    id: string,
+    fieldValue: number,
+    setter: (n: number) => void,
+    extras: { min?: number; max?: number; step?: number } = {},
+  ) => (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={id} className="text-muted-foreground text-xs font-medium">
+        {label}
+      </label>
+      <Input
+        id={id}
+        type="number"
+        min={extras.min}
+        max={extras.max}
+        step={extras.step ?? 1}
+        value={fieldValue}
+        onChange={(e) => {
+          const n = Number(e.target.value);
+          if (Number.isFinite(n)) setter(n);
+        }}
+        className="font-mono tabular-nums"
+      />
+    </div>
+  );
+
+  const handleKindChange = (kind: Distribution["kind"]): void => {
+    // Pick sensible defaults derived from the current distribution's mean.
+    const meanGuess =
+      value.kind === "constant"
+        ? value.value
+        : value.kind === "uniform"
+          ? (value.min + value.max) / 2
+          : value.kind === "normal"
+            ? value.mean
+            : value.kind === "triangular"
+              ? (value.min + value.mode + value.max) / 3
+              : 1 / value.rate;
+    switch (kind) {
+      case "constant":
+        onChange({ kind: "constant", value: Math.max(1, Math.round(meanGuess)) });
+        break;
+      case "uniform":
+        onChange({
+          kind: "uniform",
+          min: Math.max(1, Math.round(meanGuess * 0.8)),
+          max: Math.max(2, Math.round(meanGuess * 1.2)),
+        });
+        break;
+      case "normal":
+        onChange({
+          kind: "normal",
+          mean: Math.max(1, Math.round(meanGuess)),
+          stddev: Math.max(1, Math.round(meanGuess * 0.1)),
+        });
+        break;
+      case "triangular":
+        onChange({
+          kind: "triangular",
+          min: Math.max(1, Math.round(meanGuess * 0.7)),
+          mode: Math.max(1, Math.round(meanGuess)),
+          max: Math.max(2, Math.round(meanGuess * 1.5)),
+        });
+        break;
+      case "exponential":
+        onChange({ kind: "exponential", rate: 1 / Math.max(1, meanGuess) });
+        break;
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-col gap-1">
+        <label htmlFor="inspector-dist-kind" className="text-muted-foreground text-xs font-medium">
+          Cycle distribution
+        </label>
+        <select
+          id="inspector-dist-kind"
+          value={value.kind}
+          onChange={(e) => {
+            handleKindChange(e.target.value as Distribution["kind"]);
+          }}
+          className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+        >
+          <option value="constant">Constant</option>
+          <option value="uniform">Uniform</option>
+          <option value="normal">Normal</option>
+          <option value="triangular">Triangular</option>
+          <option value="exponential">Exponential</option>
+        </select>
+      </div>
+      {value.kind === "constant"
+        ? numberField(
+            "Value (ms)",
+            "dist-const-value",
+            value.value,
+            (n) => {
+              onChange({ kind: "constant", value: Math.max(1, n) });
+            },
+            { min: 1 },
+          )
+        : null}
+      {value.kind === "uniform" ? (
+        <div className="grid grid-cols-2 gap-2">
+          {numberField(
+            "Min (ms)",
+            "dist-uniform-min",
+            value.min,
+            (n) => {
+              onChange({ kind: "uniform", min: Math.max(1, n), max: value.max });
+            },
+            { min: 1 },
+          )}
+          {numberField(
+            "Max (ms)",
+            "dist-uniform-max",
+            value.max,
+            (n) => {
+              onChange({ kind: "uniform", min: value.min, max: Math.max(value.min + 1, n) });
+            },
+            { min: value.min + 1 },
+          )}
+        </div>
+      ) : null}
+      {value.kind === "normal" ? (
+        <div className="grid grid-cols-2 gap-2">
+          {numberField(
+            "Mean (ms)",
+            "dist-normal-mean",
+            value.mean,
+            (n) => {
+              onChange({ kind: "normal", mean: Math.max(1, n), stddev: value.stddev });
+            },
+            { min: 1 },
+          )}
+          {numberField(
+            "Std dev (ms)",
+            "dist-normal-stddev",
+            value.stddev,
+            (n) => {
+              onChange({ kind: "normal", mean: value.mean, stddev: Math.max(0.1, n) });
+            },
+            { min: 0.1, step: 0.1 },
+          )}
+        </div>
+      ) : null}
+      {value.kind === "triangular" ? (
+        <div className="grid grid-cols-3 gap-2">
+          {numberField(
+            "Min",
+            "dist-tri-min",
+            value.min,
+            (n) => {
+              onChange({
+                kind: "triangular",
+                min: Math.max(1, n),
+                mode: value.mode,
+                max: value.max,
+              });
+            },
+            { min: 1 },
+          )}
+          {numberField(
+            "Mode",
+            "dist-tri-mode",
+            value.mode,
+            (n) => {
+              onChange({
+                kind: "triangular",
+                min: value.min,
+                mode: Math.max(value.min, n),
+                max: value.max,
+              });
+            },
+            { min: value.min },
+          )}
+          {numberField(
+            "Max",
+            "dist-tri-max",
+            value.max,
+            (n) => {
+              onChange({
+                kind: "triangular",
+                min: value.min,
+                mode: value.mode,
+                max: Math.max(value.mode, n),
+              });
+            },
+            { min: value.mode },
+          )}
+        </div>
+      ) : null}
+      {value.kind === "exponential" ? (
+        <>
+          {numberField(
+            "Mean (ms)",
+            "dist-exp-mean",
+            Math.round(1 / value.rate),
+            (n) => {
+              onChange({ kind: "exponential", rate: 1 / Math.max(1, n) });
+            },
+            { min: 1 },
+          )}
+          <p className="text-muted-foreground text-xs">
+            Implied rate: <span className="font-mono tabular-nums">{value.rate.toFixed(6)}</span>{" "}
+            (events/ms)
+          </p>
+        </>
+      ) : null}
     </div>
   );
 }

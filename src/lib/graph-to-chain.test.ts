@@ -1,9 +1,13 @@
 import type { Edge, Node } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 
+import type { Distribution } from "@/engine";
 import { graphToChainOptions } from "./graph-to-chain";
 
-function node(id: string, data: { label?: string; cycleMs?: number } = {}): Node {
+function node(
+  id: string,
+  data: { label?: string; cycleMs?: number; cycleDistribution?: Distribution } = {},
+): Node {
   return { id, position: { x: 0, y: 0 }, data: { label: id, ...data } };
 }
 function edge(source: string, target: string): Edge {
@@ -86,5 +90,44 @@ describe("graphToChainOptions", () => {
     const r = graphToChainOptions(nodes, edges);
     expect(r.error).toBeNull();
     expect(r.chainNodeIds).toEqual(["a", "b"]);
+  });
+
+  it("reads cycleDistribution from node.data when present (Normal kind)", () => {
+    const nodes = [
+      node("a", { cycleDistribution: { kind: "normal", mean: 120, stddev: 10 } }),
+      node("b", { cycleDistribution: { kind: "constant", value: 200 } }),
+    ];
+    const edges = [edge("a", "b")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.cycleDistributions).toEqual([
+      { kind: "normal", mean: 120, stddev: 10 },
+      { kind: "constant", value: 200 },
+    ]);
+    // cycleTimes is the mean of each distribution
+    expect(r.cycleTimes).toEqual([120, 200]);
+  });
+
+  it("falls back to constant(cycleMs) when cycleDistribution is missing (back-compat)", () => {
+    const nodes = [node("a", { cycleMs: 75 }), node("b", { cycleMs: 175 })];
+    const edges = [edge("a", "b")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.cycleDistributions).toEqual([
+      { kind: "constant", value: 75 },
+      { kind: "constant", value: 175 },
+    ]);
+    expect(r.cycleTimes).toEqual([75, 175]);
+  });
+
+  it("handles Triangular distribution shape", () => {
+    const nodes = [
+      node("a", { cycleDistribution: { kind: "triangular", min: 50, mode: 100, max: 200 } }),
+    ];
+    const edges: Edge[] = [];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    // mean = (min + mode + max) / 3 = 350/3 ≈ 116.66
+    expect(r.cycleTimes[0]).toBeCloseTo(350 / 3, 4);
   });
 });

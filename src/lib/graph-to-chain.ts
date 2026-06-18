@@ -12,10 +12,18 @@
 
 import type { Edge, Node } from "@xyflow/react";
 
+import { constant, type Distribution, meanOf } from "@/engine";
+
 export interface GraphToChainResult {
   /** Node ids in chain order (source → sink). Empty when error is set. */
   readonly chainNodeIds: readonly string[];
-  /** Per-station cycle time in ms (matches chainNodeIds by index). */
+  /**
+   * Per-station cycle time distribution (matches chainNodeIds by index).
+   * Reads `node.data.cycleDistribution` first; falls back to `constant(cycleMs)`
+   * for graphs persisted before VROL-581 added the picker.
+   */
+  readonly cycleDistributions: readonly Distribution[];
+  /** Convenience: mean of cycleDistributions in ms. Used for legacy callers + UI hints. */
   readonly cycleTimes: readonly number[];
   /** Display label per station (matches chainNodeIds by index). */
   readonly stationLabels: readonly string[];
@@ -27,10 +35,25 @@ export interface GraphToChainResult {
 
 const DEFAULT_CYCLE_MS = 100;
 
-function cycleMsOf(node: Node): number {
-  const raw = (node.data as { cycleMs?: unknown } | undefined)?.cycleMs;
-  const num = typeof raw === "number" ? raw : Number(raw);
-  return Number.isFinite(num) && num > 0 ? num : DEFAULT_CYCLE_MS;
+function isDistribution(v: unknown): v is Distribution {
+  if (!v || typeof v !== "object") return false;
+  const kind = (v as { kind?: unknown }).kind;
+  return (
+    kind === "constant" ||
+    kind === "uniform" ||
+    kind === "normal" ||
+    kind === "triangular" ||
+    kind === "exponential"
+  );
+}
+
+function distributionOf(node: Node): Distribution {
+  const data = node.data as { cycleDistribution?: unknown; cycleMs?: unknown } | undefined;
+  if (isDistribution(data?.cycleDistribution)) {
+    return data.cycleDistribution;
+  }
+  const ms = typeof data?.cycleMs === "number" ? data.cycleMs : Number(data?.cycleMs);
+  return constant(Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_CYCLE_MS);
 }
 
 function labelOf(node: Node): string {
@@ -44,6 +67,7 @@ export function graphToChainOptions(
 ): GraphToChainResult {
   const empty: GraphToChainResult = {
     chainNodeIds: [],
+    cycleDistributions: [],
     cycleTimes: [],
     stationLabels: [],
     skippedNodeIds: [],
@@ -116,13 +140,15 @@ export function graphToChainOptions(
   }
 
   const nodeById = new Map(nodes.map((n) => [n.id, n] as const));
-  const cycleTimes = bestChain.map((id) => cycleMsOf(nodeById.get(id)!));
+  const cycleDistributions = bestChain.map((id) => distributionOf(nodeById.get(id)!));
+  const cycleTimes = cycleDistributions.map((d) => meanOf(d));
   const stationLabels = bestChain.map((id) => labelOf(nodeById.get(id)!));
   const chainSet = new Set(bestChain);
   const skippedNodeIds = nodes.filter((n) => !chainSet.has(n.id)).map((n) => n.id);
 
   return {
     chainNodeIds: bestChain,
+    cycleDistributions,
     cycleTimes,
     stationLabels,
     skippedNodeIds,
