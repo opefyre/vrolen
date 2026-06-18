@@ -11,7 +11,7 @@
  * checks via switch keep the dispatch table honest.
  */
 
-import type { StationId } from "./ids";
+import type { MaterialId, StationId } from "./ids";
 
 export type EngineEvent =
   /** A station's in-progress cycle has reached its sampled completion time. */
@@ -25,9 +25,19 @@ export type EngineEvent =
   /** A scheduled maintenance window for the station has begun. */
   | { readonly kind: "maintenance-start"; readonly stationId: StationId }
   /** A scheduled maintenance window for the station has ended. */
-  | { readonly kind: "maintenance-end"; readonly stationId: StationId };
+  | { readonly kind: "maintenance-end"; readonly stationId: StationId }
+  /**
+   * A scheduled material replenishment has arrived — add `amount` units of
+   * `materialId` to the pool. The orchestrator handling this event is also
+   * responsible for nudging any starved stations that consume this material
+   * (executor.onUpstreamAvailable on their next tick).
+   */
+  | {
+      readonly kind: "material-replenishment";
+      readonly materialId: MaterialId;
+      readonly amount: number;
+    };
 
 // Future event kinds (added in their own stories):
 //   - "shift-start" / "shift-end"                   (VROL-133)
-//   - "material-replenishment"                      (VROL-153)
 //   - "worker-arrived"                              (VROL-174, agent overlay)

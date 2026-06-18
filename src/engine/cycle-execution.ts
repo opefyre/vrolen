@@ -30,6 +30,7 @@ import type { StationId } from "./ids";
 import type { Prng } from "./prng";
 import type { Buffer } from "./buffer";
 import type { EngineEvent } from "./events";
+import type { MaterialPool, MaterialRequirement } from "./material-pool";
 import { Scheduler } from "./scheduler";
 import { StationStateMachine } from "./state-machine";
 import { sample } from "./sampling";
@@ -51,6 +52,15 @@ export interface CycleConfig<P> {
    * a follow-up — single-product behavior in Phase 0.
    */
   readonly setupTimeMs?: Distribution;
+  /**
+   * Optional material requirements consumed atomically at cycle start. When
+   * present + a materialPool is also provided, the executor calls
+   * materialPool.consume(materialRequirements) before pulling a part. If
+   * consume returns false (insufficient material), the station transitions
+   * to Starved with reason "starved-material".
+   */
+  readonly materialRequirements?: ReadonlyArray<MaterialRequirement>;
+  readonly materialPool?: MaterialPool;
 }
 
 export interface CompletionEvent<P> {
@@ -122,6 +132,19 @@ export class CycleExecutor<P> {
           this.stateMachine.transition("Starved", "starved-upstream", timeMs);
         }
         return;
+      }
+
+      // Material check — atomic across all requirements. If short, go Starved
+      // with the material-specific reason. Don't pull the part yet (it stays
+      // in upstream for the next attempt after replenishment).
+      if (this.config.materialPool && this.config.materialRequirements?.length) {
+        const consumed = this.config.materialPool.consume(this.config.materialRequirements);
+        if (!consumed) {
+          if (state === "Idle" || state === "Running") {
+            this.stateMachine.transition("Starved", "starved-material", timeMs);
+          }
+          return;
+        }
       }
 
       const part = this.config.upstream.pull();

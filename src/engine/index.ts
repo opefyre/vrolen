@@ -170,3 +170,7 @@ export { detectBottlenecks, topBottlenecks } from "./bottleneck";
 // Originally test-only; promoted to public API in VROL-573 (the first UI consumer of the engine).
 export type { ChainResult, ChainOptions } from "./chain-harness";
 export { runChain } from "./chain-harness";
+
+// Material inventory pool (VROL-153). Tracks quantities; consume() is atomic.
+export type { MaterialRequirement } from "./material-pool";
+export { MaterialPool } from "./material-pool";

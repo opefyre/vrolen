@@ -4,7 +4,8 @@ import { Buffer } from "./buffer";
 import { constant } from "./distribution";
 import { CycleExecutor } from "./cycle-execution";
 import type { EngineEvent } from "./events";
-import { newStationId } from "./ids";
+import { asMaterialId, newStationId } from "./ids";
+import { MaterialPool } from "./material-pool";
 import { SeededPrng } from "./prng";
 import { Scheduler } from "./scheduler";
 import { StationStateMachine } from "./state-machine";
@@ -409,5 +410,167 @@ describe("CycleExecutor — validation", () => {
     expect(() => make(0)).toThrow();
     expect(() => make(1.5)).toThrow();
     expect(() => make(-1)).toThrow();
+  });
+});
+
+describe("CycleExecutor — material consumption (VROL-153)", () => {
+  const BOTTLES = asMaterialId("bottles");
+  const CAPS = asMaterialId("caps");
+
+  function makeMaterialStation(opts: {
+    cycleTimeMs: number;
+    pool: MaterialPool;
+    requirements: ReadonlyArray<{
+      materialId: ReturnType<typeof asMaterialId>;
+      qtyPerPart: number;
+    }>;
+  }): {
+    executor: CycleExecutor<number>;
+    scheduler: Scheduler<EngineEvent>;
+    upstream: Buffer<number>;
+    sm: StationStateMachine;
+  } {
+    const stationId = newStationId();
+    const scheduler = new Scheduler<EngineEvent>();
+    const prng = new SeededPrng(0xc0ffee);
+    const upstream = new Buffer<number>(1000);
+    const downstream = new Buffer<number>(1000);
+    const sm = new StationStateMachine(stationId);
+    const config: CycleConfig<number> = {
+      stationId,
+      cycleTimeMs: constant(opts.cycleTimeMs),
+      defectRate: 0,
+      capacity: 1,
+      upstream,
+      downstream,
+      materialRequirements: opts.requirements,
+      materialPool: opts.pool,
+    };
+    const executor = new CycleExecutor(config, sm, scheduler, prng);
+    return { executor, scheduler, upstream, sm };
+  }
+
+  function runUntilDrain(
+    scheduler: Scheduler<EngineEvent>,
+    executor: CycleExecutor<number>,
+    horizonMs: number,
+  ): void {
+    while (scheduler.size > 0 && scheduler.peek()!.timeMs <= horizonMs) {
+      const event = scheduler.popMin();
+      if (event.payload.kind === "cycle-complete") executor.handleCycleComplete(event.timeMs);
+    }
+  }
+
+  it("runs normally when materials are abundant", () => {
+    const pool = new MaterialPool([
+      [BOTTLES, 10_000],
+      [CAPS, 10_000],
+    ]);
+    const { executor, scheduler, upstream } = makeMaterialStation({
+      cycleTimeMs: 100,
+      pool,
+      requirements: [
+        { materialId: BOTTLES, qtyPerPart: 1 },
+        { materialId: CAPS, qtyPerPart: 1 },
+      ],
+    });
+    for (let i = 0; i < 100; i++) upstream.push(i);
+    executor.attemptStart(0);
+    runUntilDrain(scheduler, executor, 100 * 100);
+
+    expect(executor.completed).toBe(100);
+    expect(pool.quantity(BOTTLES)).toBe(9900);
+    expect(pool.quantity(CAPS)).toBe(9900);
+  });
+
+  it("transitions to Starved with reason 'starved-material' when material depletes mid-run", () => {
+    const pool = new MaterialPool([
+      [BOTTLES, 5], // enough for exactly 5 parts
+      [CAPS, 100], // plenty
+    ]);
+    const stateChanges: { state: string; reason: string }[] = [];
+    const { executor, scheduler, upstream, sm } = makeMaterialStation({
+      cycleTimeMs: 100,
+      pool,
+      requirements: [
+        { materialId: BOTTLES, qtyPerPart: 1 },
+        { materialId: CAPS, qtyPerPart: 1 },
+      ],
+    });
+    sm.onStateChange((e) => stateChanges.push({ state: e.toState, reason: e.reason }));
+
+    for (let i = 0; i < 100; i++) upstream.push(i);
+    executor.attemptStart(0);
+    runUntilDrain(scheduler, executor, 10_000);
+
+    expect(executor.completed).toBe(5);
+    expect(pool.quantity(BOTTLES)).toBe(0);
+    expect(pool.quantity(CAPS)).toBe(95);
+
+    const materialStarvation = stateChanges.find(
+      (c) => c.state === "Starved" && c.reason === "starved-material",
+    );
+    expect(materialStarvation).toBeDefined();
+    expect(sm.state).toBe("Starved");
+  });
+
+  it("resumes cycling after replenishment + onUpstreamAvailable", () => {
+    const pool = new MaterialPool([[BOTTLES, 2]]);
+    const { executor, scheduler, upstream, sm } = makeMaterialStation({
+      cycleTimeMs: 100,
+      pool,
+      requirements: [{ materialId: BOTTLES, qtyPerPart: 1 }],
+    });
+
+    for (let i = 0; i < 10; i++) upstream.push(i);
+    executor.attemptStart(0);
+    runUntilDrain(scheduler, executor, 5000);
+
+    // After draining 2 bottles → station is Starved on material
+    expect(executor.completed).toBe(2);
+    expect(sm.state).toBe("Starved");
+
+    // Replenish + nudge the executor (a future replenishment event handler will do this)
+    pool.replenish(BOTTLES, 3);
+    executor.onUpstreamAvailable(scheduler.currentTime);
+    runUntilDrain(scheduler, executor, 10_000);
+
+    expect(executor.completed).toBe(5);
+    expect(pool.quantity(BOTTLES)).toBe(0);
+  });
+
+  it("does not consume material when no requirements are configured (back-compat)", () => {
+    // Station without material requirements should behave exactly as before
+    const pool = new MaterialPool([[BOTTLES, 1]]);
+    const stationId = newStationId();
+    const scheduler = new Scheduler<EngineEvent>();
+    const upstream = new Buffer<number>(100);
+    const downstream = new Buffer<number>(100);
+    const sm = new StationStateMachine(stationId);
+    const executor = new CycleExecutor<number>(
+      {
+        stationId,
+        cycleTimeMs: constant(100),
+        defectRate: 0,
+        capacity: 1,
+        upstream,
+        downstream,
+        materialPool: pool,
+        // materialRequirements deliberately omitted
+      },
+      sm,
+      scheduler,
+      new SeededPrng(),
+    );
+
+    for (let i = 0; i < 10; i++) upstream.push(i);
+    executor.attemptStart(0);
+    while (scheduler.size > 0 && scheduler.peek()!.timeMs <= 5000) {
+      const event = scheduler.popMin();
+      if (event.payload.kind === "cycle-complete") executor.handleCycleComplete(event.timeMs);
+    }
+
+    expect(executor.completed).toBe(10);
+    expect(pool.quantity(BOTTLES)).toBe(1); // untouched
   });
 });
