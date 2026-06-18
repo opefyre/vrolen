@@ -78,6 +78,25 @@ describe("OeeOverTimeChart (VROL-620)", () => {
     expect(bottleneckChip?.getAttribute("aria-selected")).toBe("true");
   });
 
+  it("renders axis tick lines + bottom row time labels (VROL-622)", () => {
+    const samples = [sample(0, [{ Running: 0 }]), sample(2_000, [{ Running: 2_000 }])];
+    const { container } = render(
+      <OeeOverTimeChart
+        samples={samples}
+        stationLabels={["Capper"]}
+        bottleneckStationIdx={0}
+        horizonMs={2_000}
+        warmupMs={0}
+      />,
+    );
+    // At least three X-axis lines + state paths.
+    const lines = container.querySelectorAll("svg line");
+    expect(lines.length).toBeGreaterThanOrEqual(3);
+    // Mid + end time tick labels appear in the bottom row.
+    expect(container.textContent).toMatch(/1\.0s/);
+    expect(container.textContent).toMatch(/2\.0s/);
+  });
+
   it("normalizes each interval so stacked fractions sum to 1.0 (visual sanity)", () => {
     // Two samples, one interval. Station spent 600ms Running + 400ms Idle of
     // a 1000ms tick. Stacked top of the highest path should reach the top of

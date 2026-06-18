@@ -6,7 +6,7 @@
  * ThroughputChart (VROL-613) and Sparkline (VROL-614).
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import type { TimeseriesSample } from "@/engine";
 
@@ -66,6 +66,9 @@ export function OeeOverTimeChart({
   }
   const safeIdx = Math.min(Math.max(0, stationIdx), Math.max(0, stationLabels.length - 1));
   const stationLabel = stationLabels[safeIdx] ?? `Station ${String(safeIdx + 1)}`;
+
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const paths = useMemo<{ state: string; d: string }[]>(() => {
     if (samples.length < 2) return [];
@@ -140,6 +143,43 @@ export function OeeOverTimeChart({
     return out;
   }, [samples, safeIdx, horizonMs, warmupMs]);
 
+  // VROL-622 — derive the hovered sample's per-state fraction for the tooltip.
+  const hoveredFractions = useMemo<{ state: string; pct: number }[]>(() => {
+    if (hoverIdx === null || hoverIdx === 0) return [];
+    const prev = samples[hoverIdx - 1]?.perStationStateMs[safeIdx] ?? {};
+    const curr = samples[hoverIdx]?.perStationStateMs[safeIdx] ?? {};
+    let total = 0;
+    const deltas: Record<string, number> = {};
+    for (const s of STATE_ORDER) {
+      const d = Math.max(0, (curr[s] ?? 0) - (prev[s] ?? 0));
+      deltas[s] = d;
+      total += d;
+    }
+    if (total <= 0) return [];
+    return STATE_ORDER.map((s) => ({ state: s, pct: ((deltas[s] ?? 0) / total) * 100 }));
+  }, [hoverIdx, samples, safeIdx]);
+
+  const onMove = (e: React.MouseEvent<HTMLDivElement>): void => {
+    if (samples.length === 0 || !wrapperRef.current) return;
+    const rect = wrapperRef.current.getBoundingClientRect();
+    const xRatio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < samples.length; i++) {
+      const sampleX = (samples[i]?.tMs ?? 0) - warmupMs;
+      const ratio = sampleX / Math.max(1, horizonMs - warmupMs);
+      const dist = Math.abs(ratio - xRatio);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = i;
+      }
+    }
+    setHoverIdx(best);
+  };
+  const onLeave = (): void => {
+    setHoverIdx(null);
+  };
+
   if (samples.length < 2) {
     return (
       <p className="text-muted-foreground text-xs">
@@ -183,21 +223,88 @@ export function OeeOverTimeChart({
           Station: <strong className="text-foreground">{stationLabel}</strong>
         </p>
       )}
-      <svg
-        viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
-        preserveAspectRatio="none"
-        className="h-20 w-full"
-        role="img"
-        aria-label={`State-mix over time for ${stationLabel}`}
-      >
-        {paths.map(({ state, d }) => (
-          <path
-            key={state}
-            d={d}
-            className={STATE_FILL_CLASS[state as (typeof STATE_ORDER)[number]]}
-          />
-        ))}
-      </svg>
+      <div ref={wrapperRef} className="relative w-full" onMouseMove={onMove} onMouseLeave={onLeave}>
+        <svg
+          viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
+          preserveAspectRatio="none"
+          className="h-20 w-full"
+          role="img"
+          aria-label={`State-mix over time for ${stationLabel}`}
+        >
+          {paths.map(({ state, d }) => (
+            <path
+              key={state}
+              d={d}
+              className={STATE_FILL_CLASS[state as (typeof STATE_ORDER)[number]]}
+            />
+          ))}
+          {/* VROL-622 — X-axis ticks at warmup / mid / horizon (matches the
+              labels below) so the eye can place the hover position. */}
+          {[0, 0.5, 1].map((frac) => {
+            const x = PAD_X + (VIEW_W - PAD_X * 2) * frac;
+            return (
+              <line
+                key={`x-${String(frac)}`}
+                x1={x}
+                y1={PAD_Y}
+                x2={x}
+                y2={VIEW_H - PAD_Y}
+                stroke="currentColor"
+                strokeOpacity={frac === 0 || frac === 1 ? 0.25 : 0.1}
+                strokeDasharray="2 2"
+              />
+            );
+          })}
+          {hoverIdx !== null && samples[hoverIdx] ? (
+            <line
+              x1={
+                PAD_X +
+                ((VIEW_W - PAD_X * 2) * ((samples[hoverIdx]?.tMs ?? 0) - warmupMs)) /
+                  Math.max(1, horizonMs - warmupMs)
+              }
+              y1={PAD_Y}
+              x2={
+                PAD_X +
+                ((VIEW_W - PAD_X * 2) * ((samples[hoverIdx]?.tMs ?? 0) - warmupMs)) /
+                  Math.max(1, horizonMs - warmupMs)
+              }
+              y2={VIEW_H - PAD_Y}
+              stroke="currentColor"
+              strokeOpacity={0.45}
+              strokeDasharray="2 2"
+            />
+          ) : null}
+        </svg>
+        {hoverIdx !== null && hoveredFractions.length > 0 ? (
+          <div className="bg-card/95 border-border absolute top-1 right-1 rounded-md border p-1.5 text-[10px] shadow-sm">
+            <div className="text-muted-foreground mb-0.5 font-mono tabular-nums">
+              t={((samples[hoverIdx]?.tMs ?? 0) / 1000).toFixed(1)}s
+            </div>
+            {hoveredFractions
+              .filter((f) => f.pct > 0.5)
+              .map(({ state, pct }) => (
+                <div key={state} className="flex items-center gap-1.5">
+                  <span
+                    className={`inline-block h-2 w-2 rounded-sm ${STATE_FILL_CLASS[
+                      state as (typeof STATE_ORDER)[number]
+                    ].replace("fill-", "bg-")}`}
+                  />
+                  <span className="text-foreground">{state}</span>
+                  <span className="font-mono tabular-nums">{pct.toFixed(0)}%</span>
+                </div>
+              ))}
+          </div>
+        ) : null}
+      </div>
+      <div className="text-muted-foreground flex items-center justify-between text-[10px]">
+        <span className="font-mono tabular-nums">
+          {warmupMs > 0 ? `${(warmupMs / 1000).toFixed(1)}s` : "0s"}
+        </span>
+        <span className="font-mono tabular-nums">
+          {((warmupMs + (horizonMs - warmupMs) / 2) / 1000).toFixed(1)}s
+        </span>
+        <span className="font-mono tabular-nums">{(horizonMs / 1000).toFixed(1)}s</span>
+      </div>
       <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
         {STATE_ORDER.map((state) => (
           <span key={state} className="flex items-center gap-1">

@@ -112,6 +112,40 @@ export function ThroughputChart({ samples, horizonMs, warmupMs }: ThroughputChar
         onMouseMove={onMove}
         onMouseLeave={onLeave}
       >
+        {/* VROL-622 — Y-axis gridlines at 0, max/2, max. Label-less inside
+            the SVG; the bottom row carries the numbers. */}
+        {[0, 0.5, 1].map((frac) => {
+          const y = PAD_Y + (VIEW_H - PAD_Y * 2) * (1 - frac);
+          return (
+            <line
+              key={`y-${String(frac)}`}
+              x1={PAD_X}
+              y1={y}
+              x2={VIEW_W - PAD_X}
+              y2={y}
+              stroke="currentColor"
+              strokeOpacity={frac === 0 ? 0.35 : 0.15}
+              strokeDasharray={frac === 0 ? undefined : "2 2"}
+            />
+          );
+        })}
+        {/* X-axis gridlines at warmup, mid, horizon (the bottom row labels
+            map to the same fractions). */}
+        {[0, 0.5, 1].map((frac) => {
+          const x = PAD_X + (VIEW_W - PAD_X * 2) * frac;
+          return (
+            <line
+              key={`x-${String(frac)}`}
+              x1={x}
+              y1={PAD_Y}
+              x2={x}
+              y2={VIEW_H - PAD_Y}
+              stroke="currentColor"
+              strokeOpacity={frac === 0 || frac === 1 ? 0.25 : 0.1}
+              strokeDasharray="2 2"
+            />
+          );
+        })}
         <path d={areaPath} fill="currentColor" fillOpacity={0.18} stroke="none" />
         <path d={linePath} fill="none" stroke="currentColor" strokeWidth={1.5} />
         {hovered ? (
@@ -134,10 +168,17 @@ export function ThroughputChart({ samples, horizonMs, warmupMs }: ThroughputChar
           />
         ) : null}
       </svg>
-      <div className="text-muted-foreground mt-1 flex items-center justify-between text-xs">
+      <div className="text-muted-foreground mt-1 flex items-center justify-between text-[10px]">
         <span className="font-mono tabular-nums">
           {warmupMs > 0 ? `${(warmupMs / 1000).toFixed(1)}s` : "0s"}
         </span>
+        <span className="font-mono tabular-nums">
+          {((warmupMs + (horizonMs - warmupMs) / 2) / 1000).toFixed(1)}s
+        </span>
+        <span className="font-mono tabular-nums">{(horizonMs / 1000).toFixed(1)}s</span>
+      </div>
+      <div className="text-muted-foreground flex items-center justify-between text-xs">
+        <span className="font-mono tabular-nums">0</span>
         <span>
           {hovered ? (
             <span className="font-mono tabular-nums">
@@ -147,7 +188,7 @@ export function ThroughputChart({ samples, horizonMs, warmupMs }: ThroughputChar
             <span>{maxY.toLocaleString()} parts at horizon</span>
           )}
         </span>
-        <span className="font-mono tabular-nums">{(horizonMs / 1000).toFixed(1)}s</span>
+        <span className="font-mono tabular-nums">{maxY.toLocaleString()}</span>
       </div>
     </div>
   );

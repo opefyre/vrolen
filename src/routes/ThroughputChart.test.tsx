@@ -44,6 +44,35 @@ describe("ThroughputChart (VROL-613)", () => {
     expect(lineCount).toBe(samples.length - 1);
   });
 
+  it("renders axis tick lines + bottom-row labels (VROL-622)", () => {
+    const samples = [
+      {
+        tMs: 1_000,
+        lineCompleted: 10,
+        perStationCompleted: [10],
+        perEdgeBufferFill: [],
+        perStationStateMs: [],
+      },
+      {
+        tMs: 2_000,
+        lineCompleted: 20,
+        perStationCompleted: [20],
+        perEdgeBufferFill: [],
+        perStationStateMs: [],
+      },
+    ];
+    const { container } = render(
+      <ThroughputChart samples={samples} horizonMs={2_000} warmupMs={0} />,
+    );
+    // Three Y-axis lines + three X-axis lines + area + outline + hover bits hidden.
+    const lines = container.querySelectorAll("svg line");
+    expect(lines.length).toBeGreaterThanOrEqual(6);
+    // The mid-time tick label "1.0s" lands in the bottom row.
+    expect(container.textContent).toMatch(/1\.0s/);
+    // Max-Y label on the right of the second row shows the peak count.
+    expect(container.textContent).toContain("20");
+  });
+
   it("scales the chart so the largest lineCompleted reaches the top of the inner plot", () => {
     const samples = [
       {
