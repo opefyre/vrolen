@@ -109,3 +109,7 @@ export {
 // User-facing error formatting for Zod issues.
 export type { FormattedIssue } from "./errors";
 export { formatZodError, formatZodErrorString } from "./errors";
+
+// Discrete-event scheduler — heart of the simulation engine.
+export type { ScheduledEvent } from "./scheduler";
+export { Scheduler, EventInPastError, SchedulerEmptyError } from "./scheduler";
