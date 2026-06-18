@@ -156,3 +156,7 @@ export { BreakdownManager } from "./breakdown";
 // Planned maintenance (deterministic windows).
 export type { MaintenanceWindow } from "./maintenance";
 export { MaintenanceManager } from "./maintenance";
+
+// Worker pool with skill-based assignment + shift windows.
+export type { PoolWorker, ShiftWindow } from "./worker-pool";
+export { WorkerPool } from "./worker-pool";
