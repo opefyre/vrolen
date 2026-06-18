@@ -12,4 +12,14 @@ describe("App", () => {
     render(<App />);
     expect(screen.getByText(/phase 0 foundation/i)).toBeInTheDocument();
   });
+
+  it("mounts the shadcn Button (dialog trigger)", () => {
+    render(<App />);
+    expect(screen.getByRole("button", { name: /open dialog/i })).toBeInTheDocument();
+  });
+
+  it("mounts the shadcn Input with placeholder", () => {
+    render(<App />);
+    expect(screen.getByPlaceholderText(/tailwind \+ shadcn smoke test/i)).toBeInTheDocument();
+  });
 });

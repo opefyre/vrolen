@@ -29,5 +29,13 @@ export default tseslint.config(
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
     },
   },
+  {
+    // shadcn-generated components — relax rules that don't fit their patterns
+    // (they export variant constants alongside components, which trips react-refresh)
+    files: ["src/components/ui/**/*.{ts,tsx}"],
+    rules: {
+      "react-refresh/only-export-components": "off",
+    },
+  },
   prettierConfig,
 );
