@@ -43,6 +43,14 @@ export interface CycleConfig<P> {
   readonly capacity: number;
   readonly upstream: Buffer<P>;
   readonly downstream: Buffer<P>;
+  /**
+   * Optional setup/changeover time before each cycle starts. When set, the
+   * station goes Idle → Setup → Running instead of directly to Running.
+   * The cycle clock starts AFTER setup completes. Use constant(0) or omit to
+   * skip setup entirely. Changeover matrices for product-specific setups are
+   * a follow-up — single-product behavior in Phase 0.
+   */
+  readonly setupTimeMs?: Distribution;
 }
 
 export interface CompletionEvent<P> {
@@ -119,21 +127,57 @@ export class CycleExecutor<P> {
       const part = this.config.upstream.pull();
       if (part === undefined) return;
 
-      if (state === "Idle" || state === "Starved") {
-        this.stateMachine.transition("Running", "start-cycle", timeMs);
+      this.inProgress_ += 1;
+      this.inFlight.push(part);
+
+      // If setup time is configured (and non-zero), spend it in Setup state
+      // before the cycle clock starts. Otherwise, go straight to Running.
+      const setupMs = this.config.setupTimeMs
+        ? sample(this.config.setupTimeMs, this.prng, { min: 0 })
+        : 0;
+
+      if (setupMs > 0) {
+        if (state === "Idle" || state === "Starved") {
+          this.stateMachine.transition("Setup", "setup-start", timeMs);
+        } else if (state === "Running") {
+          // capacity > 1 with setup: subsequent setups happen alongside running cycles;
+          // we don't double-transition the station's state — only the first part
+          // starting from Idle/Starved triggers the Setup transition. Treat the
+          // shared station state as "the worst running condition any part is in."
+          // For Phase 0 this approximation is fine; full per-part state lands in
+          // a later story.
+        }
+        this.scheduler.schedule(timeMs + setupMs, {
+          kind: "setup-complete",
+          stationId: this.config.stationId,
+        });
+        // Also schedule the cycle-complete at setupMs + cycleTime
+        const cycleTimeMs = sample(this.config.cycleTimeMs, this.prng, { min: 0 });
+        this.scheduler.schedule(timeMs + setupMs + cycleTimeMs, {
+          kind: "cycle-complete",
+          stationId: this.config.stationId,
+          partIndex: this.completed_ + this.scrapped_ + this.inProgress_,
+        });
+      } else {
+        if (state === "Idle" || state === "Starved") {
+          this.stateMachine.transition("Running", "start-cycle", timeMs);
+        }
+        const cycleTimeMs = sample(this.config.cycleTimeMs, this.prng, { min: 0 });
+        this.scheduler.schedule(timeMs + cycleTimeMs, {
+          kind: "cycle-complete",
+          stationId: this.config.stationId,
+          partIndex: this.completed_ + this.scrapped_ + this.inProgress_,
+        });
       }
 
-      this.inProgress_ += 1;
-
-      const cycleTimeMs = sample(this.config.cycleTimeMs, this.prng, { min: 0 });
-      this.scheduler.schedule(timeMs + cycleTimeMs, {
-        kind: "cycle-complete",
-        stationId: this.config.stationId,
-        partIndex: this.completed_ + this.scrapped_ + this.inProgress_,
-      });
-
-      this.inFlight.push(part);
       // Loop — try to start another cycle if we have capacity + upstream parts.
+    }
+  }
+
+  /** Called by the orchestrator when a setup-complete event for this station fires. */
+  handleSetupComplete(timeMs: number): void {
+    if (this.stateMachine.state === "Setup") {
+      this.stateMachine.transition("Running", "setup-complete", timeMs);
     }
   }
 

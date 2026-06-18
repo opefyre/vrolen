@@ -85,12 +85,13 @@ function runSim(
   while (scheduler.size > 0 && scheduler.peek()!.timeMs <= horizonMs) {
     const event = scheduler.popMin();
     if (event.payload.kind === "cycle-complete") {
-      // Top up upstream so we never starve in this scenario
       if (refillUpstream && upstream.size < 50) {
         for (let i = 0; i < 50; i++) upstream.push(partIdCounter++);
         executor.onUpstreamAvailable(event.timeMs);
       }
       executor.handleCycleComplete(event.timeMs);
+    } else if (event.payload.kind === "setup-complete") {
+      executor.handleSetupComplete(event.timeMs);
     }
   }
 
@@ -259,6 +260,88 @@ describe("CycleExecutor — Starved transitions", () => {
     executor.onUpstreamAvailable(500);
     expect(sm.state).toBe("Running");
     expect(executor.inProgress).toBe(1);
+  });
+});
+
+describe("CycleExecutor — setup time", () => {
+  it("throughput = 1 / (setupTime + cycleTime) over 1-hour sim", () => {
+    // setupTime = 50ms, cycleTime = 50ms → 100ms per part total → 36,000 parts/hr
+    const stationId = newStationId();
+    const scheduler = new Scheduler<EngineEvent>();
+    const prng = new SeededPrng(42);
+    const upstream = new Buffer<number>(1_000_000);
+    const downstream = new Buffer<number>(1_000_000);
+    const sm = new StationStateMachine(stationId);
+    const executor = new CycleExecutor<number>(
+      {
+        stationId,
+        cycleTimeMs: constant(50),
+        defectRate: 0,
+        capacity: 1,
+        upstream,
+        downstream,
+        setupTimeMs: constant(50),
+      },
+      sm,
+      scheduler,
+      prng,
+    );
+
+    for (let i = 0; i < 500_000; i++) upstream.push(i);
+    executor.attemptStart(0);
+
+    const horizon = 60 * 60_000;
+    while (scheduler.size > 0 && (scheduler.peek()?.timeMs ?? Infinity) <= horizon) {
+      const ev = scheduler.popMin();
+      if (ev.payload.kind === "cycle-complete") executor.handleCycleComplete(ev.timeMs);
+      else if (ev.payload.kind === "setup-complete") executor.handleSetupComplete(ev.timeMs);
+    }
+
+    const theoretical = horizon / 100; // 36,000
+    expect(executor.completed).toBeGreaterThan(theoretical * 0.99);
+    expect(executor.completed).toBeLessThanOrEqual(theoretical + 1);
+  });
+
+  it("station enters Setup state before Running on first cycle", () => {
+    const stationId = newStationId();
+    const scheduler = new Scheduler<EngineEvent>();
+    const prng = new SeededPrng(42);
+    const upstream = new Buffer<number>(10);
+    const downstream = new Buffer<number>(10);
+    const sm = new StationStateMachine(stationId);
+    const executor = new CycleExecutor<number>(
+      {
+        stationId,
+        cycleTimeMs: constant(100),
+        defectRate: 0,
+        capacity: 1,
+        upstream,
+        downstream,
+        setupTimeMs: constant(50),
+      },
+      sm,
+      scheduler,
+      prng,
+    );
+
+    const states: string[] = [];
+    sm.onStateChange((e) => states.push(`${e.fromState}→${e.toState}`));
+
+    upstream.push(1);
+    executor.attemptStart(0);
+
+    // Should have transitioned Idle → Setup
+    expect(states).toEqual(["Idle→Setup"]);
+    expect(sm.state).toBe("Setup");
+
+    // Pop setup-complete
+    const setupEvent = scheduler.popMin();
+    expect(setupEvent.payload.kind).toBe("setup-complete");
+    expect(setupEvent.timeMs).toBe(50);
+    executor.handleSetupComplete(setupEvent.timeMs);
+
+    expect(sm.state).toBe("Running");
+    expect(states[states.length - 1]).toBe("Setup→Running");
   });
 });
 

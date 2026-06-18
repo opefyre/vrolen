@@ -19,10 +19,11 @@ export type EngineEvent =
   /** Station's MTBF clock has elapsed — fire a breakdown. */
   | { readonly kind: "breakdown-start"; readonly stationId: StationId }
   /** Station's MTTR clock has elapsed — repair is complete. */
-  | { readonly kind: "repair-complete"; readonly stationId: StationId };
+  | { readonly kind: "repair-complete"; readonly stationId: StationId }
+  /** Station's pre-cycle setup time has elapsed — ready to begin Running. */
+  | { readonly kind: "setup-complete"; readonly stationId: StationId };
 
 // Future event kinds (added in their own stories):
-//   - "setup-complete"                              (VROL-127)
 //   - "maintenance-start" / "maintenance-end"       (VROL-130)
 //   - "shift-start" / "shift-end"                   (VROL-133)
 //   - "material-replenishment"                      (VROL-153)
