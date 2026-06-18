@@ -1215,8 +1215,12 @@ function EditorCanvas() {
               <ComparisonTable
                 aName={comparison.aName}
                 aResult={comparison.aOutcome.result}
+                aStationLabels={comparison.aOutcome.runMeta.stationLabels}
                 bName={comparison.bName}
                 bResult={comparison.bOutcome.result}
+                bStationLabels={comparison.bOutcome.runMeta.stationLabels}
+                horizonMs={settings.horizonMs}
+                warmupMs={Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2))}
               />
             </div>
           ) : null}
@@ -2941,13 +2945,21 @@ function BottleneckExplanationCard({ result }: { result: ChainResult }) {
 function ComparisonTable({
   aName,
   aResult,
+  aStationLabels,
   bName,
   bResult,
+  bStationLabels,
+  horizonMs,
+  warmupMs,
 }: {
   aName: string;
   aResult: ChainResult;
+  aStationLabels: readonly string[];
   bName: string;
   bResult: ChainResult;
+  bStationLabels: readonly string[];
+  horizonMs: number;
+  warmupMs: number;
 }) {
   const fmt = (n: number, digits = 1) =>
     n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -2995,48 +3007,105 @@ function ComparisonTable({
     });
   }
 
+  const aHasSamples = aResult.samples.length > 1;
+  const bHasSamples = bResult.samples.length > 1;
+  const showChartRow = aHasSamples || bHasSamples;
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-muted-foreground border-border border-b text-left text-xs tracking-wide uppercase">
-            <th className="py-2 pr-3 font-medium">Metric</th>
-            <th className="px-3 py-2 text-right font-medium" title={aName}>
-              A · {aName.length > 12 ? `${aName.slice(0, 11)}…` : aName}
-            </th>
-            <th className="px-3 py-2 text-right font-medium">B · {bName}</th>
-            <th className="py-2 pl-3 text-right font-medium">Δ (B−A)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const delta = row.b - row.a;
-            const pctDelta = row.a !== 0 ? (delta / Math.abs(row.a)) * 100 : 0;
-            const isUp = delta > 0;
-            return (
-              <tr key={row.label} className="border-border/50 border-b last:border-0">
-                <td className="py-2 pr-3">{row.label}</td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums">{row.fmt(row.a)}</td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums">{row.fmt(row.b)}</td>
-                <td
-                  className={`py-2 pl-3 text-right font-mono tabular-nums ${
-                    delta === 0
-                      ? "text-muted-foreground"
-                      : isUp
-                        ? "text-sim-running-foreground"
-                        : "text-sim-down-foreground"
-                  }`}
-                >
-                  {delta === 0 ? "0" : `${isUp ? "+" : ""}${row.fmt(delta)}`}
-                  {row.a !== 0 && delta !== 0 ? (
-                    <span className="text-muted-foreground ml-1">({fmt(pctDelta, 0)}%)</span>
-                  ) : null}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="space-y-4">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-muted-foreground border-border border-b text-left text-xs tracking-wide uppercase">
+              <th className="py-2 pr-3 font-medium">Metric</th>
+              <th className="px-3 py-2 text-right font-medium" title={aName}>
+                A · {aName.length > 12 ? `${aName.slice(0, 11)}…` : aName}
+              </th>
+              <th className="px-3 py-2 text-right font-medium">B · {bName}</th>
+              <th className="py-2 pl-3 text-right font-medium">Δ (B−A)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const delta = row.b - row.a;
+              const pctDelta = row.a !== 0 ? (delta / Math.abs(row.a)) * 100 : 0;
+              const isUp = delta > 0;
+              return (
+                <tr key={row.label} className="border-border/50 border-b last:border-0">
+                  <td className="py-2 pr-3">{row.label}</td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums">{row.fmt(row.a)}</td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums">{row.fmt(row.b)}</td>
+                  <td
+                    className={`py-2 pl-3 text-right font-mono tabular-nums ${
+                      delta === 0
+                        ? "text-muted-foreground"
+                        : isUp
+                          ? "text-sim-running-foreground"
+                          : "text-sim-down-foreground"
+                    }`}
+                  >
+                    {delta === 0 ? "0" : `${isUp ? "+" : ""}${row.fmt(delta)}`}
+                    {row.a !== 0 && delta !== 0 ? (
+                      <span className="text-muted-foreground ml-1">({fmt(pctDelta, 0)}%)</span>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {showChartRow ? (
+        <div className="space-y-3">
+          <div className="border-border space-y-2 rounded-md border p-3">
+            <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              Throughput over time
+            </div>
+            <ThroughputChart
+              samples={aHasSamples ? aResult.samples : bResult.samples}
+              {...(aHasSamples && bHasSamples ? { secondarySamples: bResult.samples } : {})}
+              primaryLabel={`A · ${aName}`}
+              secondaryLabel={`B · ${bName}`}
+              horizonMs={horizonMs}
+              warmupMs={warmupMs}
+            />
+            {!aHasSamples || !bHasSamples ? (
+              <p className="text-muted-foreground text-[11px]">
+                {!aHasSamples && !bHasSamples
+                  ? "Enable Sample throughput over time in Run settings to compare curves."
+                  : !aHasSamples
+                    ? `A · ${aName} has no samples — showing only B.`
+                    : `B · ${bName} has no samples — showing only A.`}
+              </p>
+            ) : null}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="border-border space-y-2 rounded-md border p-3">
+              <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                Bottleneck state · A · {aName}
+              </div>
+              <OeeOverTimeChart
+                samples={aResult.samples}
+                stationLabels={aStationLabels}
+                bottleneckStationIdx={aResult.bottleneckStationIdx}
+                horizonMs={horizonMs}
+                warmupMs={warmupMs}
+              />
+            </div>
+            <div className="border-border space-y-2 rounded-md border p-3">
+              <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                Bottleneck state · B · {bName}
+              </div>
+              <OeeOverTimeChart
+                samples={bResult.samples}
+                stationLabels={bStationLabels}
+                bottleneckStationIdx={bResult.bottleneckStationIdx}
+                horizonMs={horizonMs}
+                warmupMs={warmupMs}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

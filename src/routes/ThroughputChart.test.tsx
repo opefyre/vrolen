@@ -44,6 +44,54 @@ describe("ThroughputChart (VROL-613)", () => {
     expect(lineCount).toBe(samples.length - 1);
   });
 
+  it("renders a secondary series + legend when secondarySamples is provided (VROL-624)", () => {
+    const mk = (n: number, m: number) => ({
+      tMs: n,
+      lineCompleted: m,
+      perStationCompleted: [m],
+      perEdgeBufferFill: [] as number[],
+      perStationStateMs: [] as Readonly<Record<string, number>>[],
+    });
+    const a = [mk(1_000, 5), mk(2_000, 15), mk(3_000, 35)];
+    const b = [mk(1_000, 7), mk(2_000, 18), mk(3_000, 28)];
+    const { container } = render(
+      <ThroughputChart
+        samples={a}
+        secondarySamples={b}
+        primaryLabel="A · base"
+        secondaryLabel="B · with-extra-worker"
+        horizonMs={3_000}
+        warmupMs={0}
+      />,
+    );
+    // Two line paths (area + primary line + secondary line + gridlines).
+    const paths = container.querySelectorAll("svg path");
+    expect(paths.length).toBeGreaterThanOrEqual(3);
+    // Legend chips reflect the labels passed in.
+    expect(container.textContent).toContain("A · base");
+    expect(container.textContent).toContain("B · with-extra-worker");
+    // Y scale uses max of BOTH series — peak of A is 35, peak of B is 28.
+    // Maximum lineCompleted reaches the top of inner plot (y≈4).
+    const linePath = paths[1]?.getAttribute("d") ?? "";
+    expect(linePath).toMatch(/[ML] [\d.]+ 4(?!\d)/);
+  });
+
+  it("degrades to single-series when no secondary samples are passed (VROL-624)", () => {
+    const mk = (n: number, m: number) => ({
+      tMs: n,
+      lineCompleted: m,
+      perStationCompleted: [m],
+      perEdgeBufferFill: [] as number[],
+      perStationStateMs: [] as Readonly<Record<string, number>>[],
+    });
+    const { container } = render(
+      <ThroughputChart samples={[mk(1_000, 5), mk(2_000, 10)]} horizonMs={2_000} warmupMs={0} />,
+    );
+    // No legend row when there's no second series.
+    expect(container.textContent).not.toContain("A · ");
+    expect(container.textContent).not.toContain("B · ");
+  });
+
   it("renders axis tick lines + bottom-row labels (VROL-622)", () => {
     const samples = [
       {

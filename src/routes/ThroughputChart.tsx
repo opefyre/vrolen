@@ -18,6 +18,14 @@ interface ThroughputChartProps {
   readonly samples: readonly TimeseriesSample[];
   readonly horizonMs: number;
   readonly warmupMs: number;
+  /**
+   * Optional second series for scenario comparison (VROL-624). When set,
+   * renders a second line on the same X/Y scales in a muted color so the
+   * curves overlay cleanly. Y-scale is the max of both series.
+   */
+  readonly secondarySamples?: readonly TimeseriesSample[];
+  readonly primaryLabel?: string;
+  readonly secondaryLabel?: string;
 }
 
 const VIEW_W = 240;
@@ -30,16 +38,26 @@ interface HoverState {
   readonly x: number;
 }
 
-export function ThroughputChart({ samples, horizonMs, warmupMs }: ThroughputChartProps) {
+export function ThroughputChart({
+  samples,
+  horizonMs,
+  warmupMs,
+  secondarySamples,
+  primaryLabel,
+  secondaryLabel,
+}: ThroughputChartProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
 
-  const { areaPath, linePath, maxY, plotXFor, plotYFor } = useMemo(() => {
+  const { areaPath, linePath, secondaryLinePath, maxY, plotXFor, plotYFor } = useMemo(() => {
     const innerW = VIEW_W - PAD_X * 2;
     const innerH = VIEW_H - PAD_Y * 2;
     const startMs = warmupMs;
     const spanMs = Math.max(1, horizonMs - startMs);
-    const maxCompleted = samples.reduce((m, s) => Math.max(m, s.lineCompleted), 0);
+    const peak = (arr: readonly TimeseriesSample[]): number =>
+      arr.reduce((m, s) => Math.max(m, s.lineCompleted), 0);
+    // VROL-624 — Y-scale uses the max of BOTH series so neither line clips.
+    const maxCompleted = Math.max(peak(samples), secondarySamples ? peak(secondarySamples) : 0);
     const yScale = maxCompleted > 0 ? innerH / maxCompleted : 0;
     const xOf = (tMs: number): number => PAD_X + ((tMs - startMs) / spanMs) * innerW;
     const yOf = (n: number): number => PAD_Y + innerH - n * yScale;
@@ -47,30 +65,37 @@ export function ThroughputChart({ samples, horizonMs, warmupMs }: ThroughputChar
       return {
         areaPath: "",
         linePath: "",
+        secondaryLinePath: "",
         maxY: 0,
         plotXFor: xOf,
         plotYFor: yOf,
       };
     }
-    let line = "";
+    const buildLine = (arr: readonly TimeseriesSample[]): string => {
+      let d = "";
+      arr.forEach((s, i) => {
+        d += `${i === 0 ? "" : " "}${i === 0 ? "M" : "L"} ${String(xOf(s.tMs))} ${String(yOf(s.lineCompleted))}`;
+      });
+      return d;
+    };
+    const line = buildLine(samples);
     let area = `M ${String(xOf(samples[0]?.tMs ?? startMs))} ${String(PAD_Y + innerH)}`;
-    samples.forEach((s, i) => {
-      const x = xOf(s.tMs);
-      const y = yOf(s.lineCompleted);
-      const cmd = i === 0 ? "M" : "L";
-      line += `${i === 0 ? "" : " "}${cmd} ${String(x)} ${String(y)}`;
-      area += ` L ${String(x)} ${String(y)}`;
+    samples.forEach((s) => {
+      area += ` L ${String(xOf(s.tMs))} ${String(yOf(s.lineCompleted))}`;
     });
     const lastX = xOf(samples[samples.length - 1]?.tMs ?? horizonMs);
     area += ` L ${String(lastX)} ${String(PAD_Y + innerH)} Z`;
+    const secondaryLine =
+      secondarySamples && secondarySamples.length > 0 ? buildLine(secondarySamples) : "";
     return {
       areaPath: area,
       linePath: line,
+      secondaryLinePath: secondaryLine,
       maxY: maxCompleted,
       plotXFor: xOf,
       plotYFor: yOf,
     };
-  }, [samples, horizonMs, warmupMs]);
+  }, [samples, secondarySamples, horizonMs, warmupMs]);
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>): void => {
     if (samples.length === 0 || !wrapperRef.current) return;
@@ -105,6 +130,24 @@ export function ThroughputChart({ samples, horizonMs, warmupMs }: ThroughputChar
 
   return (
     <div ref={wrapperRef} className="relative w-full">
+      {secondaryLinePath ? (
+        <div className="text-muted-foreground mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
+          <span className="flex items-center gap-1.5">
+            <span className="bg-sim-running inline-block h-0.5 w-4 rounded-full" />
+            <span className="text-foreground">{primaryLabel ?? "A"}</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span
+              className="bg-sim-setup inline-block h-[2px] w-4 rounded-full"
+              style={{
+                background:
+                  "repeating-linear-gradient(90deg, currentColor 0 3px, transparent 3px 5px)",
+              }}
+            />
+            <span className="text-foreground">{secondaryLabel ?? "B"}</span>
+          </span>
+        </div>
+      ) : null}
       <svg
         viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
         preserveAspectRatio="none"
@@ -148,6 +191,19 @@ export function ThroughputChart({ samples, horizonMs, warmupMs }: ThroughputChar
         })}
         <path d={areaPath} fill="currentColor" fillOpacity={0.18} stroke="none" />
         <path d={linePath} fill="none" stroke="currentColor" strokeWidth={1.5} />
+        {/* VROL-624 — secondary series for compare overlay. Muted color +
+            dashed so it's visually distinguishable from the primary line. */}
+        {secondaryLinePath ? (
+          <path
+            d={secondaryLinePath}
+            fill="none"
+            stroke="currentColor"
+            strokeOpacity={0.55}
+            strokeDasharray="3 2"
+            strokeWidth={1.5}
+            className="text-sim-setup"
+          />
+        ) : null}
         {hovered ? (
           <line
             x1={plotXFor(hovered.tMs)}
