@@ -117,3 +117,7 @@ export { Scheduler, EventInPastError, SchedulerEmptyError } from "./scheduler";
 // Seedable deterministic PRNG — every stochastic decision in the engine goes through this.
 export type { Prng } from "./prng";
 export { SeededPrng } from "./prng";
+
+// Distribution samplers — Constant/Uniform/Normal/Triangular/Exponential.
+export type { SampleOptions } from "./sampling";
+export { sample } from "./sampling";
