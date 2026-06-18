@@ -112,6 +112,13 @@ export interface TimeseriesSample {
   readonly tMs: number;
   readonly lineCompleted: number;
   readonly perStationCompleted: readonly number[];
+  /**
+   * Per-edge buffer occupancy at the sample instant (VROL-615). Aligned with
+   * topology.edges (or perEdgeFlowed) by index. Empty array when the topology
+   * has no inter-station buffers — sampler-on runs always populate, sampler-off
+   * runs never sample so this is never read.
+   */
+  readonly perEdgeBufferFill: readonly number[];
 }
 
 /**
@@ -729,6 +736,7 @@ export function runChain(opts: ChainOptions): ChainResult {
           tMs,
           lineCompleted: exitsInWindowSoFar,
           perStationCompleted: executors.map((e) => e.completed),
+          perEdgeBufferFill: edgeBuffers.map((b) => b.size),
         });
       }
       nextSampleIdx += 1;

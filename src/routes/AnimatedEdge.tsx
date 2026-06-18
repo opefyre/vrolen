@@ -7,8 +7,10 @@
  * undefined, the edge renders as a standard bezier path with no dots.
  */
 
-import { BaseEdge, type EdgeProps, getBezierPath } from "@xyflow/react";
+import { BaseEdge, EdgeLabelRenderer, type EdgeProps, getBezierPath } from "@xyflow/react";
 import { useId } from "react";
+
+import { Sparkline } from "./Sparkline";
 
 const MIN_DURATION_S = 1.5;
 const MAX_DURATION_S = 6;
@@ -16,10 +18,16 @@ const MAX_DOTS = 5;
 
 export function AnimatedEdge(props: EdgeProps) {
   const { sourceX, sourceY, targetX, targetY, markerEnd, style } = props;
-  const data = (props.data ?? {}) as { flowRate?: number; dotColorClass?: string };
+  const data = (props.data ?? {}) as {
+    flowRate?: number;
+    dotColorClass?: string;
+    bufferFillSeries?: number[];
+    bufferCapacity?: number;
+  };
   const flowRate = data.flowRate ?? 0;
   const dotColorClass = data.dotColorClass ?? "text-sim-running";
-  const [edgePath] = getBezierPath({
+  const series = data.bufferFillSeries;
+  const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition: props.sourcePosition,
@@ -35,8 +43,33 @@ export function AnimatedEdge(props: EdgeProps) {
     ...(markerEnd ? { markerEnd } : {}),
     ...(style ? { style } : {}),
   };
+  // VROL-615 — render the buffer-fill sparkline above the edge midpoint when
+  // the run carried a sampler. Stays visible even when animation / flow dots
+  // are off — sparklines are a per-run summary, not a live effect.
+  const sparkline =
+    Array.isArray(series) && series.length > 1 ? (
+      <EdgeLabelRenderer>
+        <div
+          style={{
+            position: "absolute",
+            transform: `translate(-50%, -110%) translate(${String(labelX)}px, ${String(labelY)}px)`,
+            pointerEvents: "none",
+          }}
+          className="bg-card/85 text-sim-running border-border rounded border px-1 py-0.5 shadow-sm"
+          title="Buffer fill over time"
+        >
+          <Sparkline series={series} width={48} height={14} />
+        </div>
+      </EdgeLabelRenderer>
+    ) : null;
+
   if (flowRate <= 0) {
-    return <BaseEdge {...baseEdgeProps} />;
+    return (
+      <>
+        <BaseEdge {...baseEdgeProps} />
+        {sparkline}
+      </>
+    );
   }
 
   // Dot count: log scale of parts/hour, capped.
@@ -69,6 +102,7 @@ export function AnimatedEdge(props: EdgeProps) {
           </animateMotion>
         </circle>
       ))}
+      {sparkline}
     </>
   );
 }

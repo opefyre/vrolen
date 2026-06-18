@@ -990,6 +990,47 @@ describe("runChain — timeseries sampler (VROL-612)", () => {
     }
   });
 
+  it("perEdgeBufferFill is populated and aligned with perEdgeFlowed (VROL-615)", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(20), constant(50), constant(20)],
+      interStationBufferCapacity: 5,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(6),
+      sampler: { intervalMs: 500 },
+    });
+    expect(result.samples.length).toBeGreaterThan(0);
+    // Two edges in a 3-station linear chain.
+    expect(result.perEdgeFlowed).toHaveLength(2);
+    for (const s of result.samples) {
+      expect(s.perEdgeBufferFill).toHaveLength(2);
+      // Values are integers in [0, capacity].
+      for (const fill of s.perEdgeBufferFill) {
+        expect(Number.isInteger(fill)).toBe(true);
+        expect(fill).toBeGreaterThanOrEqual(0);
+        expect(fill).toBeLessThanOrEqual(5);
+      }
+    }
+    // The slow middle station should make buffer 0 (upstream of it) build up.
+    const fillsAtBuffer0 = result.samples.map((s) => s.perEdgeBufferFill[0] ?? 0);
+    expect(Math.max(...fillsAtBuffer0)).toBeGreaterThan(0);
+  });
+
+  it("perEdgeBufferFill is empty when topology has no inter-station edges (VROL-615)", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(50)],
+      interStationBufferCapacity: 5,
+      horizonMs: 2_000,
+      warmupMs: 0,
+      prng: new SeededPrng(7),
+      sampler: { intervalMs: 500 },
+    });
+    expect(result.samples.length).toBeGreaterThan(0);
+    for (const s of result.samples) {
+      expect(s.perEdgeBufferFill).toEqual([]);
+    }
+  });
+
   it("perStationCompleted is monotone non-decreasing per station across samples", () => {
     const result = runChain({
       stationCycleTimes: [constant(50), constant(50), constant(50)],

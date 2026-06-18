@@ -792,8 +792,10 @@ function EditorCanvas() {
   const edgesForFlow = useMemo<Edge[]>(() => {
     if (!result || !runMeta || result.elapsedMs <= 0) return edges;
     const flowByKey = new Map<string, number>();
+    const edgeIdxByKey = new Map<string, number>();
     runMeta.edgeKeys.forEach((key, i) => {
       flowByKey.set(key, result.perEdgeFlowed[i] ?? 0);
+      edgeIdxByKey.set(key, i);
     });
     // VROL-609 — tint animated dots by the worst-station's primary reason
     // so a clean run paints green and a breakdown-heavy run paints red.
@@ -808,6 +810,8 @@ function EditorCanvas() {
             : primaryReason === "blocking" || primaryReason === "starvation"
               ? "text-sim-blocked"
               : "text-sim-running";
+    // VROL-615 — collect per-edge buffer fill series when the sampler ran.
+    const hasSamples = result.samples.length > 1;
     return edges.map((e) => {
       const key = `${e.source}→${e.target}`;
       const flowed = flowByKey.get(key);
@@ -815,12 +819,28 @@ function EditorCanvas() {
       const flowRate = result.elapsedMs > 0 ? flowed / result.elapsedMs : 0;
       const perHour = (flowed / result.elapsedMs) * 3_600_000;
       const label = `${perHour.toLocaleString("en-US", { maximumFractionDigits: 0 })}/h`;
+      const edgeIdx = edgeIdxByKey.get(key);
+      const bufferFillSeries =
+        hasSamples && edgeIdx !== undefined
+          ? result.samples.map((s) => s.perEdgeBufferFill[edgeIdx] ?? 0)
+          : undefined;
+      // Switch to AnimatedEdge whenever we have something to render on top of
+      // the stock edge — dots (animateFlow on) OR a buffer-fill sparkline.
+      const usesCustomEdge = (animateFlow && flowed > 0) || bufferFillSeries !== undefined;
       return {
         ...e,
         label,
-        animated: !animateFlow && flowed > 0,
-        ...(animateFlow && flowed > 0
-          ? { type: "animated", data: { ...e.data, flowRate, dotColorClass } }
+        animated: !usesCustomEdge && flowed > 0,
+        ...(usesCustomEdge
+          ? {
+              type: "animated",
+              data: {
+                ...e.data,
+                flowRate: animateFlow ? flowRate : 0,
+                dotColorClass,
+                ...(bufferFillSeries ? { bufferFillSeries } : {}),
+              },
+            }
           : {}),
       };
     });
