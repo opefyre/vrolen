@@ -7,7 +7,15 @@ describe("ThroughputChart (VROL-613)", () => {
   it("renders empty-state copy when there's only one sample", () => {
     render(
       <ThroughputChart
-        samples={[{ tMs: 1000, lineCompleted: 0, perStationCompleted: [], perEdgeBufferFill: [] }]}
+        samples={[
+          {
+            tMs: 1000,
+            lineCompleted: 0,
+            perStationCompleted: [],
+            perEdgeBufferFill: [],
+            perStationStateMs: [],
+          },
+        ]}
         horizonMs={10_000}
         warmupMs={0}
       />,
@@ -21,6 +29,7 @@ describe("ThroughputChart (VROL-613)", () => {
       lineCompleted: (i + 1) * 10,
       perStationCompleted: [(i + 1) * 10],
       perEdgeBufferFill: [] as number[],
+      perStationStateMs: [] as Readonly<Record<string, number>>[],
     }));
     const { container } = render(
       <ThroughputChart samples={samples} horizonMs={10_000} warmupMs={0} />,
@@ -37,9 +46,27 @@ describe("ThroughputChart (VROL-613)", () => {
 
   it("scales the chart so the largest lineCompleted reaches the top of the inner plot", () => {
     const samples = [
-      { tMs: 1000, lineCompleted: 5, perStationCompleted: [5], perEdgeBufferFill: [] },
-      { tMs: 2000, lineCompleted: 20, perStationCompleted: [20], perEdgeBufferFill: [] },
-      { tMs: 3000, lineCompleted: 40, perStationCompleted: [40], perEdgeBufferFill: [] },
+      {
+        tMs: 1000,
+        lineCompleted: 5,
+        perStationCompleted: [5],
+        perEdgeBufferFill: [],
+        perStationStateMs: [],
+      },
+      {
+        tMs: 2000,
+        lineCompleted: 20,
+        perStationCompleted: [20],
+        perEdgeBufferFill: [],
+        perStationStateMs: [],
+      },
+      {
+        tMs: 3000,
+        lineCompleted: 40,
+        perStationCompleted: [40],
+        perEdgeBufferFill: [],
+        perStationStateMs: [],
+      },
     ];
     const { container } = render(
       <ThroughputChart samples={samples} horizonMs={3000} warmupMs={0} />,

@@ -119,6 +119,13 @@ export interface TimeseriesSample {
    * runs never sample so this is never read.
    */
   readonly perEdgeBufferFill: readonly number[];
+  /**
+   * Cumulative ms-in-state per station at the sample instant (VROL-619).
+   * Aligned with perStationCompleted by index. Each entry is a frozen
+   * Record<state, ms> — consumers compute within-interval fractions by
+   * diffing consecutive samples. Empty array when no sampler.
+   */
+  readonly perStationStateMs: readonly Readonly<Record<string, number>>[];
 }
 
 /**
@@ -752,7 +759,14 @@ export function runChain(opts: ChainOptions): ChainResult {
           lineCompleted: exitsInWindowSoFar,
           perStationCompleted: executors.map((e) => e.completed),
           perEdgeBufferFill: edgeBuffers.map((b) => b.size),
+          // VROL-619 — cumulative ms-in-state per station; consumer derives
+          // fractions per interval by diffing consecutive samples.
+          perStationStateMs: stateTimeTrackers.map((t) => t.snapshotInto(tMs)),
         });
+      } else {
+        // Pre-warmup: still advance trackers so the snapshot deltas stay
+        // consistent with the end-of-run finalize, but don't keep the sample.
+        for (const t of stateTimeTrackers) t.snapshotInto(tMs);
       }
       nextSampleIdx += 1;
     }

@@ -1123,6 +1123,71 @@ describe("runChain — timeseries sampler (VROL-612)", () => {
     }
   });
 
+  it("perStationStateMs is populated and aligns with perStationCompleted (VROL-619)", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(50)],
+      interStationBufferCapacity: 5,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(11),
+      sampler: { intervalMs: 1_000 },
+    });
+    expect(result.samples.length).toBeGreaterThan(0);
+    for (const s of result.samples) {
+      expect(s.perStationStateMs).toHaveLength(s.perStationCompleted.length);
+      for (const stateMs of s.perStationStateMs) {
+        // Every record key is a state name → ms.
+        for (const v of Object.values(stateMs)) {
+          expect(Number.isFinite(v)).toBe(true);
+          expect(v).toBeGreaterThanOrEqual(0);
+        }
+      }
+    }
+  });
+
+  it("per-station state-time sums to ~tMs at each sample (VROL-619)", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(80), constant(80)],
+      interStationBufferCapacity: 5,
+      horizonMs: 4_000,
+      warmupMs: 0,
+      prng: new SeededPrng(12),
+      sampler: { intervalMs: 1_000 },
+    });
+    for (const s of result.samples) {
+      for (const stateMs of s.perStationStateMs) {
+        const sum = Object.values(stateMs).reduce((a, b) => a + b, 0);
+        // Tracker covers every ms — the per-station total should match tMs
+        // within a small tolerance for transition-time rounding.
+        expect(sum).toBeGreaterThanOrEqual(s.tMs - 5);
+        expect(sum).toBeLessThanOrEqual(s.tMs + 5);
+      }
+    }
+  });
+
+  it("per-state cumulative time is monotone non-decreasing across samples (VROL-619)", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(50), constant(50)],
+      interStationBufferCapacity: 5,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(13),
+      sampler: { intervalMs: 500 },
+    });
+    for (let i = 1; i < result.samples.length; i++) {
+      const prev = result.samples[i - 1]?.perStationStateMs ?? [];
+      const curr = result.samples[i]?.perStationStateMs ?? [];
+      for (let stn = 0; stn < curr.length; stn++) {
+        const prevRow = prev[stn] ?? {};
+        const currRow = curr[stn] ?? {};
+        for (const [state, ms] of Object.entries(currRow)) {
+          const before = prevRow[state] ?? 0;
+          expect(ms).toBeGreaterThanOrEqual(before);
+        }
+      }
+    }
+  });
+
   it("perStationCompleted is monotone non-decreasing per station across samples", () => {
     const result = runChain({
       stationCycleTimes: [constant(50), constant(50), constant(50)],

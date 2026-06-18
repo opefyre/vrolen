@@ -55,6 +55,21 @@ export class StateTimeTracker {
     this.recordTransition(this.currentState, endTimeMs);
   }
 
+  /**
+   * Per-tick snapshot for the timeseries sampler (VROL-619). Flushes the
+   * currently-open state's elapsed time up to `timeMs` (so accumulated
+   * reflects cumulative time-in-state up to `timeMs`) and returns a frozen
+   * plain-object copy keyed by state name. Safe to call repeatedly at
+   * increasing tMs values — the next call flushes only the delta since the
+   * last snapshot, so totals remain consistent with the end-of-run finalize.
+   */
+  snapshotInto(timeMs: number): Readonly<Record<string, number>> {
+    this.recordTransition(this.currentState, timeMs);
+    const out: Record<string, number> = {};
+    for (const [state, ms] of this.accumulated) out[state] = ms;
+    return Object.freeze(out);
+  }
+
   timeInState(state: StationState): number {
     return this.accumulated.get(state) ?? 0;
   }
