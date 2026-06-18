@@ -71,3 +71,41 @@ export {
 
 export type { Distribution } from "./distribution";
 export { constant } from "./distribution";
+
+// Zod schemas — runtime validation at every external boundary (cloud, LLM tool calls, scenario imports).
+export {
+  SiteIdSchema,
+  LineIdSchema,
+  StationIdSchema,
+  EdgeIdSchema,
+  ResourceIdSchema,
+  MaterialIdSchema,
+  ScheduleIdSchema,
+  ScenarioIdSchema,
+  WorkspaceIdSchema,
+  CustomParamValueSchema,
+  CustomParamsSchema,
+  DistributionSchema,
+  MaterialReplenishmentSchema,
+  MaterialSchema,
+  ResourceSchema,
+  EdgeSchema,
+  MachineStationSchema,
+  ManualWorkstationSchema,
+  BufferStationSchema,
+  QCStationSchema,
+  PackingStationSchema,
+  AssemblyStationSchema,
+  DisassemblyStationSchema,
+  TransportStationSchema,
+  MaterialInputStationSchema,
+  OutputStationSchema,
+  CustomStationSchema,
+  StationSchema,
+  LineSchema,
+  SiteSchema,
+} from "./schemas";
+
+// User-facing error formatting for Zod issues.
+export type { FormattedIssue } from "./errors";
+export { formatZodError, formatZodErrorString } from "./errors";
