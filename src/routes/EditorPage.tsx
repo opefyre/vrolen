@@ -314,6 +314,7 @@ const NODE_TYPES = { station: StationNode };
 // bloat the first non-editor route. It's used inside this lazy-loaded file,
 // so a normal import is fine.
 import { AnimatedEdge } from "./AnimatedEdge";
+import { ThroughputChart } from "./ThroughputChart";
 const EDGE_TYPES = { animated: AnimatedEdge };
 
 function EditorCanvas() {
@@ -641,6 +642,9 @@ function EditorCanvas() {
           ...(workersCfg ? { workers: workersCfg } : {}),
           ...(maintenanceCfg ? { maintenance: maintenanceCfg } : {}),
           ...(productsCfg ? { products: productsCfg } : {}),
+          ...(settings.samplerIntervalMs > 0
+            ? { sampler: { intervalMs: settings.samplerIntervalMs } }
+            : {}),
         });
         const wallMs = performance.now() - t0;
         setResult(r);
@@ -1105,7 +1109,14 @@ function EditorCanvas() {
         ) : null}
       </div>
 
-      {result && runMeta ? <KpiStrip result={result} runMeta={runMeta} /> : null}
+      {result && runMeta ? (
+        <KpiStrip
+          result={result}
+          runMeta={runMeta}
+          horizonMs={settings.horizonMs}
+          warmupMs={Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2))}
+        />
+      ) : null}
 
       <Sheet
         open={comparison !== null}
@@ -1509,6 +1520,50 @@ function EditorCanvas() {
                     className="font-mono tabular-nums"
                   />
                 </div>
+              </div>
+              <div className="border-border space-y-1 rounded-md border border-dashed p-2">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input
+                    type="checkbox"
+                    checked={settings.samplerIntervalMs > 0}
+                    onChange={(e) => {
+                      setSettings((s) => ({
+                        ...s,
+                        samplerIntervalMs: e.target.checked ? 1_000 : 0,
+                      }));
+                    }}
+                  />
+                  Sample throughput over time (VROL-612)
+                </label>
+                <p className="text-muted-foreground text-xs">
+                  When on, the engine snapshots line + per-station counters at the configured
+                  interval; the result panel renders a throughput chart and per-station sparklines.
+                </p>
+                {settings.samplerIntervalMs > 0 ? (
+                  <div className="flex items-center gap-2 text-xs">
+                    <label htmlFor="rs-sampler" className="text-muted-foreground font-medium">
+                      Every
+                    </label>
+                    <Input
+                      id="rs-sampler"
+                      type="number"
+                      min={50}
+                      step={50}
+                      value={settings.samplerIntervalMs}
+                      onChange={(e) => {
+                        const n = Number(e.target.value);
+                        if (Number.isFinite(n) && n > 0) {
+                          setSettings((s) => ({
+                            ...s,
+                            samplerIntervalMs: Math.max(50, Math.floor(n)),
+                          }));
+                        }
+                      }}
+                      className="w-24 font-mono tabular-nums"
+                    />
+                    <span className="text-muted-foreground">ms</span>
+                  </div>
+                ) : null}
               </div>
             </section>
 
@@ -2801,7 +2856,17 @@ function stateColor(state: string): string {
   }
 }
 
-function KpiStrip({ result, runMeta }: { result: ChainResult; runMeta: RunMeta }) {
+function KpiStrip({
+  result,
+  runMeta,
+  horizonMs,
+  warmupMs,
+}: {
+  result: ChainResult;
+  runMeta: RunMeta;
+  horizonMs: number;
+  warmupMs: number;
+}) {
   const tile = (label: string, value: string, hint?: string) => (
     <div className="border-border bg-card rounded-md border p-3">
       <div className="text-muted-foreground text-xs tracking-wide uppercase">{label}</div>
@@ -2870,6 +2935,18 @@ function KpiStrip({ result, runMeta }: { result: ChainResult; runMeta: RunMeta }
       </Card>
 
       <BottleneckExplanationCard result={result} />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-heading text-base">Throughput over time</CardTitle>
+          <CardDescription>
+            Cumulative parts that exited the system, sampled at the configured interval (VROL-613).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ThroughputChart samples={result.samples} horizonMs={horizonMs} warmupMs={warmupMs} />
+        </CardContent>
+      </Card>
 
       {result.perProductCompleted && result.perProductCompleted.size > 0 ? (
         <ProductMixCard result={result} />

@@ -179,6 +179,8 @@ export type {
   ChainTopology,
   ChainTopologyNode,
   ChainTopologyEdge,
+  ChainSamplerConfig,
+  TimeseriesSample,
 } from "./chain-harness";
 export { runChain } from "./chain-harness";
 

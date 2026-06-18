@@ -67,6 +67,12 @@ export interface RunSettings {
    * (VROL-607). UI-only — engine ignores this.
    */
   animateFlow: boolean;
+  /**
+   * Sampler interval for the engine timeseries (VROL-612). 0 → sampler off.
+   * Values > 0 enable per-tick snapshots used by the throughput chart
+   * (VROL-613) and per-station sparklines (VROL-614).
+   */
+  samplerIntervalMs: number;
 }
 
 export const DEFAULT_RUN_SETTINGS: RunSettings = {
@@ -101,6 +107,7 @@ export const DEFAULT_RUN_SETTINGS: RunSettings = {
     ],
   },
   animateFlow: false,
+  samplerIntervalMs: 0,
 };
 
 export function loadRunSettings(): RunSettings {
@@ -174,6 +181,10 @@ export function mergeWithDefaults(parsed: Partial<RunSettings>): RunSettings {
       typeof parsed.animateFlow === "boolean"
         ? parsed.animateFlow
         : DEFAULT_RUN_SETTINGS.animateFlow,
+    samplerIntervalMs:
+      typeof parsed.samplerIntervalMs === "number" && parsed.samplerIntervalMs >= 0
+        ? Math.floor(parsed.samplerIntervalMs)
+        : DEFAULT_RUN_SETTINGS.samplerIntervalMs,
   };
 }
 

@@ -67,6 +67,14 @@ describe("editor-run-settings — mergeWithDefaults", () => {
     expect(set.animateFlow).toBe(true);
   });
 
+  it("samplerIntervalMs defaults to 0 (off) and round-trips a positive value (VROL-613)", () => {
+    expect(mergeWithDefaults({}).samplerIntervalMs).toBe(0);
+    expect(mergeWithDefaults({ samplerIntervalMs: 1_000 }).samplerIntervalMs).toBe(1_000);
+    // Floors floats, clamps negative to default.
+    expect(mergeWithDefaults({ samplerIntervalMs: 250.7 }).samplerIntervalMs).toBe(250);
+    expect(mergeWithDefaults({ samplerIntervalMs: -100 }).samplerIntervalMs).toBe(0);
+  });
+
   it("keeps an explicit workers.list as-is when provided", () => {
     const merged = mergeWithDefaults({
       workers: {
