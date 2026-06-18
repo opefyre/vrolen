@@ -296,6 +296,8 @@ function EditorCanvas() {
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>(() => listScenarios());
   const [saveNameDraft, setSaveNameDraft] = useState<string>("");
   const [activeScenarioName, setActiveScenarioName] = useState<string | null>(null);
+  /** Snapshot of the active scenario as JSON; used to detect drift for the modified badge. */
+  const [activeScenarioSnapshot, setActiveScenarioSnapshot] = useState<string | null>(null);
   const [comparison, setComparison] = useState<{
     aName: string;
     aOutcome: ScenarioRunOutcome;
@@ -645,6 +647,15 @@ function EditorCanvas() {
     [setNodes, setEdges, setSettings],
   );
 
+  // Detect whether the canvas + settings have drifted from the active scenario's
+  // snapshot. Cheap deep-compare via JSON.stringify; only computed when a
+  // scenario is loaded.
+  const activeScenarioIsModified = useMemo(() => {
+    if (!activeScenarioName || !activeScenarioSnapshot) return false;
+    const current = JSON.stringify({ graph: { nodes, edges }, settings });
+    return current !== activeScenarioSnapshot;
+  }, [activeScenarioName, activeScenarioSnapshot, nodes, edges, settings]);
+
   // Render edges with per-edge throughput labels from the last run, if we have one.
   const edgesForFlow = useMemo<Edge[]>(() => {
     if (!result || !runMeta || result.elapsedMs <= 0) return edges;
@@ -984,6 +995,10 @@ function EditorCanvas() {
                   });
                   setScenarios(listScenarios());
                   setSaveNameDraft("");
+                  // Saving the current canvas under `name` makes that scenario
+                  // the active one + resets the modified snapshot.
+                  setActiveScenarioName(name);
+                  setActiveScenarioSnapshot(JSON.stringify({ graph: { nodes, edges }, settings }));
                   toast.success(`Saved "${name}"`);
                 } catch (err) {
                   const message = err instanceof Error ? err.message : String(err);
@@ -1029,8 +1044,14 @@ function EditorCanvas() {
                           <div className="truncate text-sm font-medium">
                             {s.name}
                             {activeScenarioName === s.name ? (
-                              <span className="bg-sim-running text-sim-running-foreground ml-2 rounded-full px-2 py-0.5 text-xs font-medium">
-                                active
+                              <span
+                                className={`ml-2 rounded-full px-2 py-0.5 text-xs font-medium ${
+                                  activeScenarioIsModified
+                                    ? "bg-sim-setup text-sim-setup-foreground"
+                                    : "bg-sim-running text-sim-running-foreground"
+                                }`}
+                              >
+                                {activeScenarioIsModified ? "active · modified" : "active"}
                               </span>
                             ) : null}
                           </div>

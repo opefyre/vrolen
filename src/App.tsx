@@ -1,3 +1,5 @@
+import { lazy, Suspense } from "react";
+
 import { AppShell } from "@/components/AppShell";
 import { Toaster } from "@/components/Toaster";
 import { toast } from "@/lib/toast";
@@ -13,8 +15,20 @@ import {
 import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import DesignTokens from "@/routes/DesignTokens";
-import EditorPage from "@/routes/EditorPage";
 import RunPage from "@/routes/RunPage";
+
+// /editor is the largest route (xyflow + inspector + drawer + per-product UI).
+// Lazy-load it so the home page + /run + /design-tokens don't pay for its
+// bundle on first visit (VROL-603).
+const EditorPage = lazy(() => import("@/routes/EditorPage"));
+
+function EditorFallback() {
+  return (
+    <div className="text-muted-foreground flex h-full items-center justify-center p-8 text-sm">
+      Loading editor…
+    </div>
+  );
+}
 
 function HomePage() {
   return (
@@ -64,7 +78,12 @@ export default function App() {
   let page;
   if (pathname === "/design-tokens") page = <DesignTokens />;
   else if (pathname === "/run") page = <RunPage />;
-  else if (pathname === "/editor") page = <EditorPage />;
+  else if (pathname === "/editor")
+    page = (
+      <Suspense fallback={<EditorFallback />}>
+        <EditorPage />
+      </Suspense>
+    );
   else page = <HomePage />;
 
   return (
