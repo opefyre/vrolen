@@ -16,8 +16,9 @@ const MAX_DOTS = 5;
 
 export function AnimatedEdge(props: EdgeProps) {
   const { sourceX, sourceY, targetX, targetY, markerEnd, style } = props;
-  const data = (props.data ?? {}) as { flowRate?: number };
+  const data = (props.data ?? {}) as { flowRate?: number; dotColorClass?: string };
   const flowRate = data.flowRate ?? 0;
+  const dotColorClass = data.dotColorClass ?? "text-sim-running";
   const [edgePath] = getBezierPath({
     sourceX,
     sourceY,
@@ -57,7 +58,7 @@ export function AnimatedEdge(props: EdgeProps) {
         <path id={pathId} d={edgePath} fill="none" />
       </defs>
       {Array.from({ length: dotCount }, (_, i) => (
-        <circle key={i} r={3.5} fill="currentColor" className="text-sim-running">
+        <circle key={i} r={3.5} fill="currentColor" className={dotColorClass}>
           <animateMotion
             dur={`${String(durationS)}s`}
             repeatCount="indefinite"

@@ -60,6 +60,13 @@ describe("editor-run-settings — mergeWithDefaults", () => {
     expect(merged.workers.list[0]?.shiftEndMs).toBe(30_000);
   });
 
+  it("animateFlow defaults to false and round-trips when set", () => {
+    const def = mergeWithDefaults({});
+    expect(def.animateFlow).toBe(false);
+    const set = mergeWithDefaults({ animateFlow: true });
+    expect(set.animateFlow).toBe(true);
+  });
+
   it("keeps an explicit workers.list as-is when provided", () => {
     const merged = mergeWithDefaults({
       workers: {

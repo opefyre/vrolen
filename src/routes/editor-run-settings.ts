@@ -62,6 +62,11 @@ export interface RunSettings {
   breakdowns: BreakdownsSettings;
   workers: WorkersSettings;
   products: ProductsSettings;
+  /**
+   * Persist the canvas's "Animate flow on edges" toggle across reloads
+   * (VROL-607). UI-only — engine ignores this.
+   */
+  animateFlow: boolean;
 }
 
 export const DEFAULT_RUN_SETTINGS: RunSettings = {
@@ -95,6 +100,7 @@ export const DEFAULT_RUN_SETTINGS: RunSettings = {
       { id: "B", name: "Product B", weight: 40 },
     ],
   },
+  animateFlow: false,
 };
 
 export function loadRunSettings(): RunSettings {
@@ -164,6 +170,10 @@ export function mergeWithDefaults(parsed: Partial<RunSettings>): RunSettings {
               }))
           : DEFAULT_RUN_SETTINGS.products.list.slice(),
     },
+    animateFlow:
+      typeof parsed.animateFlow === "boolean"
+        ? parsed.animateFlow
+        : DEFAULT_RUN_SETTINGS.animateFlow,
   };
 }
 
