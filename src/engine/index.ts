@@ -149,3 +149,6 @@ export { CycleExecutor } from "./cycle-execution";
 
 // KPI accumulators — Phase 0 ships ThroughputKPI; OEE / utilization land in VROL-138.
 export { ThroughputKPI } from "./kpi";
+
+// Stochastic breakdowns (MTBF/MTTR).
+export { BreakdownManager } from "./breakdown";
