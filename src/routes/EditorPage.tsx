@@ -3141,11 +3141,8 @@ function KpiStrip({
         <CardContent>
           <OeeOverTimeChart
             samples={result.samples}
-            stationIdx={result.bottleneckStationIdx}
-            stationLabel={
-              runMeta.stationLabels[result.bottleneckStationIdx] ??
-              `Station ${String(result.bottleneckStationIdx + 1)}`
-            }
+            stationLabels={runMeta.stationLabels}
+            bottleneckStationIdx={result.bottleneckStationIdx}
             horizonMs={horizonMs}
             warmupMs={warmupMs}
           />

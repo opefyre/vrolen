@@ -23,8 +23,8 @@ describe("OeeOverTimeChart (VROL-620)", () => {
     render(
       <OeeOverTimeChart
         samples={[sample(0, [{ Running: 0 }])]}
-        stationIdx={0}
-        stationLabel="Capper"
+        stationLabels={["Capper"]}
+        bottleneckStationIdx={0}
         horizonMs={5_000}
         warmupMs={0}
       />,
@@ -41,8 +41,8 @@ describe("OeeOverTimeChart (VROL-620)", () => {
     const { container } = render(
       <OeeOverTimeChart
         samples={samples}
-        stationIdx={0}
-        stationLabel="Capper"
+        stationLabels={["Capper"]}
+        bottleneckStationIdx={0}
         horizonMs={5_000}
         warmupMs={0}
       />,
@@ -52,6 +52,30 @@ describe("OeeOverTimeChart (VROL-620)", () => {
     expect(paths.length).toBe(7);
     // The bottleneck station label surfaces in the header.
     expect(screen.getByText(/Capper/)).toBeInTheDocument();
+  });
+
+  it("renders one chip per station with the bottleneck annotated (VROL-621)", () => {
+    const samples = [
+      sample(0, [{ Running: 0 }, { Running: 0 }, { Running: 0 }]),
+      sample(1_000, [{ Running: 1_000 }, { Running: 1_000 }, { Running: 1_000 }]),
+    ];
+    render(
+      <OeeOverTimeChart
+        samples={samples}
+        stationLabels={["Filler", "Capper", "Labeler"]}
+        bottleneckStationIdx={1}
+        horizonMs={1_000}
+        warmupMs={0}
+      />,
+    );
+    // One tab per station.
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs).toHaveLength(3);
+    // Bottleneck chip carries the title hint.
+    const bottleneckChip = tabs.find((t) => t.getAttribute("title")?.includes("Bottleneck"));
+    expect(bottleneckChip?.textContent).toContain("Capper");
+    // Default-selected chip matches the bottleneck.
+    expect(bottleneckChip?.getAttribute("aria-selected")).toBe("true");
   });
 
   it("normalizes each interval so stacked fractions sum to 1.0 (visual sanity)", () => {
@@ -65,8 +89,8 @@ describe("OeeOverTimeChart (VROL-620)", () => {
     const { container } = render(
       <OeeOverTimeChart
         samples={samples}
-        stationIdx={0}
-        stationLabel="Capper"
+        stationLabels={["Capper"]}
+        bottleneckStationIdx={0}
         horizonMs={1_000}
         warmupMs={0}
       />,

@@ -6,14 +6,14 @@
  * ThroughputChart (VROL-613) and Sparkline (VROL-614).
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import type { TimeseriesSample } from "@/engine";
 
 interface OeeOverTimeChartProps {
   readonly samples: readonly TimeseriesSample[];
-  readonly stationIdx: number;
-  readonly stationLabel: string;
+  readonly stationLabels: readonly string[];
+  readonly bottleneckStationIdx: number;
   readonly horizonMs: number;
   readonly warmupMs: number;
 }
@@ -50,11 +50,23 @@ const PAD_Y = 4;
 
 export function OeeOverTimeChart({
   samples,
-  stationIdx,
-  stationLabel,
+  stationLabels,
+  bottleneckStationIdx,
   horizonMs,
   warmupMs,
 }: OeeOverTimeChartProps) {
+  // VROL-621 — local picker state, defaults to whatever the bottleneck is.
+  // Re-syncs whenever a new run shifts the bottleneck. Pattern docs:
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  const [stationIdx, setStationIdx] = useState<number>(bottleneckStationIdx);
+  const [lastBottleneckSeen, setLastBottleneckSeen] = useState<number>(bottleneckStationIdx);
+  if (lastBottleneckSeen !== bottleneckStationIdx) {
+    setLastBottleneckSeen(bottleneckStationIdx);
+    setStationIdx(bottleneckStationIdx);
+  }
+  const safeIdx = Math.min(Math.max(0, stationIdx), Math.max(0, stationLabels.length - 1));
+  const stationLabel = stationLabels[safeIdx] ?? `Station ${String(safeIdx + 1)}`;
+
   const paths = useMemo<{ state: string; d: string }[]>(() => {
     if (samples.length < 2) return [];
     const innerW = VIEW_W - PAD_X * 2;
@@ -76,8 +88,8 @@ export function OeeOverTimeChart({
     // Walk samples; for i=0 there's no interval — leave its top/bot at 0
     // (they're only used as the starting point of segment i=1).
     for (let i = 1; i < samples.length; i++) {
-      const prev = samples[i - 1]?.perStationStateMs[stationIdx] ?? {};
-      const curr = samples[i]?.perStationStateMs[stationIdx] ?? {};
+      const prev = samples[i - 1]?.perStationStateMs[safeIdx] ?? {};
+      const curr = samples[i]?.perStationStateMs[safeIdx] ?? {};
       const deltas: Record<string, number> = {};
       let totalDelta = 0;
       for (const s of STATE_ORDER) {
@@ -126,7 +138,7 @@ export function OeeOverTimeChart({
       out.push({ state: s, d });
     }
     return out;
-  }, [samples, stationIdx, horizonMs, warmupMs]);
+  }, [samples, safeIdx, horizonMs, warmupMs]);
 
   if (samples.length < 2) {
     return (
@@ -139,9 +151,38 @@ export function OeeOverTimeChart({
 
   return (
     <div className="space-y-2">
-      <p className="text-muted-foreground text-xs">
-        Bottleneck station: <strong className="text-foreground">{stationLabel}</strong>
-      </p>
+      {stationLabels.length > 1 ? (
+        <div className="flex flex-wrap gap-1" role="tablist" aria-label="Pick a station to chart">
+          {stationLabels.map((label, i) => {
+            const isSelected = i === safeIdx;
+            const isBottleneck = i === bottleneckStationIdx;
+            return (
+              <button
+                key={i}
+                type="button"
+                role="tab"
+                aria-selected={isSelected}
+                onClick={() => {
+                  setStationIdx(i);
+                }}
+                className={`rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                  isSelected
+                    ? "bg-foreground text-background"
+                    : "bg-muted text-muted-foreground hover:bg-muted/70"
+                }`}
+                title={isBottleneck ? "Bottleneck — the rate-limiting station" : undefined}
+              >
+                {label}
+                {isBottleneck ? <span className="ml-1 opacity-70">·bn</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-muted-foreground text-xs">
+          Station: <strong className="text-foreground">{stationLabel}</strong>
+        </p>
+      )}
       <svg
         viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
         preserveAspectRatio="none"
