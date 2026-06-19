@@ -734,6 +734,40 @@ describe("runChain — rework loops (VROL-626)", () => {
     ).toThrow(/cannot rework to itself/);
   });
 
+  it("rework target with MULTIPLE incoming edges routes into one of the constituent buffers (regression for the default-canvas crash)", () => {
+    // Diamond fan-in: a + b → c. c has 2 incoming edges so upstreamFor(c)
+    // returns a MultiInputBuffer wrapper whose push() throws by design.
+    // The rework router must NOT go through that wrapper — it has to pick a
+    // concrete constituent edge buffer (this is what pushReworkTo does).
+    // d defects and reworks to c. Before the fix this throws at runtime.
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "src", cycleTimeMs: constant(30) },
+          { id: "a", cycleTimeMs: constant(80) },
+          { id: "b", cycleTimeMs: constant(80) },
+          { id: "c", cycleTimeMs: constant(100) },
+          { id: "d", cycleTimeMs: constant(50), defectRate: 0.5, reworkTargetId: "c" },
+        ],
+        edges: [
+          { source: "src", target: "a" },
+          { source: "src", target: "b" },
+          { source: "a", target: "c" },
+          { source: "b", target: "c" },
+          { source: "c", target: "d" },
+        ],
+      },
+      interStationBufferCapacity: 5,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xdeed),
+    });
+    // The run completes without throwing AND defective parts at d get routed
+    // back into c — perStationReworked at d (index 4) should be > 0.
+    expect(result.perStationReworked[4]).toBeGreaterThan(0);
+    expect(result.completed).toBeGreaterThan(0);
+  });
+
   it("perStationReworked is always present and zero when no rework configured", () => {
     const result = runChain({
       stationCycleTimes: [constant(50), constant(50)],

@@ -633,6 +633,29 @@ export function runChain(opts: ChainOptions): ChainResult {
       outs.map((idx) => edgeBuffers[idx] as CountingTrackedBuffer<TrackedPart>),
     );
   }
+  /**
+   * VROL-626 — push a part directly into the target station's input. Unlike
+   * upstreamFor() — which returns a MultiInputBuffer wrapper whose push()
+   * throws by design — this helper picks a concrete edge buffer (or the
+   * source's input buffer) and writes there. Returns false when no
+   * constituent buffer has capacity, which the caller treats as scrap.
+   */
+  function pushReworkTo(targetIdx: number, part: TrackedPart): boolean {
+    if (targetIdx === topology.sourceIdx) return inputBuffer.push(part);
+    const ins = incomingEdgeIdx[targetIdx]!;
+    if (ins.length === 0) return false;
+    if (ins.length === 1) {
+      return (edgeBuffers[ins[0]!] as CountingTrackedBuffer<TrackedPart>).push(part);
+    }
+    // Multi-input: try edge buffers in topology order; first one with space wins.
+    // Same priority as MultiInputBuffer's pull() so the part lands in a buffer
+    // the consumer will see on its next attempt.
+    for (const idx of ins) {
+      const buf = edgeBuffers[idx] as CountingTrackedBuffer<TrackedPart>;
+      if (buf.push(part)) return true;
+    }
+    return false;
+  }
 
   // VROL-626 — bounded rework loops. Defective parts at a station with a
   // reworkTargetId are routed back into the target's input buffer with an
@@ -670,7 +693,7 @@ export function runChain(opts: ChainOptions): ChainResult {
             const count = (part.reworkCount ?? 0) + 1;
             if (count > MAX_REWORK_PASSES) return false;
             part.reworkCount = count;
-            return upstreamFor(reworkTargetIdx).push(part);
+            return pushReworkTo(reworkTargetIdx, part);
           }
         : undefined;
     const cfg: CycleConfig<TrackedPart> = {
