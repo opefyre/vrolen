@@ -63,6 +63,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Accordion, AccordionStatus } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { CapacityChip } from "@/components/canvas/capacity-chip";
 import { Input } from "@/components/ui/input";
 import { NumberField } from "@/components/ui/number-field";
 import {
@@ -373,6 +374,13 @@ function StationNode({ data, selected }: NodeProps) {
       ? Object.keys(d.changeoverMatrix).length > 0
       : false;
   const hasRework = typeof d.reworkTargetNodeId === "string" && d.reworkTargetNodeId.length > 0;
+  // VROL-650 — surface parallel-capacity on the node so it's discoverable
+  // without opening Inspector. capacity=1 (default) shows nothing.
+  const capacity =
+    typeof (d as { capacity?: unknown }).capacity === "number"
+      ? ((d as { capacity: number }).capacity as number)
+      : 1;
+  const hasParallel = capacity > 1;
 
   return (
     <div
@@ -397,7 +405,8 @@ function StationNode({ data, selected }: NodeProps) {
         skillCount +
         (hasSetup ? 1 : 0) +
         (hasMatrix ? 1 : 0) +
-        (hasRework ? 1 : 0) >
+        (hasRework ? 1 : 0) +
+        (hasParallel ? 1 : 0) >
       0 ? (
         <div className="text-muted-foreground mt-1.5 flex flex-wrap gap-1 text-[10px]">
           {maintenanceCount > 0 ? (
@@ -425,6 +434,7 @@ function StationNode({ data, selected }: NodeProps) {
               ↺
             </span>
           ) : null}
+          {hasParallel ? <CapacityChip capacity={capacity} /> : null}
         </div>
       ) : null}
       {Array.isArray(d.sparklineSeries) && d.sparklineSeries.length > 1 ? (

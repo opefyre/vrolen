@@ -188,11 +188,34 @@ const WORKER_BOTTLENECK: Preset = {
   },
 };
 
+// ─── 5. Parallel fillers (VROL-649 — showcases VROL-646 capacity > 1) ───────
+const PARALLEL_FILLERS: Preset = {
+  id: "parallel-fillers",
+  title: "Parallel fillers",
+  blurb:
+    "Source → three parallel fillers (one node, capacity 3) → fast capper → QC. The Filler's parallel cycles match the Capper's higher rate so neither side bottlenecks.",
+  highlight: "capacity > 1 (parallel cycles)",
+  graph: {
+    nodes: [
+      station("n1", "Source", "input", 60, 180, { cycleDistribution: constant(30) }),
+      station("n2", "Filler", "machine", 260, 180, {
+        cycleDistribution: constant(300),
+        capacity: 3,
+      }),
+      station("n3", "Capper", "machine", 460, 180, { cycleDistribution: constant(100) }),
+      station("n4", "QC", "qc", 660, 180, { cycleDistribution: constant(50) }),
+    ],
+    edges: [edge("e1-2", "n1", "n2"), edge("e2-3", "n2", "n3"), edge("e3-4", "n3", "n4")],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000 },
+};
+
 export const PRESETS: readonly Preset[] = [
   BOTTLING_LINE,
   MULTI_PRODUCT_CHANGEOVER,
   MAINTENANCE_BOUND,
   WORKER_BOTTLENECK,
+  PARALLEL_FILLERS,
 ];
 
 export function getPreset(id: string): Preset | undefined {

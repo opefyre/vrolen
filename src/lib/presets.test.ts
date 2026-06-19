@@ -34,6 +34,14 @@ describe("presets (VROL-630)", () => {
     }
   });
 
+  it("Parallel fillers preset has a Filler with capacity > 1 (VROL-649)", () => {
+    const p = getPreset("parallel-fillers");
+    expect(p).toBeDefined();
+    const filler = p!.graph.nodes.find((n) => (n.data as { label?: string }).label === "Filler");
+    expect(filler).toBeDefined();
+    expect((filler!.data as { capacity?: number }).capacity).toBe(3);
+  });
+
   it("Bottling line preset runs end-to-end and produces completed parts", () => {
     const p = getPreset("bottling-line");
     expect(p).toBeDefined();
