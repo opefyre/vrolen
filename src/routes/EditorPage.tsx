@@ -64,6 +64,7 @@ import { Accordion, AccordionStatus } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NumberField } from "@/components/ui/number-field";
 import {
   Sheet,
   SheetContent,
@@ -1439,31 +1440,19 @@ function EditorCanvas() {
                   updateSelectedNodeData({ cycleDistribution: d });
                 }}
               />
-              <div className="flex flex-col gap-1">
-                <label
-                  htmlFor="inspector-defect"
-                  className="text-muted-foreground text-xs font-medium"
-                >
-                  Defect rate
-                </label>
-                <Input
-                  id="inspector-defect"
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={Number((selectedNode.data as { defectRate?: unknown }).defectRate ?? 0)}
-                  onChange={(e) => {
-                    const n = Number(e.target.value);
-                    if (Number.isFinite(n) && n >= 0 && n <= 1)
-                      updateSelectedNodeData({ defectRate: n });
-                  }}
-                  className="font-mono tabular-nums"
-                />
-                <p className="text-muted-foreground text-[11px]">
-                  Probability that a finished part is defective (0–1).
-                </p>
-              </div>
+              <NumberField
+                id="inspector-defect"
+                label="Defect rate"
+                value={Number((selectedNode.data as { defectRate?: unknown }).defectRate ?? 0)}
+                min={0}
+                max={1}
+                step={0.01}
+                helperText="Probability that a finished part is defective (0–1)."
+                inputClassName="font-mono tabular-nums w-32"
+                onChange={(n) => {
+                  updateSelectedNodeData({ defectRate: n });
+                }}
+              />
             </CardContent>
             {/* VROL-633 — advanced settings collapsed by default. Power users
                 expand once; the toggle's open/closed state persists per
@@ -1578,36 +1567,19 @@ function EditorCanvas() {
                   </p>
                 </div>
                 {(selectedNode.data as { reworkTargetNodeId?: string }).reworkTargetNodeId ? (
-                  <div className="flex flex-col gap-1">
-                    <label
-                      htmlFor="inspector-rework-pass-limit"
-                      className="text-muted-foreground text-xs font-medium"
-                    >
-                      Max rework passes
-                    </label>
-                    <input
-                      id="inspector-rework-pass-limit"
-                      type="number"
-                      min={1}
-                      max={10}
-                      step={1}
-                      value={
-                        (selectedNode.data as { reworkPassLimit?: number }).reworkPassLimit ?? 3
-                      }
-                      onChange={(e) => {
-                        const raw = Number(e.target.value);
-                        if (!Number.isFinite(raw)) return;
-                        const clamped = Math.max(1, Math.min(10, Math.floor(raw)));
-                        updateSelectedNodeData({
-                          reworkPassLimit: clamped === 3 ? undefined : clamped,
-                        });
-                      }}
-                      className="border-input bg-background w-24 rounded-md border px-2 py-1.5 text-sm"
-                    />
-                    <p className="text-muted-foreground text-[11px]">
-                      After this many passes, defects scrap. Default 3.
-                    </p>
-                  </div>
+                  <NumberField
+                    id="inspector-rework-pass-limit"
+                    label="Max rework passes"
+                    value={(selectedNode.data as { reworkPassLimit?: number }).reworkPassLimit ?? 3}
+                    min={1}
+                    max={10}
+                    step={1}
+                    helperText="After this many passes, defects scrap. Default 3."
+                    onChange={(n) => {
+                      const v = Math.floor(n);
+                      updateSelectedNodeData({ reworkPassLimit: v === 3 ? undefined : v });
+                    }}
+                  />
                 ) : null}
                 <p className="text-muted-foreground text-[11px]">
                   Position: {Math.round(selectedNode.position.x)} ,{" "}
@@ -2074,25 +2046,16 @@ function EditorCanvas() {
                     className="font-mono tabular-nums"
                   />
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="rs-warmup" className="text-muted-foreground text-xs font-medium">
-                    Warm-up (ms)
-                  </label>
-                  <Input
-                    id="rs-warmup"
-                    type="number"
-                    min={0}
-                    step={1000}
-                    value={settings.warmupMs}
-                    onChange={(e) => {
-                      const n = Number(e.target.value);
-                      if (Number.isFinite(n) && n >= 0) {
-                        setSettings((s) => ({ ...s, warmupMs: Math.floor(n) }));
-                      }
-                    }}
-                    className="font-mono tabular-nums"
-                  />
-                </div>
+                <NumberField
+                  id="rs-warmup"
+                  label="Warm-up (ms)"
+                  value={settings.warmupMs}
+                  min={0}
+                  step={1000}
+                  onChange={(n) => {
+                    setSettings((s) => ({ ...s, warmupMs: Math.floor(n) }));
+                  }}
+                />
                 <div className="flex flex-col gap-1">
                   <label htmlFor="rs-seed" className="text-muted-foreground text-xs font-medium">
                     Seed
@@ -2111,27 +2074,18 @@ function EditorCanvas() {
                     className="font-mono tabular-nums"
                   />
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="rs-buf" className="text-muted-foreground text-xs font-medium">
-                    Buffer capacity
-                  </label>
-                  <Input
-                    id="rs-buf"
-                    type="number"
-                    min={1}
-                    value={settings.interStationBufferCapacity}
-                    onChange={(e) => {
-                      const n = Number(e.target.value);
-                      if (Number.isFinite(n) && n > 0) {
-                        setSettings((s) => ({
-                          ...s,
-                          interStationBufferCapacity: Math.floor(n),
-                        }));
-                      }
-                    }}
-                    className="font-mono tabular-nums"
-                  />
-                </div>
+                <NumberField
+                  id="rs-buf"
+                  label="Buffer capacity"
+                  value={settings.interStationBufferCapacity}
+                  min={1}
+                  onChange={(n) => {
+                    setSettings((s) => ({
+                      ...s,
+                      interStationBufferCapacity: Math.floor(n),
+                    }));
+                  }}
+                />
               </div>
               <div className="border-border space-y-1 rounded-md border border-dashed p-2">
                 <label className="flex items-center gap-2 text-sm font-medium">
