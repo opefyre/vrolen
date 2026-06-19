@@ -11,6 +11,20 @@ export default defineConfig({
       "@": resolve(import.meta.dirname, "./src"),
     },
   },
+  // VROL-657 — manual chunks for the heavy + reusable deps. Splitting
+  // these out lets the browser parallelize their download + cache them
+  // across visits independently of app code that changes often.
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ["react", "react-dom", "react-dom/client"],
+          xyflow: ["@xyflow/react"],
+          lucide: ["lucide-react"],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     strictPort: false,
