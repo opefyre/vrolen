@@ -1,0 +1,90 @@
+import type { Edge, Node } from "@xyflow/react";
+import { describe, expect, it } from "vitest";
+
+import { DEFAULT_RUN_SETTINGS } from "@/routes/editor-run-settings";
+
+import {
+  canRedo,
+  canUndo,
+  EMPTY_HISTORY,
+  MAX_HISTORY,
+  recordChange,
+  redo,
+  undo,
+  type EditorSnapshot,
+} from "./editor-history";
+
+function snap(label: string, n = 0): EditorSnapshot {
+  return {
+    nodes: [{ id: label, position: { x: n, y: 0 }, data: { label } } as Node],
+    edges: [] as Edge[],
+    settings: DEFAULT_RUN_SETTINGS,
+  };
+}
+
+describe("editor-history (VROL-309)", () => {
+  it("recordChange pushes previous state to past[] + clears future[]", () => {
+    let h = EMPTY_HISTORY;
+    h = recordChange(h, snap("a"));
+    h = recordChange(h, snap("b"));
+    expect(h.past).toHaveLength(2);
+    expect(h.past[0]?.nodes[0]?.id).toBe("a");
+    expect(h.past[1]?.nodes[0]?.id).toBe("b");
+    expect(h.future).toEqual([]);
+  });
+
+  it("undo applies the newest past entry + moves current to future[]", () => {
+    let h = EMPTY_HISTORY;
+    h = recordChange(h, snap("a"));
+    h = recordChange(h, snap("b"));
+    const live = snap("live");
+    const result = undo(h, live);
+    expect(result.applied?.nodes[0]?.id).toBe("b");
+    expect(result.history.past).toHaveLength(1);
+    expect(result.history.future).toHaveLength(1);
+    expect(result.history.future[0]?.nodes[0]?.id).toBe("live");
+  });
+
+  it("undo returns null when there is nothing to undo", () => {
+    const result = undo(EMPTY_HISTORY, snap("live"));
+    expect(result.applied).toBeNull();
+    expect(result.history.past).toEqual([]);
+  });
+
+  it("redo applies the newest future entry + moves current to past[]", () => {
+    let h = EMPTY_HISTORY;
+    h = recordChange(h, snap("a"));
+    const u = undo(h, snap("live"));
+    h = u.history;
+    const result = redo(h, snap("after-undo"));
+    expect(result.applied?.nodes[0]?.id).toBe("live");
+    expect(result.history.future).toHaveLength(0);
+    expect(result.history.past).toHaveLength(1);
+  });
+
+  it("recordChange after undo clears future[] (redo no longer available)", () => {
+    let h = EMPTY_HISTORY;
+    h = recordChange(h, snap("a"));
+    h = undo(h, snap("live")).history;
+    expect(canRedo(h)).toBe(true);
+    h = recordChange(h, snap("after-fresh-change"));
+    expect(canRedo(h)).toBe(false);
+  });
+
+  it("past[] caps at MAX_HISTORY, dropping oldest", () => {
+    let h = EMPTY_HISTORY;
+    for (let i = 0; i < MAX_HISTORY + 5; i++) h = recordChange(h, snap(`s${String(i)}`));
+    expect(h.past).toHaveLength(MAX_HISTORY);
+    // Oldest dropped: first entry should be the 6th one we pushed (s5).
+    expect(h.past[0]?.nodes[0]?.id).toBe("s5");
+    expect(h.past[h.past.length - 1]?.nodes[0]?.id).toBe(`s${String(MAX_HISTORY + 4)}`);
+  });
+
+  it("canUndo / canRedo reflect stack contents", () => {
+    expect(canUndo(EMPTY_HISTORY)).toBe(false);
+    expect(canRedo(EMPTY_HISTORY)).toBe(false);
+    const after = recordChange(EMPTY_HISTORY, snap("a"));
+    expect(canUndo(after)).toBe(true);
+    expect(canRedo(after)).toBe(false);
+  });
+});

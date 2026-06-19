@@ -45,6 +45,8 @@ import {
   AlertCircle,
   AlertTriangle,
   Factory,
+  Redo2,
+  Undo2,
   FolderOpen,
   HelpCircle,
   Hourglass,
@@ -113,6 +115,16 @@ import { consumePendingPreset, PRESETS, type Preset } from "@/lib/presets";
 import { runScenario, type ScenarioRunOutcome } from "@/lib/run-scenario";
 import { validateScenario, type ValidationIssue } from "@/lib/validate-scenario";
 import { ValidationPanel } from "@/components/editor/validation-panel";
+import {
+  canRedo,
+  canUndo,
+  EMPTY_HISTORY,
+  recordChange,
+  redo as historyRedo,
+  undo as historyUndo,
+  type EditorHistory,
+  type EditorSnapshot,
+} from "@/lib/editor-history";
 import {
   deleteScenario,
   listScenarios,
@@ -530,6 +542,44 @@ function EditorCanvas() {
   const [scenariosOpen, setScenariosOpen] = useState<boolean>(false);
   // VROL-304 — validation panel popover state.
   const [validationOpen, setValidationOpen] = useState<boolean>(false);
+  // VROL-309 — undo/redo. The commit is debounced 400ms so rapid changes
+  // (typing in a field) collapse into a single history entry.
+  // lastCommittedRef caches the last snapshot pushed to history; the
+  // debounce checks this to skip no-ops + cooperate with undo/redo
+  // applying snapshots back to live state.
+  const [history, setHistory] = useState<EditorHistory>(EMPTY_HISTORY);
+  const lastCommittedRef = useRef<EditorSnapshot>({ nodes, edges, settings });
+  const debouncedCommitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (debouncedCommitRef.current !== null) clearTimeout(debouncedCommitRef.current);
+    debouncedCommitRef.current = setTimeout(() => {
+      debouncedCommitRef.current = null;
+      const last = lastCommittedRef.current;
+      if (last.nodes === nodes && last.edges === edges && last.settings === settings) return;
+      setHistory((h) => recordChange(h, last));
+      lastCommittedRef.current = { nodes, edges, settings };
+    }, 400);
+  }, [nodes, edges, settings]);
+  const handleUndo = useCallback(() => {
+    const current: EditorSnapshot = { nodes, edges, settings };
+    const result = historyUndo(history, current);
+    if (!result.applied) return;
+    setHistory(result.history);
+    setNodes([...result.applied.nodes]);
+    setEdges([...result.applied.edges]);
+    setSettings(result.applied.settings);
+    lastCommittedRef.current = result.applied;
+  }, [history, nodes, edges, settings, setNodes, setEdges]);
+  const handleRedo = useCallback(() => {
+    const current: EditorSnapshot = { nodes, edges, settings };
+    const result = historyRedo(history, current);
+    if (!result.applied) return;
+    setHistory(result.history);
+    setNodes([...result.applied.nodes]);
+    setEdges([...result.applied.edges]);
+    setSettings(result.applied.settings);
+    lastCommittedRef.current = result.applied;
+  }, [history, nodes, edges, settings, setNodes, setEdges]);
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>(() => listScenarios());
   const [saveNameDraft, setSaveNameDraft] = useState<string>("");
   const [activeScenarioName, setActiveScenarioName] = useState<string | null>(null);
@@ -989,6 +1039,32 @@ function EditorCanvas() {
     },
     [nodes, edges, settings, selectedNodeId],
   );
+
+  // VROL-309 — keyboard shortcuts. Cmd/Ctrl+Z = undo, +Shift = redo.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod || e.key.toLowerCase() !== "z") return;
+      // Skip if the user is typing in an input / textarea / contenteditable.
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      if (e.shiftKey) handleRedo();
+      else handleUndo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [handleUndo, handleRedo]);
 
   // VROL-304 — click a validation issue → pan + zoom the canvas to its node.
   const focusValidationIssue = useCallback(
@@ -1463,6 +1539,33 @@ function EditorCanvas() {
               </Button>
             </div>
           ) : null}
+          {/* VROL-309 — undo / redo. Always visible; disabled when stack is empty. */}
+          <div className="flex items-center">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleUndo}
+              disabled={!canUndo(history)}
+              title="Undo (⌘Z)"
+              aria-label="Undo"
+              className="rounded-r-none border-r-0 px-2"
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleRedo}
+              disabled={!canRedo(history)}
+              title="Redo (⇧⌘Z)"
+              aria-label="Redo"
+              className="rounded-l-none px-2"
+            >
+              <Redo2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
           {/* VROL-304 — validation badge: opens an inline popover with all issues. */}
           {validation.errors.length + validation.warnings.length > 0 ? (
             <div className="relative">
