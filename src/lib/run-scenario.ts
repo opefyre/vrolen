@@ -139,6 +139,14 @@ export function runScenario(
       ...(workersCfg ? { workers: workersCfg } : {}),
       ...(maintenanceCfg ? { maintenance: maintenanceCfg } : {}),
       ...(productsCfg ? { products: productsCfg } : {}),
+      ...(settings.source.enabled
+        ? {
+            source: {
+              interArrivalMs: constant(settings.source.intervalMs),
+              ...(settings.source.batchSize > 1 ? { batchSize: settings.source.batchSize } : {}),
+            },
+          }
+        : {}),
     });
 
     return {

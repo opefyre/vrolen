@@ -80,6 +80,15 @@ export interface WorkersSettings {
   skills?: string[];
 }
 
+export interface SourceSettings {
+  /** VROL-651 — when on, the engine source is finite-rate (VROL-648). */
+  enabled: boolean;
+  /** Constant inter-arrival time in ms. UI authors as minutes. */
+  intervalMs: number;
+  /** Parts pushed per arrival event. Default 1. */
+  batchSize: number;
+}
+
 export interface RunSettings {
   horizonMs: number;
   warmupMs: number;
@@ -89,6 +98,7 @@ export interface RunSettings {
   breakdowns: BreakdownsSettings;
   workers: WorkersSettings;
   products: ProductsSettings;
+  source: SourceSettings;
   /**
    * Persist the canvas's "Animate flow on edges" toggle across reloads
    * (VROL-607). UI-only — engine ignores this.
@@ -136,6 +146,11 @@ export const DEFAULT_RUN_SETTINGS: RunSettings = {
   },
   animateFlow: false,
   samplerIntervalMs: 0,
+  source: {
+    enabled: false,
+    intervalMs: 60_000,
+    batchSize: 1,
+  },
 };
 
 export function loadRunSettings(): RunSettings {
@@ -214,6 +229,25 @@ export function mergeWithDefaults(parsed: Partial<RunSettings>): RunSettings {
       typeof parsed.samplerIntervalMs === "number" && parsed.samplerIntervalMs >= 0
         ? Math.floor(parsed.samplerIntervalMs)
         : DEFAULT_RUN_SETTINGS.samplerIntervalMs,
+    source: sanitizeSource(parsed.source),
+  };
+}
+
+function sanitizeSource(raw: unknown): SourceSettings {
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_RUN_SETTINGS.source };
+  const r = raw as Partial<SourceSettings>;
+  const intervalMs =
+    typeof r.intervalMs === "number" && Number.isFinite(r.intervalMs) && r.intervalMs > 0
+      ? Math.floor(r.intervalMs)
+      : DEFAULT_RUN_SETTINGS.source.intervalMs;
+  const batchSize =
+    typeof r.batchSize === "number" && Number.isFinite(r.batchSize) && r.batchSize >= 1
+      ? Math.floor(r.batchSize)
+      : DEFAULT_RUN_SETTINGS.source.batchSize;
+  return {
+    enabled: typeof r.enabled === "boolean" ? r.enabled : DEFAULT_RUN_SETTINGS.source.enabled,
+    intervalMs,
+    batchSize,
   };
 }
 

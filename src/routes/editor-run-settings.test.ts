@@ -67,6 +67,24 @@ describe("editor-run-settings — mergeWithDefaults", () => {
     );
   });
 
+  it("merges source defaults when missing + sanitizes when present (VROL-651)", () => {
+    // Pre-VROL-651 payload (no source field) hydrates to defaults.
+    const m1 = mergeWithDefaults({ horizonMs: 60_000 });
+    expect(m1.source).toEqual({ enabled: false, intervalMs: 60_000, batchSize: 1 });
+    // Present but partial / malformed values clamp safely.
+    const m2 = mergeWithDefaults({
+      source: { enabled: true, intervalMs: -100, batchSize: 0 } as never,
+    });
+    expect(m2.source.enabled).toBe(true);
+    expect(m2.source.intervalMs).toBe(60_000); // negative → default
+    expect(m2.source.batchSize).toBe(1); // 0 → default
+    // Well-formed payload round-trips intact.
+    const m3 = mergeWithDefaults({
+      source: { enabled: true, intervalMs: 30_000, batchSize: 5 },
+    });
+    expect(m3.source).toEqual({ enabled: true, intervalMs: 30_000, batchSize: 5 });
+  });
+
   it("merges breakdowns independently", () => {
     const merged = mergeWithDefaults({
       breakdowns: { enabled: true, mtbfMs: 8_000, mttrMs: 1_500 },

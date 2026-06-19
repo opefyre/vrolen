@@ -45,6 +45,7 @@ import {
   Factory,
   FolderOpen,
   HelpCircle,
+  Hourglass,
   Loader2,
   MoreHorizontal,
   Package,
@@ -520,7 +521,8 @@ function EditorCanvas() {
     products: boolean;
     workers: boolean;
     breakdowns: boolean;
-  }>({ materials: false, products: false, workers: false, breakdowns: false });
+    source: boolean;
+  }>({ materials: false, products: false, workers: false, breakdowns: false, source: false });
   const toggleDrawerSection = useCallback((key: keyof typeof drawerSections) => {
     setDrawerSections((s) => ({ ...s, [key]: !s[key] }));
   }, []);
@@ -817,6 +819,16 @@ function EditorCanvas() {
           ...(productsCfg ? { products: productsCfg } : {}),
           ...(settings.samplerIntervalMs > 0
             ? { sampler: { intervalMs: settings.samplerIntervalMs } }
+            : {}),
+          ...(settings.source.enabled
+            ? {
+                source: {
+                  interArrivalMs: constant(settings.source.intervalMs),
+                  ...(settings.source.batchSize > 1
+                    ? { batchSize: settings.source.batchSize }
+                    : {}),
+                },
+              }
             : {}),
         });
         const wallMs = performance.now() - t0;
@@ -2124,6 +2136,88 @@ function EditorCanvas() {
                 ) : null}
               </div>
             </section>
+
+            {/* VROL-651 — finite-rate source generation */}
+            <Accordion
+              title="Source rate"
+              icon={<Hourglass className="h-4 w-4" />}
+              status={
+                <AccordionStatus tone={settings.source.enabled ? "on" : "off"}>
+                  {settings.source.enabled
+                    ? `On · every ${String(Math.round(settings.source.intervalMs / 60_000))}m`
+                    : "Off"}
+                </AccordionStatus>
+              }
+              expanded={drawerSections.source}
+              onToggle={() => {
+                toggleDrawerSection("source");
+              }}
+            >
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={settings.source.enabled}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    setSettings((s) => ({ ...s, source: { ...s.source, enabled } }));
+                  }}
+                  className="accent-sim-running h-4 w-4"
+                />
+                Throttle the source to a fixed inter-arrival rate
+              </label>
+              {settings.source.enabled ? (
+                <>
+                  <p className="text-muted-foreground text-xs">
+                    Models periodic part arrivals — pallets, batches, conveyor beats. When off, the
+                    source produces as fast as its cycle allows.
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <NumberField
+                      id="rs-src-interval"
+                      label="Inter-arrival (minutes)"
+                      value={Math.round(settings.source.intervalMs / 60_000)}
+                      min={1}
+                      step={1}
+                      onChange={(n) => {
+                        const minutes = Math.max(1, Math.floor(n));
+                        setSettings((s) => ({
+                          ...s,
+                          source: { ...s.source, intervalMs: minutes * 60_000 },
+                        }));
+                      }}
+                    />
+                    <NumberField
+                      id="rs-src-batch"
+                      label="Batch size"
+                      value={settings.source.batchSize}
+                      min={1}
+                      max={1000}
+                      step={1}
+                      helperText="Parts pushed per arrival event. Default 1."
+                      onChange={(n) => {
+                        const batchSize = Math.max(1, Math.floor(n));
+                        setSettings((s) => ({ ...s, source: { ...s.source, batchSize } }));
+                      }}
+                    />
+                  </div>
+                  <p className="text-muted-foreground text-[11px]">
+                    {`Fires ~${String(
+                      Math.floor(settings.horizonMs / Math.max(1, settings.source.intervalMs)) + 1,
+                    )} time${
+                      Math.floor(settings.horizonMs / Math.max(1, settings.source.intervalMs)) +
+                        1 ===
+                      1
+                        ? ""
+                        : "s"
+                    } during the horizon · ${String(
+                      (Math.floor(settings.horizonMs / Math.max(1, settings.source.intervalMs)) +
+                        1) *
+                        settings.source.batchSize,
+                    )} parts total.`}
+                  </p>
+                </>
+              ) : null}
+            </Accordion>
 
             <Accordion
               title="Materials"
