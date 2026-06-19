@@ -26,6 +26,7 @@ import { CycleExecutor } from "./cycle-execution";
 import type { Distribution } from "./distribution";
 import { meanOf } from "./distribution";
 import type { EngineEvent } from "./events";
+import type { ScheduledEvent } from "./scheduler";
 import type { MaterialId, StationId } from "./ids";
 import { newStationId } from "./ids";
 import { MaintenanceManager, type MaintenanceWindow } from "./maintenance";
@@ -629,7 +630,82 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
   };
 }
 
+/**
+ * VROL-148 — incremental simulation handle.
+ *
+ * createSimulation(opts) returns a stateful runner that callers can drive
+ * one event (step) or up to a sim-time (advanceUntil) at a time. The
+ * generator-based implementation shares ALL setup + main-loop code with
+ * runChain — runChain is now a thin "drain to completion" wrapper.
+ */
+export interface SimulationHandle {
+  readonly currentTimeMs: number;
+  readonly done: boolean;
+  /** Advance exactly one event. Returns the event processed, or null if done. */
+  step(): ScheduledEvent<EngineEvent> | null;
+  /**
+   * Advance until either the scheduler reaches simMs / horizon / empty.
+   * Returns the count of events processed.
+   */
+  advanceUntil(simMs: number): number;
+  /** Drain to the end (full-speed) and return the final ChainResult. */
+  finalize(): ChainResult;
+}
+
+export function createSimulation(opts: ChainOptions): SimulationHandle {
+  const gen = simulationStream(opts);
+  let currentTimeMs = 0;
+  let isDone = false;
+  let finalResult: ChainResult | null = null;
+  const advanceOne = (): ScheduledEvent<EngineEvent> | null => {
+    if (isDone) return null;
+    const r = gen.next();
+    if (r.done) {
+      isDone = true;
+      finalResult = r.value;
+      return null;
+    }
+    currentTimeMs = r.value.timeMs;
+    return r.value;
+  };
+  return {
+    get currentTimeMs() {
+      return currentTimeMs;
+    },
+    get done() {
+      return isDone;
+    },
+    step: () => advanceOne(),
+    advanceUntil: (simMs: number): number => {
+      let n = 0;
+      while (!isDone) {
+        const ev = advanceOne();
+        if (ev === null) break;
+        n += 1;
+        if (ev.timeMs >= simMs) break;
+      }
+      return n;
+    },
+    finalize: (): ChainResult => {
+      while (!isDone) advanceOne();
+      if (finalResult === null) {
+        throw new Error("simulation drained but no final result was produced");
+      }
+      return finalResult;
+    },
+  };
+}
+
 export function runChain(opts: ChainOptions): ChainResult {
+  // VROL-148 — runChain is now a thin "drain to completion" wrapper around
+  // the same generator that powers createSimulation. Full-speed mode = drain
+  // immediately; live/step modes drive the generator from outside.
+  return createSimulation(opts).finalize();
+}
+
+function* simulationStream(
+  opts: ChainOptions,
+): Generator<ScheduledEvent<EngineEvent>, ChainResult, void> {
   const topology = buildTopology(opts);
   const n = topology.nodeIds.length;
 
@@ -1065,116 +1141,125 @@ export function runChain(opts: ChainOptions): ChainResult {
     // matching the engine's "discrete event clock" semantics.
     if (samplerIntervalMs > 0) drainSamplesUpTo(peeked.timeMs - 1);
     const ev = scheduler.popMin();
-    if (ev.payload.kind === "material-replenishment") {
-      if (!materialPool) continue;
-      let addAmount = ev.payload.amount;
-      if (ev.payload.maxInventory !== undefined) {
-        const headroom = ev.payload.maxInventory - materialPool.quantity(ev.payload.materialId);
-        addAmount = Math.max(0, Math.min(addAmount, headroom));
+    // VROL-148 — `dispatch:` labels the per-event handler. Replaces the old
+    // `continue` short-circuits with `break dispatch` so the generator
+    // can `yield ev` at the bottom of every iteration (step mode requires
+    // a pause point after every event, not just cycle-complete).
+    dispatch: {
+      if (ev.payload.kind === "material-replenishment") {
+        if (!materialPool) break dispatch;
+        let addAmount = ev.payload.amount;
+        if (ev.payload.maxInventory !== undefined) {
+          const headroom = ev.payload.maxInventory - materialPool.quantity(ev.payload.materialId);
+          addAmount = Math.max(0, Math.min(addAmount, headroom));
+        }
+        if (addAmount > 0) materialPool.replenish(ev.payload.materialId, addAmount);
+        replenishmentsFired += 1;
+        const affected = executorsByMaterial.get(ev.payload.materialId);
+        if (affected) {
+          for (const ex of affected) ex.onUpstreamAvailable(ev.timeMs);
+        }
+        break dispatch;
       }
-      if (addAmount > 0) materialPool.replenish(ev.payload.materialId, addAmount);
-      replenishmentsFired += 1;
-      const affected = executorsByMaterial.get(ev.payload.materialId);
-      if (affected) {
-        for (const ex of affected) ex.onUpstreamAvailable(ev.timeMs);
+      if (ev.payload.kind === "source-arrival") {
+        // VROL-648 — push `batchSize` parts, nudge the source station, then
+        // sample + schedule the next arrival if there's still horizon left.
+        for (let b = 0; b < ev.payload.batchSize; b++) pushPart(ev.timeMs);
+        sourceArrivalsFired += 1;
+        executors[topology.sourceIdx]?.onUpstreamAvailable(ev.timeMs);
+        if (sourceInterArrival) {
+          const dtMs = sample(sourceInterArrival, opts.prng, { min: 0 });
+          const nextT = ev.timeMs + dtMs;
+          if (nextT <= opts.horizonMs) {
+            scheduler.schedule(nextT, { kind: "source-arrival", batchSize: sourceBatchSize });
+          }
+        }
+        break dispatch;
       }
-      continue;
-    }
-    if (ev.payload.kind === "source-arrival") {
-      // VROL-648 — push `batchSize` parts, nudge the source station, then
-      // sample + schedule the next arrival if there's still horizon left.
-      for (let b = 0; b < ev.payload.batchSize; b++) pushPart(ev.timeMs);
-      sourceArrivalsFired += 1;
-      executors[topology.sourceIdx]?.onUpstreamAvailable(ev.timeMs);
-      if (sourceInterArrival) {
-        const dtMs = sample(sourceInterArrival, opts.prng, { min: 0 });
-        const nextT = ev.timeMs + dtMs;
-        if (nextT <= opts.horizonMs) {
-          scheduler.schedule(nextT, { kind: "source-arrival", batchSize: sourceBatchSize });
+      if (ev.payload.kind === "breakdown-start") {
+        const bidx = stationIds.indexOf(ev.payload.stationId);
+        const manager = breakdownManagers?.[bidx];
+        const executor = executors[bidx];
+        if (manager) {
+          manager.handleBreakdown(ev.timeMs);
+          // VROL-125 — pause in-flight parts so the resume on repair can pick up
+          // where they left off, instead of losing them on the Down-state scrap path.
+          if (executor) executor.handleBreakdown(ev.timeMs);
+          if (breakdownCounts) breakdownCounts[bidx] = (breakdownCounts[bidx] ?? 0) + 1;
+        }
+        break dispatch;
+      }
+      if (ev.payload.kind === "repair-complete") {
+        const ridx = stationIds.indexOf(ev.payload.stationId);
+        const manager = breakdownManagers?.[ridx];
+        const executor = executors[ridx];
+        if (manager) manager.handleRepair(ev.timeMs);
+        if (executor) {
+          executor.handleRepair(ev.timeMs);
+          executor.attemptStart(ev.timeMs);
+        }
+        break dispatch;
+      }
+      if (ev.payload.kind === "maintenance-start") {
+        const midx = stationIds.indexOf(ev.payload.stationId);
+        const mgr = maintenanceManagers[midx];
+        const executor = executors[midx];
+        if (mgr) mgr.handleMaintenanceStart(ev.timeMs);
+        // Reuse the part-resume primitive — Maintenance and Down both want to
+        // pause in-flight parts so they can resume after the window ends.
+        if (executor) executor.handleBreakdown(ev.timeMs);
+        break dispatch;
+      }
+      if (ev.payload.kind === "break-end") {
+        // VROL-618 — wake every executor; whichever ones were Starved on
+        // "no-skill-available" will retry the worker pool, which now sees the
+        // break window has closed.
+        for (const ex of executors) ex.attemptStart(ev.timeMs);
+        break dispatch;
+      }
+      if (ev.payload.kind === "maintenance-end") {
+        const eidx = stationIds.indexOf(ev.payload.stationId);
+        const mgr = maintenanceManagers[eidx];
+        const executor = executors[eidx];
+        if (mgr) mgr.handleMaintenanceEnd(ev.timeMs);
+        if (executor) {
+          executor.handleRepair(ev.timeMs);
+          executor.attemptStart(ev.timeMs);
+        }
+        break dispatch;
+      }
+      if (ev.payload.kind !== "cycle-complete") break dispatch;
+      const idx = stationIds.indexOf(ev.payload.stationId);
+      if (idx === -1) break dispatch;
+      const executor = executors[idx];
+      if (!executor) break dispatch;
+
+      executor.handleCycleComplete(ev.timeMs, ev.payload.partIndex);
+
+      // After this station pulled from each of its upstream buffers (inside
+      // attemptStart), each of those upstream stations' downstream just gained
+      // space — notify each.
+      for (const upIdx of topology.incoming[idx] ?? []) {
+        executors[upIdx]?.onDownstreamCleared(ev.timeMs);
+      }
+
+      // VROL-655 — single dispatcher; sourceMode skips refill internally.
+      if (idx === topology.sourceIdx) onSourceTickMaybeRefill(ev.timeMs);
+
+      // When workers are configured, releasing one inside handleCycleComplete
+      // doesn't notify other stations that have been Starved on no-skill. Nudge
+      // every executor — attemptStart is a no-op if the station is already
+      // Running / BlockedOut / Down. Without this pass, a 1-worker N-station
+      // chain "marches" once down the line and then deadlocks.
+      if (trackingPool) {
+        for (let s = 0; s < executors.length; s++) {
+          if (s !== idx) executors[s]?.attemptStart(ev.timeMs);
         }
       }
-      continue;
     }
-    if (ev.payload.kind === "breakdown-start") {
-      const idx = stationIds.indexOf(ev.payload.stationId);
-      const manager = breakdownManagers?.[idx];
-      const executor = executors[idx];
-      if (manager) {
-        manager.handleBreakdown(ev.timeMs);
-        // VROL-125 — pause in-flight parts so the resume on repair can pick up
-        // where they left off, instead of losing them on the Down-state scrap path.
-        if (executor) executor.handleBreakdown(ev.timeMs);
-        if (breakdownCounts) breakdownCounts[idx] = (breakdownCounts[idx] ?? 0) + 1;
-      }
-      continue;
-    }
-    if (ev.payload.kind === "repair-complete") {
-      const idx = stationIds.indexOf(ev.payload.stationId);
-      const manager = breakdownManagers?.[idx];
-      const executor = executors[idx];
-      if (manager) manager.handleRepair(ev.timeMs);
-      if (executor) {
-        executor.handleRepair(ev.timeMs);
-        executor.attemptStart(ev.timeMs);
-      }
-      continue;
-    }
-    if (ev.payload.kind === "maintenance-start") {
-      const idx = stationIds.indexOf(ev.payload.stationId);
-      const mgr = maintenanceManagers[idx];
-      const executor = executors[idx];
-      if (mgr) mgr.handleMaintenanceStart(ev.timeMs);
-      // Reuse the part-resume primitive — Maintenance and Down both want to
-      // pause in-flight parts so they can resume after the window ends.
-      if (executor) executor.handleBreakdown(ev.timeMs);
-      continue;
-    }
-    if (ev.payload.kind === "break-end") {
-      // VROL-618 — wake every executor; whichever ones were Starved on
-      // "no-skill-available" will retry the worker pool, which now sees the
-      // break window has closed.
-      for (const ex of executors) ex.attemptStart(ev.timeMs);
-      continue;
-    }
-    if (ev.payload.kind === "maintenance-end") {
-      const idx = stationIds.indexOf(ev.payload.stationId);
-      const mgr = maintenanceManagers[idx];
-      const executor = executors[idx];
-      if (mgr) mgr.handleMaintenanceEnd(ev.timeMs);
-      if (executor) {
-        executor.handleRepair(ev.timeMs);
-        executor.attemptStart(ev.timeMs);
-      }
-      continue;
-    }
-    if (ev.payload.kind !== "cycle-complete") continue;
-    const idx = stationIds.indexOf(ev.payload.stationId);
-    if (idx === -1) continue;
-    const executor = executors[idx];
-    if (!executor) continue;
-
-    executor.handleCycleComplete(ev.timeMs, ev.payload.partIndex);
-
-    // After this station pulled from each of its upstream buffers (inside
-    // attemptStart), each of those upstream stations' downstream just gained
-    // space — notify each.
-    for (const upIdx of topology.incoming[idx] ?? []) {
-      executors[upIdx]?.onDownstreamCleared(ev.timeMs);
-    }
-
-    // VROL-655 — single dispatcher; sourceMode skips refill internally.
-    if (idx === topology.sourceIdx) onSourceTickMaybeRefill(ev.timeMs);
-
-    // When workers are configured, releasing one inside handleCycleComplete
-    // doesn't notify other stations that have been Starved on no-skill. Nudge
-    // every executor — attemptStart is a no-op if the station is already
-    // Running / BlockedOut / Down. Without this pass, a 1-worker N-station
-    // chain "marches" once down the line and then deadlocks.
-    if (trackingPool) {
-      for (let s = 0; s < executors.length; s++) {
-        if (s !== idx) executors[s]?.attemptStart(ev.timeMs);
-      }
-    }
+    // VROL-148 — pause point for step / live consumers. runChain consumer
+    // ignores the yielded value and drives to completion.
+    yield ev;
   }
 
   const endTimeMs = opts.horizonMs;
