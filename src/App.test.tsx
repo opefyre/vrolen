@@ -3,23 +3,19 @@ import { describe, expect, it } from "vitest";
 import App from "./App";
 
 describe("App", () => {
-  it("renders the Hello Vrolen heading", () => {
+  it("renders the LandingPage hero at root", () => {
     render(<App />);
-    expect(screen.getByRole("heading", { name: /hello vrolen/i })).toBeInTheDocument();
+    expect(screen.getByText(/Model your line, find the bottleneck/i)).toBeInTheDocument();
   });
 
-  it("renders the Phase 0 subtitle", () => {
+  it("surfaces the Open the editor CTA", () => {
     render(<App />);
-    expect(screen.getByText(/phase 0 foundation/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open the editor/i })).toBeInTheDocument();
   });
 
-  it("mounts the shadcn Button (dialog trigger)", () => {
+  it("renders the bottom-of-page footer links", () => {
     render(<App />);
-    expect(screen.getByRole("button", { name: /open dialog/i })).toBeInTheDocument();
-  });
-
-  it("mounts the shadcn Input with placeholder", () => {
-    render(<App />);
-    expect(screen.getByPlaceholderText(/tailwind \+ shadcn smoke test/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "/editor" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "/run" })).toBeInTheDocument();
   });
 });
