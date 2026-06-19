@@ -166,6 +166,124 @@ describe("runChain — materials (VROL-575)", () => {
     expect(result.materialFinal).toBeUndefined();
     expect(result.replenishmentsFired).toBeUndefined();
   });
+
+  it("recurring replenishment fires at every interval up to the horizon (VROL-642)", () => {
+    // intervalMs=2000, startMs=0, horizonMs=10000 → fires at t=0, 2000, 4000,
+    // 6000, 8000, 10000 (6 events). Pool starts at 0, grows by 5 each event,
+    // but the source station is depleting it — so we just assert the event
+    // counter and that throughput keeps moving instead of dying after start.
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(123),
+      materials: {
+        initialInventory: [[BOTTLES, 0]],
+        stationRecipes: [
+          {
+            stationIndex: 1,
+            requirements: [{ materialId: BOTTLES, qtyPerPart: 1 }],
+          },
+        ],
+        recurringReplenishments: [{ materialId: BOTTLES, amount: 5, intervalMs: 2000 }],
+      },
+    });
+    expect(result.replenishmentsFired).toBe(6);
+    expect(result.completed).toBeGreaterThan(0);
+  });
+
+  it("combines one-shot + recurring on the same materialId (VROL-642)", () => {
+    // 1 one-shot (atMs=500) + 6 recurring (t=0, 2000, 4000, 6000, 8000, 10000)
+    // → 7 events total. Both share the same pool.
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(7),
+      materials: {
+        initialInventory: [[BOTTLES, 0]],
+        stationRecipes: [
+          {
+            stationIndex: 1,
+            requirements: [{ materialId: BOTTLES, qtyPerPart: 1 }],
+          },
+        ],
+        replenishments: [{ materialId: BOTTLES, amount: 10, atMs: 500 }],
+        recurringReplenishments: [{ materialId: BOTTLES, amount: 5, intervalMs: 2000 }],
+      },
+    });
+    expect(result.replenishmentsFired).toBe(7);
+  });
+
+  it("maxInventory clamps so the pool never exceeds the cap (VROL-642)", () => {
+    // amount=100 per fire, maxInventory=10. After first event, pool = 10.
+    // Subsequent events fire but each is clamped to 0 (no headroom) until
+    // consumption frees space. Without consumption, the pool stays at 10.
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(9),
+      materials: {
+        initialInventory: [[BOTTLES, 0]],
+        // No station consumes BOTTLES → no depletion. Pool can only grow,
+        // and the cap prevents it from going over 10.
+        stationRecipes: [],
+        recurringReplenishments: [
+          { materialId: BOTTLES, amount: 100, intervalMs: 1000, maxInventory: 10 },
+        ],
+      },
+    });
+    const finalBottles = new Map(result.materialFinal ?? []).get(BOTTLES) ?? 0;
+    expect(finalBottles).toBe(10);
+    // 11 events fired (t=0..10000 inclusive) — counter unaffected by clamping.
+    expect(result.replenishmentsFired).toBe(11);
+  });
+
+  it("rejects invalid recurring config at init (VROL-642)", () => {
+    const base = {
+      stationCycleTimes: [constant(100), constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(),
+    };
+    expect(() =>
+      runChain({
+        ...base,
+        materials: {
+          initialInventory: [[BOTTLES, 10]],
+          stationRecipes: [],
+          recurringReplenishments: [{ materialId: BOTTLES, amount: 5, intervalMs: 0 }],
+        },
+      }),
+    ).toThrow(/intervalMs must be > 0/);
+    expect(() =>
+      runChain({
+        ...base,
+        materials: {
+          initialInventory: [[BOTTLES, 10]],
+          stationRecipes: [],
+          recurringReplenishments: [{ materialId: BOTTLES, amount: -1, intervalMs: 1000 }],
+        },
+      }),
+    ).toThrow(/amount must be >= 0/);
+    expect(() =>
+      runChain({
+        ...base,
+        materials: {
+          initialInventory: [[BOTTLES, 10]],
+          stationRecipes: [],
+          recurringReplenishments: [
+            { materialId: BOTTLES, amount: 5, intervalMs: 1000, startMs: -1 },
+          ],
+        },
+      }),
+    ).toThrow(/startMs must be >= 0/);
+  });
 });
 
 describe("runChain — breakdowns (VROL-576)", () => {

@@ -285,6 +285,26 @@ export interface ChainMaterialConfig {
     readonly amount: number;
     readonly atMs: number;
   }>;
+  /**
+   * Recurring / finite-rate replenishments (VROL-642). Each entry is expanded
+   * at init into a stream of "material-replenishment" events at startMs,
+   * startMs + intervalMs, startMs + 2·intervalMs, ... up to (and including)
+   * horizonMs. After expansion, recurring events are indistinguishable from
+   * one-shot events in the scheduler — they just carry an optional
+   * maxInventory cap that the handler honors.
+   *
+   * intervalMs must be > 0; amount must be >= 0; startMs >= 0 (default 0).
+   * maxInventory, when set, clamps each replenishment so the pool never
+   * exceeds the cap — a replenishment fired when the pool is already at the
+   * cap is a no-op (still counted in replenishmentsFired for observability).
+   */
+  readonly recurringReplenishments?: ReadonlyArray<{
+    readonly materialId: MaterialId;
+    readonly amount: number;
+    readonly intervalMs: number;
+    readonly startMs?: number;
+    readonly maxInventory?: number;
+  }>;
 }
 
 export interface ChainTopologyNode {
@@ -847,6 +867,37 @@ export function runChain(opts: ChainOptions): ChainResult {
       });
     }
   }
+  // VROL-642 — expand recurring entries into the same scheduler stream so
+  // the handler sees no difference between one-shot + recurring events
+  // beyond the optional maxInventory cap.
+  if (opts.materials?.recurringReplenishments) {
+    for (const rep of opts.materials.recurringReplenishments) {
+      if (!(rep.intervalMs > 0)) {
+        throw new Error(
+          `materials.recurringReplenishments: intervalMs must be > 0 (got ${String(rep.intervalMs)})`,
+        );
+      }
+      if (rep.amount < 0) {
+        throw new Error(
+          `materials.recurringReplenishments: amount must be >= 0 (got ${String(rep.amount)})`,
+        );
+      }
+      const startMs = rep.startMs ?? 0;
+      if (startMs < 0) {
+        throw new Error(
+          `materials.recurringReplenishments: startMs must be >= 0 (got ${String(startMs)})`,
+        );
+      }
+      for (let t = startMs; t <= opts.horizonMs; t += rep.intervalMs) {
+        scheduler.schedule(t, {
+          kind: "material-replenishment",
+          materialId: rep.materialId,
+          amount: rep.amount,
+          ...(rep.maxInventory !== undefined ? { maxInventory: rep.maxInventory } : {}),
+        });
+      }
+    }
+  }
 
   // VROL-618 — schedule a break-end event for every worker break. Without this,
   // a station that Starved because all workers were on break stays Starved
@@ -930,7 +981,12 @@ export function runChain(opts: ChainOptions): ChainResult {
     const ev = scheduler.popMin();
     if (ev.payload.kind === "material-replenishment") {
       if (!materialPool) continue;
-      materialPool.replenish(ev.payload.materialId, ev.payload.amount);
+      let addAmount = ev.payload.amount;
+      if (ev.payload.maxInventory !== undefined) {
+        const headroom = ev.payload.maxInventory - materialPool.quantity(ev.payload.materialId);
+        addAmount = Math.max(0, Math.min(addAmount, headroom));
+      }
+      if (addAmount > 0) materialPool.replenish(ev.payload.materialId, addAmount);
       replenishmentsFired += 1;
       const affected = executorsByMaterial.get(ev.payload.materialId);
       if (affected) {

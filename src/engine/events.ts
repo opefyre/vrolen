@@ -36,6 +36,13 @@ export type EngineEvent =
       readonly kind: "material-replenishment";
       readonly materialId: MaterialId;
       readonly amount: number;
+      /**
+       * Optional inventory ceiling (VROL-642). When set, the handler clamps
+       * the effective added quantity to max(0, maxInventory - currentQty),
+       * so a recurring replenishment that arrives when the pool is already
+       * full is a no-op. One-shot events leave this undefined.
+       */
+      readonly maxInventory?: number;
     }
   /**
    * A scheduled worker break has ended (VROL-618). The orchestrator handling
