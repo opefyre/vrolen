@@ -2113,12 +2113,9 @@ function EditorCanvas() {
                       }));
                     }}
                   />
-                  Sample throughput over time (VROL-612)
+                  Sample throughput over time
                 </label>
-                <p className="text-muted-foreground text-xs">
-                  When on, the engine snapshots line + per-station counters at the configured
-                  interval; the result panel renders a throughput chart and per-station sparklines.
-                </p>
+                <p className="text-muted-foreground text-xs">Powers charts + sparklines.</p>
                 {settings.samplerIntervalMs > 0 ? (
                   <div className="flex items-center gap-2 text-xs">
                     <label htmlFor="rs-sampler" className="text-muted-foreground font-medium">
@@ -2178,11 +2175,11 @@ function EditorCanvas() {
               {settings.materials.enabled ? (
                 <>
                   <p className="text-muted-foreground text-xs">
-                    Applies to the node currently selected in the inspector{" "}
+                    Applied to the selected node{" "}
                     {selectedNodeId ? (
                       <strong className="text-foreground">({String(selectedNodeId)})</strong>
                     ) : (
-                      <em>(no node selected — select one before running)</em>
+                      <em>(select one first)</em>
                     )}
                     .
                   </p>
@@ -2883,10 +2880,7 @@ function PerProductCyclesEditor({
   return (
     <div className="border-border space-y-2 rounded-md border border-dashed p-3">
       <div className="text-xs font-medium">Per-product cycle overrides</div>
-      <p className="text-muted-foreground text-xs">
-        When a part of the listed product arrives, this distribution overrides the default cycle
-        time above. Toggle off to use the default for that product.
-      </p>
+      <p className="text-muted-foreground text-xs">Overrides default cycle time per product.</p>
       {products.map((p) => {
         const enabled = p.id in value;
         const dist = value[p.id];
@@ -2955,9 +2949,7 @@ function BreaksEditor({
         ) : null}
       </div>
       {breaks.length === 0 ? (
-        <p className="text-muted-foreground text-xs">
-          Workers without breaks count for the full shift in labor utilization.
-        </p>
+        <p className="text-muted-foreground text-xs">No breaks — full shift available.</p>
       ) : null}
       {breaks.map((brk, bIdx) => {
         const invalid = brk.endMs <= brk.startMs;

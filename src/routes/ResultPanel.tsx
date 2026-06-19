@@ -104,7 +104,7 @@ function BottleneckExplanationCard({ result }: { result: ChainResult }) {
     <Card>
       <CardHeader>
         <CardTitle className="font-heading text-base">Bottleneck analysis</CardTitle>
-        <CardDescription>Auto-narrated from the per-station state breakdown.</CardDescription>
+        <CardDescription>Where the line is constrained.</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="space-y-2 text-sm">
@@ -230,9 +230,6 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
       <Card>
         <CardHeader>
           <CardTitle className="font-heading text-base">Throughput over time</CardTitle>
-          <CardDescription>
-            Cumulative parts that exited the system, sampled at the configured interval (VROL-613).
-          </CardDescription>
         </CardHeader>
         <CardContent>
           <ThroughputChart samples={result.samples} horizonMs={horizonMs} warmupMs={warmupMs} />
@@ -242,9 +239,6 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
       <Card>
         <CardHeader>
           <CardTitle className="font-heading text-base">Bottleneck state over time</CardTitle>
-          <CardDescription>
-            How the rate-limiting station's state mix evolved across the run (VROL-620).
-          </CardDescription>
         </CardHeader>
         <CardContent>
           <OeeOverTimeChart
