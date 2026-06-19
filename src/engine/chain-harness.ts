@@ -316,13 +316,26 @@ export interface ChainTopologyNode {
   /**
    * Optional rework destination (VROL-626). When set, a defect at THIS
    * station is routed back to the named target station's input buffer
-   * instead of being scrapped. Bounded by MAX_REWORK_PASSES (3) so a
-   * pathological loop can't form; if the cap is exhausted OR the target
-   * buffer is full, the part falls through to the scrap path. Rework
-   * targets are validated at run init — unknown ids throw.
+   * instead of being scrapped. Bounded by reworkPassLimit (default 3)
+   * so a pathological loop can't form; if the cap is exhausted OR the
+   * target buffer is full, the part falls through to the scrap path.
+   * Rework targets are validated at run init — unknown ids throw.
    */
   readonly reworkTargetId?: string;
+  /**
+   * Optional max rework passes for parts routed from THIS station
+   * (VROL-638). When unset, falls back to DEFAULT_REWORK_PASS_LIMIT (3).
+   * Must be >= 1; build-time validation throws on 0 or negative values.
+   * Only meaningful alongside reworkTargetId.
+   */
+  readonly reworkPassLimit?: number;
 }
+
+/**
+ * Default cap on how many times a part can be reworked before scrapping.
+ * Per-station overrides via ChainTopologyNode.reworkPassLimit.
+ */
+export const DEFAULT_REWORK_PASS_LIMIT = 3;
 
 export interface ChainTopologyEdge {
   readonly source: string;
@@ -389,6 +402,11 @@ interface NormalizedTopology {
    * unknown ids throw before any executor is constructed.
    */
   reworkTargets: (number | undefined)[];
+  /**
+   * Per-station max rework pass count (VROL-638). undefined falls back to
+   * DEFAULT_REWORK_PASS_LIMIT at the executor. Validated >= 1 at build.
+   */
+  reworkPassLimits: (number | undefined)[];
   /** Edges in input order; each carries source + target as node-array indices. */
   edges: { sourceIdx: number; targetIdx: number }[];
   /** For each node index: the indices of nodes it sends parts to. */
@@ -472,6 +490,15 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       }
       return idx;
     });
+    const reworkPassLimits: (number | undefined)[] = nodes.map((node) => {
+      if (node.reworkPassLimit === undefined) return undefined;
+      if (!Number.isInteger(node.reworkPassLimit) || node.reworkPassLimit < 1) {
+        throw new Error(
+          `topology: station "${node.id}" reworkPassLimit must be a positive integer (got ${String(node.reworkPassLimit)})`,
+        );
+      }
+      return node.reworkPassLimit;
+    });
     return {
       nodeIds: nodes.map((n) => n.id),
       cycleTimes: nodes.map((n) => n.cycleTimeMs),
@@ -481,6 +508,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       labels: nodes.map((n) => n.label),
       defectRates: nodes.map((n) => n.defectRate ?? 0),
       reworkTargets,
+      reworkPassLimits,
       edges: normalizedEdges,
       outgoing,
       incoming,
@@ -512,6 +540,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     // rework targets empty. Callers wanting these features use DAG mode.
     defectRates: Array.from({ length: n }, () => 0),
     reworkTargets: Array.from({ length: n }, () => undefined),
+    reworkPassLimits: Array.from({ length: n }, () => undefined),
     edges,
     outgoing,
     incoming,
@@ -659,9 +688,9 @@ export function runChain(opts: ChainOptions): ChainResult {
 
   // VROL-626 — bounded rework loops. Defective parts at a station with a
   // reworkTargetId are routed back into the target's input buffer with an
-  // incremented reworkCount; parts whose count hits MAX_REWORK_PASSES fall
-  // through to scrap so a pathological chain can't recurse forever.
-  const MAX_REWORK_PASSES = 3;
+  // incremented reworkCount; parts whose count hits the per-station limit
+  // (VROL-638: topology.reworkPassLimits[i] ?? DEFAULT_REWORK_PASS_LIMIT)
+  // fall through to scrap so a pathological chain can't recurse forever.
   const executors: CycleExecutor<TrackedPart>[] = [];
   for (let i = 0; i < n; i++) {
     const recipe = recipeByStation.get(i);
@@ -687,11 +716,12 @@ export function runChain(opts: ChainOptions): ChainResult {
     // we capture the index now and look up the executor at call time so the
     // routing works in DAG mode regardless of station ordering.
     const reworkTargetIdx = topology.reworkTargets[i];
+    const reworkPassLimit = topology.reworkPassLimits[i] ?? DEFAULT_REWORK_PASS_LIMIT;
     const reworkRouter: ((part: TrackedPart) => boolean) | undefined =
       reworkTargetIdx !== undefined
         ? (part) => {
             const count = (part.reworkCount ?? 0) + 1;
-            if (count > MAX_REWORK_PASSES) return false;
+            if (count > reworkPassLimit) return false;
             part.reworkCount = count;
             return pushReworkTo(reworkTargetIdx, part);
           }

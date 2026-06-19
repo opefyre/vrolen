@@ -104,6 +104,14 @@ function reworkTargetIdOf(node: Node): string | undefined {
   return typeof raw === "string" && raw.length > 0 ? raw : undefined;
 }
 
+function reworkPassLimitOf(node: Node): number | undefined {
+  const raw = (node.data as { reworkPassLimit?: unknown } | undefined)?.reworkPassLimit;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  const n = Math.floor(raw);
+  if (n < 1) return undefined;
+  return n;
+}
+
 function cycleByProductOf(node: Node): Record<string, Distribution> | undefined {
   const raw = (node.data as { cycleByProduct?: unknown } | undefined)?.cycleByProduct;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
@@ -285,6 +293,7 @@ export function graphToChainOptions(
         // them here so the run still produces something.
         const reworkRaw = reworkTargetIdOf(node);
         const reworkTargetId = reworkRaw && topoSet.has(reworkRaw) ? reworkRaw : undefined;
+        const reworkPassLimit = reworkTargetId ? reworkPassLimitOf(node) : undefined;
         return {
           id,
           label: labelOf(node),
@@ -294,6 +303,7 @@ export function graphToChainOptions(
           ...(matrix ? { changeoverMatrix: matrix } : {}),
           ...(defectRate !== undefined ? { defectRate } : {}),
           ...(reworkTargetId ? { reworkTargetId } : {}),
+          ...(reworkPassLimit !== undefined ? { reworkPassLimit } : {}),
         };
       });
       const topoEdges: ChainTopologyEdge[] = edges

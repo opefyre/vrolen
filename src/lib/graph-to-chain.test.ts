@@ -109,6 +109,38 @@ describe("graphToChainOptions", () => {
     expect(bTopo?.reworkTargetId).toBe("a");
   });
 
+  it("passes reworkPassLimit through to topology when rework target is set (VROL-638)", () => {
+    const nodes = [
+      node("a", { cycleMs: 50 }),
+      node("b", { cycleMs: 100 }),
+      node("c", { cycleMs: 50 }),
+    ];
+    (nodes[1]!.data as Record<string, unknown>).defectRate = 0.4;
+    (nodes[1]!.data as Record<string, unknown>).reworkTargetNodeId = "a";
+    (nodes[1]!.data as Record<string, unknown>).reworkPassLimit = 5;
+    const edges = [edge("a", "b"), edge("b", "c"), edge("a", "c")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    const bTopo = r.topology!.nodes.find((n) => n.id === "b");
+    expect(bTopo?.reworkPassLimit).toBe(5);
+  });
+
+  it("drops reworkPassLimit when no rework target is set (VROL-638)", () => {
+    // A pass limit without a rework target is meaningless; translator drops
+    // it so the engine schema stays clean.
+    const nodes = [
+      node("a", { cycleMs: 50 }),
+      node("b", { cycleMs: 100 }),
+      node("c", { cycleMs: 50 }),
+    ];
+    (nodes[1]!.data as Record<string, unknown>).reworkPassLimit = 5;
+    const edges = [edge("a", "b"), edge("b", "c"), edge("a", "c")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    const bTopo = r.topology!.nodes.find((n) => n.id === "b");
+    expect(bTopo?.reworkPassLimit).toBeUndefined();
+  });
+
   it("drops a reworkTargetNodeId pointing at an unknown node id (VROL-627)", () => {
     // b references "ghost" which doesn't exist in the node list. Translator
     // must drop it so the engine doesn't throw on an unknown id at init —

@@ -768,6 +768,64 @@ describe("runChain — rework loops (VROL-626)", () => {
     expect(result.completed).toBeGreaterThan(0);
   });
 
+  it("per-station reworkPassLimit overrides the default cap (VROL-638)", () => {
+    // Same shape as the MAX_REWORK_PASSES cap test but with a per-station
+    // limit of 1 — every defect gets ONE rework attempt then scraps. So
+    // perStationReworked should be roughly equal to perStationScrapped
+    // (not 2-3x as in the default-cap-of-3 case).
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "a", cycleTimeMs: constant(50) },
+          {
+            id: "b",
+            cycleTimeMs: constant(50),
+            defectRate: 1.0,
+            reworkTargetId: "a",
+            reworkPassLimit: 1,
+          },
+        ],
+        edges: [{ source: "a", target: "b" }],
+      },
+      interStationBufferCapacity: 10,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(7),
+    });
+    const scrapped = result.perStationScrapped[1] ?? 0;
+    const reworked = result.perStationReworked[1] ?? 0;
+    expect(scrapped).toBeGreaterThan(0);
+    expect(reworked).toBeGreaterThan(0);
+    // With the cap at 1, each scrapped part is reworked exactly once before
+    // scrapping → reworked / scrapped ≈ 1. The default cap of 3 gives ≈ 3
+    // (see the test above). Assert ratio < 1.5 so we'd catch any regression
+    // back to the global constant.
+    expect(reworked / scrapped).toBeLessThan(1.5);
+  });
+
+  it("rejects a non-integer or zero reworkPassLimit at build (VROL-638)", () => {
+    expect(() =>
+      runChain({
+        topology: {
+          nodes: [
+            { id: "a", cycleTimeMs: constant(50) },
+            {
+              id: "b",
+              cycleTimeMs: constant(50),
+              reworkTargetId: "a",
+              reworkPassLimit: 0,
+            },
+          ],
+          edges: [{ source: "a", target: "b" }],
+        },
+        interStationBufferCapacity: 5,
+        horizonMs: 1_000,
+        warmupMs: 0,
+        prng: new SeededPrng(1),
+      }),
+    ).toThrow(/reworkPassLimit must be a positive integer/);
+  });
+
   it("perStationReworked is always present and zero when no rework configured", () => {
     const result = runChain({
       stationCycleTimes: [constant(50), constant(50)],

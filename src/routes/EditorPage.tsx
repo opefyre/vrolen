@@ -1574,9 +1574,41 @@ function EditorCanvas() {
                       })}
                   </select>
                   <p className="text-muted-foreground text-[11px]">
-                    Where defects route for another pass. Bounded to 3 passes.
+                    Where defects route for another pass.
                   </p>
                 </div>
+                {(selectedNode.data as { reworkTargetNodeId?: string }).reworkTargetNodeId ? (
+                  <div className="flex flex-col gap-1">
+                    <label
+                      htmlFor="inspector-rework-pass-limit"
+                      className="text-muted-foreground text-xs font-medium"
+                    >
+                      Max rework passes
+                    </label>
+                    <input
+                      id="inspector-rework-pass-limit"
+                      type="number"
+                      min={1}
+                      max={10}
+                      step={1}
+                      value={
+                        (selectedNode.data as { reworkPassLimit?: number }).reworkPassLimit ?? 3
+                      }
+                      onChange={(e) => {
+                        const raw = Number(e.target.value);
+                        if (!Number.isFinite(raw)) return;
+                        const clamped = Math.max(1, Math.min(10, Math.floor(raw)));
+                        updateSelectedNodeData({
+                          reworkPassLimit: clamped === 3 ? undefined : clamped,
+                        });
+                      }}
+                      className="border-input bg-background w-24 rounded-md border px-2 py-1.5 text-sm"
+                    />
+                    <p className="text-muted-foreground text-[11px]">
+                      After this many passes, defects scrap. Default 3.
+                    </p>
+                  </div>
+                ) : null}
                 <p className="text-muted-foreground text-[11px]">
                   Position: {Math.round(selectedNode.position.x)} ,{" "}
                   {Math.round(selectedNode.position.y)}

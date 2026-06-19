@@ -182,7 +182,7 @@ export type {
   ChainSamplerConfig,
   TimeseriesSample,
 } from "./chain-harness";
-export { runChain } from "./chain-harness";
+export { runChain, DEFAULT_REWORK_PASS_LIMIT } from "./chain-harness";
 
 // Multi-buffer wrappers (VROL-582) — used by chain-harness for branching graphs.
 export { MultiInputBuffer, MultiOutputBuffer } from "./multi-buffer";
