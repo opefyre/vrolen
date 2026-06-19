@@ -751,6 +751,16 @@ function EditorCanvas() {
                 ],
               }
             : {}),
+          ...(settings.materials.recurring.length > 0
+            ? {
+                recurringReplenishments: settings.materials.recurring.map((r) => ({
+                  materialId: r.material === "caps" ? CAPS_ID : BOTTLES_ID,
+                  amount: r.amount,
+                  intervalMs: r.intervalMs,
+                  ...(r.maxInventory !== undefined ? { maxInventory: r.maxInventory } : {}),
+                })),
+              }
+            : {}),
         };
       }
     }
@@ -2239,69 +2249,209 @@ function EditorCanvas() {
                   </label>
                   {settings.materials.replenishment.enabled ? (
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div className="flex flex-col gap-1">
-                        <label
-                          htmlFor="rs-rep-at"
-                          className="text-muted-foreground text-xs font-medium"
-                        >
-                          Replenish at (ms)
-                        </label>
-                        <Input
-                          id="rs-rep-at"
-                          type="number"
-                          min={0}
-                          step={1000}
-                          value={settings.materials.replenishment.atMs}
-                          onChange={(e) => {
-                            const n = Number(e.target.value);
-                            if (Number.isFinite(n) && n >= 0) {
-                              setSettings((s) => ({
-                                ...s,
-                                materials: {
-                                  ...s.materials,
-                                  replenishment: {
-                                    ...s.materials.replenishment,
-                                    atMs: Math.floor(n),
-                                  },
-                                },
-                              }));
-                            }
-                          }}
-                          className="font-mono tabular-nums"
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label
-                          htmlFor="rs-rep-amt"
-                          className="text-muted-foreground text-xs font-medium"
-                        >
-                          Bottles delivered
-                        </label>
-                        <Input
-                          id="rs-rep-amt"
-                          type="number"
-                          min={1}
-                          value={settings.materials.replenishment.amount}
-                          onChange={(e) => {
-                            const n = Number(e.target.value);
-                            if (Number.isFinite(n) && n >= 1) {
-                              setSettings((s) => ({
-                                ...s,
-                                materials: {
-                                  ...s.materials,
-                                  replenishment: {
-                                    ...s.materials.replenishment,
-                                    amount: Math.floor(n),
-                                  },
-                                },
-                              }));
-                            }
-                          }}
-                          className="font-mono tabular-nums"
-                        />
-                      </div>
+                      <NumberField
+                        id="rs-rep-at"
+                        label="Replenish at (ms)"
+                        min={0}
+                        step={1000}
+                        value={settings.materials.replenishment.atMs}
+                        onChange={(n) => {
+                          setSettings((s) => ({
+                            ...s,
+                            materials: {
+                              ...s.materials,
+                              replenishment: {
+                                ...s.materials.replenishment,
+                                atMs: Math.floor(n),
+                              },
+                            },
+                          }));
+                        }}
+                      />
+                      <NumberField
+                        id="rs-rep-amt"
+                        label="Bottles delivered"
+                        min={1}
+                        value={settings.materials.replenishment.amount}
+                        onChange={(n) => {
+                          setSettings((s) => ({
+                            ...s,
+                            materials: {
+                              ...s.materials,
+                              replenishment: {
+                                ...s.materials.replenishment,
+                                amount: Math.max(1, Math.floor(n)),
+                              },
+                            },
+                          }));
+                        }}
+                      />
                     </div>
                   ) : null}
+                  {/* VROL-643 — recurring / finite-rate deliveries */}
+                  <div className="border-border space-y-2 rounded-md border border-dashed p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Recurring deliveries</span>
+                      <button
+                        type="button"
+                        className="border-input bg-background hover:bg-muted rounded-md border px-2 py-1 text-xs"
+                        onClick={() => {
+                          setSettings((s) => ({
+                            ...s,
+                            materials: {
+                              ...s.materials,
+                              recurring: [
+                                ...s.materials.recurring,
+                                { material: "bottles", amount: 100, intervalMs: 5 * 60_000 },
+                              ],
+                            },
+                          }));
+                        }}
+                      >
+                        + Add delivery
+                      </button>
+                    </div>
+                    {settings.materials.recurring.length === 0 ? (
+                      <p className="text-muted-foreground text-xs">
+                        Periodic resupply — every N minutes, add a fixed quantity. Optional cap
+                        keeps the pool bounded.
+                      </p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {settings.materials.recurring.map((r, idx) => {
+                          const fires =
+                            r.intervalMs > 0
+                              ? Math.floor(settings.horizonMs / r.intervalMs) + 1
+                              : 0;
+                          return (
+                            <li
+                              key={`rec-${String(idx)}`}
+                              className="border-border bg-card space-y-2 rounded-md border p-2"
+                            >
+                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                <div className="flex flex-col gap-1">
+                                  <label
+                                    htmlFor={`rs-rec-mat-${String(idx)}`}
+                                    className="text-muted-foreground text-xs font-medium"
+                                  >
+                                    Material
+                                  </label>
+                                  <select
+                                    id={`rs-rec-mat-${String(idx)}`}
+                                    value={r.material}
+                                    onChange={(e) => {
+                                      const m =
+                                        e.target.value === "caps"
+                                          ? ("caps" as const)
+                                          : ("bottles" as const);
+                                      setSettings((s) => ({
+                                        ...s,
+                                        materials: {
+                                          ...s.materials,
+                                          recurring: s.materials.recurring.map((row, i) =>
+                                            i === idx ? { ...row, material: m } : row,
+                                          ),
+                                        },
+                                      }));
+                                    }}
+                                    className="border-input bg-background rounded-md border px-2 py-1.5 text-sm"
+                                  >
+                                    <option value="bottles">Bottles</option>
+                                    <option value="caps">Caps</option>
+                                  </select>
+                                </div>
+                                <NumberField
+                                  id={`rs-rec-amt-${String(idx)}`}
+                                  label="Amount per delivery"
+                                  value={r.amount}
+                                  min={0}
+                                  onChange={(n) => {
+                                    setSettings((s) => ({
+                                      ...s,
+                                      materials: {
+                                        ...s.materials,
+                                        recurring: s.materials.recurring.map((row, i) =>
+                                          i === idx ? { ...row, amount: Math.floor(n) } : row,
+                                        ),
+                                      },
+                                    }));
+                                  }}
+                                />
+                                <NumberField
+                                  id={`rs-rec-int-${String(idx)}`}
+                                  label="Every (minutes)"
+                                  value={Math.round(r.intervalMs / 60_000)}
+                                  min={1}
+                                  onChange={(n) => {
+                                    setSettings((s) => ({
+                                      ...s,
+                                      materials: {
+                                        ...s.materials,
+                                        recurring: s.materials.recurring.map((row, i) =>
+                                          i === idx
+                                            ? {
+                                                ...row,
+                                                intervalMs: Math.max(1, Math.floor(n)) * 60_000,
+                                              }
+                                            : row,
+                                        ),
+                                      },
+                                    }));
+                                  }}
+                                />
+                                <NumberField
+                                  id={`rs-rec-cap-${String(idx)}`}
+                                  label="Cap (optional, 0 = none)"
+                                  value={r.maxInventory ?? 0}
+                                  min={0}
+                                  onChange={(n) => {
+                                    const v = Math.floor(n);
+                                    setSettings((s) => ({
+                                      ...s,
+                                      materials: {
+                                        ...s.materials,
+                                        recurring: s.materials.recurring.map((row, i) => {
+                                          if (i !== idx) return row;
+                                          if (v <= 0) {
+                                            const { material, amount, intervalMs } = row;
+                                            return { material, amount, intervalMs };
+                                          }
+                                          return { ...row, maxInventory: v };
+                                        }),
+                                      },
+                                    }));
+                                  }}
+                                />
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-muted-foreground text-[11px]">
+                                  Fires ~{String(fires)} time{fires === 1 ? "" : "s"} during the
+                                  horizon.
+                                </span>
+                                <button
+                                  type="button"
+                                  className="text-destructive hover:text-destructive/80 text-xs"
+                                  onClick={() => {
+                                    setSettings((s) => ({
+                                      ...s,
+                                      materials: {
+                                        ...s.materials,
+                                        recurring: s.materials.recurring.filter(
+                                          (_, i) => i !== idx,
+                                        ),
+                                      },
+                                    }));
+                                  }}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
                 </>
               ) : null}
             </Accordion>

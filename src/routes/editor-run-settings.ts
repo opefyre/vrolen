@@ -21,6 +21,22 @@ export interface MaterialsSettings {
     atMs: number;
     amount: number;
   };
+  /**
+   * VROL-643 — recurring / finite-rate deliveries authored from the drawer.
+   * Translated into engine recurringReplenishments at run time.
+   * material: which scenario material is delivered (matches the keys used by
+   *   the existing one-shot replenishment).
+   * amount: units delivered per fire (>= 0).
+   * intervalMs: time between fires (> 0).
+   * maxInventory: optional cap that clamps the pool so a fire that arrives
+   *   when the pool is at-cap is a no-op.
+   */
+  recurring: ReadonlyArray<{
+    material: "bottles" | "caps";
+    amount: number;
+    intervalMs: number;
+    maxInventory?: number;
+  }>;
 }
 
 export interface BreakdownsSettings {
@@ -100,6 +116,7 @@ export const DEFAULT_RUN_SETTINGS: RunSettings = {
       atMs: 10_000,
       amount: 500,
     },
+    recurring: [],
   },
   breakdowns: {
     enabled: false,
@@ -162,6 +179,7 @@ export function mergeWithDefaults(parsed: Partial<RunSettings>): RunSettings {
         atMs: r.atMs ?? DEFAULT_RUN_SETTINGS.materials.replenishment.atMs,
         amount: r.amount ?? DEFAULT_RUN_SETTINGS.materials.replenishment.amount,
       },
+      recurring: sanitizeRecurring(m.recurring),
     },
     breakdowns: {
       enabled: b.enabled ?? DEFAULT_RUN_SETTINGS.breakdowns.enabled,
@@ -233,6 +251,45 @@ function migrateWorkerList(w: Partial<WorkersSettings>): WorkerEntry[] {
     skills: [...legacySkills],
     shiftEndMs: legacyShift,
   }));
+}
+
+/**
+ * Drop malformed recurring-delivery rows so a corrupt localStorage payload
+ * can't crash the engine wiring. Material defaults to "bottles", amount
+ * and intervalMs are coerced to safe defaults (no-op when amount = 0).
+ */
+function sanitizeRecurring(raw: unknown): MaterialsSettings["recurring"] {
+  if (!Array.isArray(raw)) return [];
+  const out: MaterialsSettings["recurring"][number][] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    const e = r as {
+      material?: unknown;
+      amount?: unknown;
+      intervalMs?: unknown;
+      maxInventory?: unknown;
+    };
+    const material: "bottles" | "caps" = e.material === "caps" ? "caps" : "bottles";
+    const amount =
+      typeof e.amount === "number" && Number.isFinite(e.amount) && e.amount >= 0
+        ? Math.floor(e.amount)
+        : 0;
+    const intervalMs =
+      typeof e.intervalMs === "number" && Number.isFinite(e.intervalMs) && e.intervalMs > 0
+        ? Math.floor(e.intervalMs)
+        : 60_000;
+    const entry: MaterialsSettings["recurring"][number] = { material, amount, intervalMs };
+    if (
+      typeof e.maxInventory === "number" &&
+      Number.isFinite(e.maxInventory) &&
+      e.maxInventory >= 0
+    ) {
+      out.push({ ...entry, maxInventory: Math.floor(e.maxInventory) });
+    } else {
+      out.push(entry);
+    }
+  }
+  return out;
 }
 
 /**

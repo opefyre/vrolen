@@ -21,11 +21,39 @@ describe("editor-run-settings — mergeWithDefaults", () => {
         bottles: 50,
         caps: 50,
         replenishment: { enabled: false, atMs: 0, amount: 0 },
+        recurring: [],
       },
     });
     expect(merged.materials.enabled).toBe(true);
     expect(merged.materials.bottles).toBe(50);
     expect(merged.materials.replenishment.atMs).toBe(0);
+  });
+
+  it("preserves valid recurring delivery rows + drops malformed ones (VROL-643)", () => {
+    const merged = mergeWithDefaults({
+      materials: {
+        enabled: true,
+        bottles: 0,
+        caps: 0,
+        replenishment: { enabled: false, atMs: 0, amount: 0 },
+        recurring: [
+          { material: "bottles", amount: 50, intervalMs: 60_000 },
+          { material: "caps", amount: 10, intervalMs: 30_000, maxInventory: 100 },
+          // Malformed: drops the row, not the array.
+          { material: "bottles", amount: -1, intervalMs: 1_000 } as unknown as never,
+          "garbage" as unknown as never,
+        ],
+      },
+    });
+    expect(merged.materials.recurring).toHaveLength(3);
+    // The negative amount got clamped to 0 (no-op replenishment, still kept).
+    expect(merged.materials.recurring[2]).toEqual({
+      material: "bottles",
+      amount: 0,
+      intervalMs: 1_000,
+    });
+    // Pure garbage was dropped.
+    expect(merged.materials.recurring).not.toContain("garbage");
   });
 
   it("falls back to default replenishment shape when materials lacks one", () => {

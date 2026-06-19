@@ -102,6 +102,16 @@ export function runScenario(
             ],
           }
         : {}),
+      ...(settings.materials.recurring.length > 0
+        ? {
+            recurringReplenishments: settings.materials.recurring.map((r) => ({
+              materialId: r.material === "caps" ? CAPS_ID : BOTTLES_ID,
+              amount: r.amount,
+              intervalMs: r.intervalMs,
+              ...(r.maxInventory !== undefined ? { maxInventory: r.maxInventory } : {}),
+            })),
+          }
+        : {}),
     };
   }
 
