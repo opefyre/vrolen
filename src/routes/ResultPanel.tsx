@@ -7,12 +7,14 @@
  * and exposes the same shape KpiStrip had inline.
  */
 
+import { Lightbulb } from "lucide-react";
 import { useState } from "react";
 
 import type { ChainResult } from "@/engine";
 import { asMaterialId } from "@/engine";
 import { Accordion, AccordionStatus } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { narrateRun } from "@/lib/narrate-run";
 
 import { OeeOverTimeChart } from "./OeeOverTimeChart";
 import { ThroughputChart } from "./ThroughputChart";
@@ -92,6 +94,25 @@ function ProductMixBody({ result }: { result: ChainResult }) {
   );
 }
 
+function InsightsBanner({ result }: { result: ChainResult }) {
+  const sentences = narrateRun(result);
+  if (sentences.length === 0) return null;
+  return (
+    <Card aria-label="Run insights" className="border-sim-running/40 bg-sim-running/5 border-l-4">
+      <CardContent className="flex items-start gap-3 py-3">
+        <Lightbulb className="text-sim-running mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+        <ul className="space-y-1 text-sm leading-snug">
+          {sentences.map((s, i) => (
+            <li key={i} className="text-foreground/90">
+              {s}
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
 function BottleneckExplanationCard({ result }: { result: ChainResult }) {
   if (result.bottlenecks.length === 0) return null;
   const sorted = [...result.bottlenecks].sort((a, b) => b.runningPct - a.runningPct);
@@ -168,6 +189,7 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
   const hasLabor = result.laborUtilization !== undefined;
   return (
     <div className="space-y-3">
+      <InsightsBanner result={result} />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {tile("Completed", result.completed.toLocaleString(), "during measurement window")}
         {tile("Throughput", fmt(throughputPerHour, 0), "parts / hour")}

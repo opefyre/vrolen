@@ -96,6 +96,20 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
     expect(screen.getByText(/· 7 rework/)).toBeInTheDocument();
   });
 
+  it("renders the auto-narrated insights banner above the KPI tiles (VROL-640)", () => {
+    render(
+      <ResultPanel
+        result={fakeResult()}
+        runMeta={{ stationLabels: ["Filler", "Capper"] }}
+        horizonMs={60_000}
+        warmupMs={0}
+      />,
+    );
+    const banner = screen.getByLabelText("Run insights");
+    expect(banner).toBeInTheDocument();
+    expect(banner.textContent).toContain("Capper is the bottleneck");
+  });
+
   it("Per-station completed + state breakdown are collapsed by default (VROL-636)", () => {
     render(
       <ResultPanel
