@@ -68,6 +68,12 @@ import { CapacityChip } from "@/components/canvas/capacity-chip";
 import { Input } from "@/components/ui/input";
 import { NumberField } from "@/components/ui/number-field";
 import {
+  addComparison,
+  type ComparisonEntry,
+  listComparisons,
+  removeComparison,
+} from "@/lib/comparison-history";
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -551,12 +557,22 @@ function EditorCanvas() {
   );
   /** Snapshot of the active scenario as JSON; used to detect drift for the modified badge. */
   const [activeScenarioSnapshot, setActiveScenarioSnapshot] = useState<string | null>(null);
+  // VROL-654 — rendered-form shape so both live runs + restored snapshots
+  // hydrate the same state. ScenarioRunOutcome is normalized at call site.
   const [comparison, setComparison] = useState<{
     aName: string;
-    aOutcome: ScenarioRunOutcome;
+    aResult: ScenarioRunOutcome["result"];
+    aStationLabels: readonly string[];
     bName: string;
-    bOutcome: ScenarioRunOutcome;
+    bResult: ScenarioRunOutcome["result"];
+    bStationLabels: readonly string[];
+    horizonMs: number;
+    warmupMs: number;
   } | null>(null);
+  // VROL-654 — persisted comparison history.
+  const [savedComparisons, setSavedComparisons] = useState<readonly ComparisonEntry[]>(() =>
+    listComparisons(),
+  );
   const [historyByScenario, setHistoryByScenario] = useState<Record<string, RunHistoryEntry[]>>(
     () => {
       const out: Record<string, RunHistoryEntry[]> = {};
@@ -897,11 +913,59 @@ function EditorCanvas() {
         });
         return;
       }
-      setComparison({ aName: savedName, aOutcome, bName: "Current canvas", bOutcome });
+      const horizonMs = settings.horizonMs;
+      const warmupMs = Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2));
+      setComparison({
+        aName: savedName,
+        aResult: aOutcome.result,
+        aStationLabels: aOutcome.runMeta.stationLabels,
+        bName: "Current canvas",
+        bResult: bOutcome.result,
+        bStationLabels: bOutcome.runMeta.stationLabels,
+        horizonMs,
+        warmupMs,
+      });
+      // VROL-654 — persist the comparison so it survives navigating away.
+      try {
+        addComparison({
+          id: `cmp-${String(Date.now())}-${String(Math.floor(Math.random() * 100000))}`,
+          savedAtMs: Date.now(),
+          aName: savedName,
+          aResult: aOutcome.result,
+          aStationLabels: aOutcome.runMeta.stationLabels,
+          bName: "Current canvas",
+          bResult: bOutcome.result,
+          bStationLabels: bOutcome.runMeta.stationLabels,
+          horizonMs,
+          warmupMs,
+        });
+        setSavedComparisons(listComparisons());
+      } catch {
+        // best-effort — UI flow continues regardless
+      }
       toast.success(`Comparing "${savedName}" vs current canvas`);
     },
     [nodes, edges, settings, selectedNodeId],
   );
+
+  // VROL-654 — load a saved comparison back into the sheet.
+  const restoreComparison = useCallback((entry: ComparisonEntry) => {
+    setComparison({
+      aName: entry.aName,
+      aResult: entry.aResult,
+      aStationLabels: entry.aStationLabels,
+      bName: entry.bName,
+      bResult: entry.bResult,
+      bStationLabels: entry.bStationLabels,
+      horizonMs: entry.horizonMs,
+      warmupMs: entry.warmupMs,
+    });
+  }, []);
+
+  const deleteSavedComparison = useCallback((id: string) => {
+    removeComparison(id);
+    setSavedComparisons(listComparisons());
+  }, []);
 
   const loadScenarioInto = useCallback(
     (name: string): boolean => {
@@ -1639,13 +1703,13 @@ function EditorCanvas() {
               >
                 <ComparisonTable
                   aName={comparison.aName}
-                  aResult={comparison.aOutcome.result}
-                  aStationLabels={comparison.aOutcome.runMeta.stationLabels}
+                  aResult={comparison.aResult}
+                  aStationLabels={comparison.aStationLabels}
                   bName={comparison.bName}
-                  bResult={comparison.bOutcome.result}
-                  bStationLabels={comparison.bOutcome.runMeta.stationLabels}
-                  horizonMs={settings.horizonMs}
-                  warmupMs={Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2))}
+                  bResult={comparison.bResult}
+                  bStationLabels={comparison.bStationLabels}
+                  horizonMs={comparison.horizonMs}
+                  warmupMs={comparison.warmupMs}
                 />
               </Suspense>
             </div>
@@ -1662,6 +1726,45 @@ function EditorCanvas() {
               later (E10).
             </SheetDescription>
           </SheetHeader>
+          {savedComparisons.length > 0 ? (
+            <div className="space-y-2 px-4 pt-2">
+              <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                Saved comparisons
+              </div>
+              <ul className="space-y-1">
+                {savedComparisons.map((c) => (
+                  <li
+                    key={c.id}
+                    className="border-border bg-card flex items-center gap-2 rounded-md border p-2 text-xs"
+                  >
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 truncate text-left"
+                      title={`${c.aName} vs ${c.bName}`}
+                      onClick={() => {
+                        restoreComparison(c);
+                        setScenariosOpen(false);
+                      }}
+                    >
+                      <span className="font-medium">{c.aName}</span>{" "}
+                      <span className="text-muted-foreground">vs</span>{" "}
+                      <span className="font-medium">{c.bName}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-destructive"
+                      aria-label={`Remove saved comparison ${c.id}`}
+                      onClick={() => {
+                        deleteSavedComparison(c.id);
+                      }}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           <div className="space-y-4 px-4 pb-6">
             <form
               className="flex items-end gap-2"
