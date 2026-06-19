@@ -116,10 +116,8 @@ function chainSamplesToCsv(result: ChainResult, meta: RunExportMeta): string {
   }
   const stateColumns = [...stateSet].sort();
   const edgeColumns = result.samples[0]?.perEdgeBufferFill.length ?? 0;
-  // VROL-628 — surface the run-final per-station rework count alongside the
-  // per-tick state-time. We don't have per-tick rework numbers from the
-  // sampler; reporting the cumulative end-of-run value at every row is the
-  // simplest honest answer for now (downstream consumers de-dup by station).
+  // VROL-639 — per-tick rework count comes from the sampler now; CSV reflects
+  // it monotonically per row (was the run-final value at every row pre-VROL-639).
   const headers = [
     "tMs",
     "station",
@@ -135,7 +133,7 @@ function chainSamplesToCsv(result: ChainResult, meta: RunExportMeta): string {
       const label = meta.stationLabels[stn] ?? `Station ${String(stn + 1)}`;
       const completed = sample.perStationCompleted[stn] ?? 0;
       const stateMs = sample.perStationStateMs[stn] ?? {};
-      const reworked = result.perStationReworked[stn] ?? 0;
+      const reworked = sample.perStationRework[stn] ?? 0;
       const row = [
         String(sample.tMs),
         csvQuote(label),

@@ -1416,4 +1416,40 @@ describe("runChain — timeseries sampler (VROL-612)", () => {
       }
     }
   });
+
+  it("perStationRework: last sample matches result + monotone per station (VROL-639)", () => {
+    // DAG with a rework loop so the counters actually move.
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "a", cycleTimeMs: constant(50) },
+          { id: "b", cycleTimeMs: constant(50), defectRate: 0.4, reworkTargetId: "a" },
+        ],
+        edges: [{ source: "a", target: "b" }],
+      },
+      interStationBufferCapacity: 5,
+      horizonMs: 3_000,
+      warmupMs: 0,
+      prng: new SeededPrng(31),
+      sampler: { intervalMs: 250 },
+    });
+    expect(result.samples.length).toBeGreaterThan(0);
+    const last = result.samples[result.samples.length - 1]!;
+    // Width matches perStationCompleted at every sample.
+    for (const s of result.samples) {
+      expect(s.perStationRework.length).toBe(s.perStationCompleted.length);
+    }
+    // Last sample's rework totals match the run-final rework totals.
+    expect([...last.perStationRework]).toEqual([...result.perStationReworked]);
+    // Monotone non-decreasing per station.
+    for (let i = 1; i < result.samples.length; i++) {
+      const curr = result.samples[i]!.perStationRework;
+      const prev = result.samples[i - 1]!.perStationRework;
+      for (let stn = 0; stn < curr.length; stn++) {
+        expect(curr[stn]).toBeGreaterThanOrEqual(prev[stn] ?? 0);
+      }
+    }
+    // Station 1 (the rework source) actually moved.
+    expect(last.perStationRework[1]).toBeGreaterThan(0);
+  });
 });

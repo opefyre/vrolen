@@ -80,6 +80,7 @@ function fakeSamples(): import("@/engine").TimeseriesSample[] {
         { Running: 800, Idle: 200 },
         { Running: 700, Starved: 300 },
       ],
+      perStationRework: [0, 1],
     },
     {
       tMs: 2_000,
@@ -90,6 +91,7 @@ function fakeSamples(): import("@/engine").TimeseriesSample[] {
         { Running: 1_700, Idle: 300 },
         { Running: 1_500, Starved: 500 },
       ],
+      perStationRework: [0, 3],
     },
   ];
 }
@@ -101,6 +103,15 @@ describe("export-run", () => {
     const parsed = JSON.parse(json) as ChainResult;
     expect(parsed.completed).toBe(100);
     expect(parsed.perStationCompleted).toEqual([120, 100]);
+  });
+
+  it("chainResultToJsonString preserves per-sample perStationRework (VROL-639)", () => {
+    const result: ChainResult = { ...fakeResult(), samples: fakeSamples() };
+    const json = chainResultToJsonString(result);
+    const parsed = JSON.parse(json) as ChainResult;
+    expect(parsed.samples).toHaveLength(2);
+    expect([...(parsed.samples[0]?.perStationRework ?? [])]).toEqual([0, 1]);
+    expect([...(parsed.samples[1]?.perStationRework ?? [])]).toEqual([0, 3]);
   });
 
   it("chainResultToJsonString turns Maps into plain objects", () => {

@@ -132,6 +132,13 @@ export interface TimeseriesSample {
    * diffing consecutive samples. Empty array when no sampler.
    */
   readonly perStationStateMs: readonly Readonly<Record<string, number>>[];
+  /**
+   * Cumulative count of parts a station has REWORKED (routed back to a
+   * rework target) at the sample instant (VROL-639). Aligned with
+   * perStationCompleted by index. Last sample equals
+   * ChainResult.perStationReworked. Empty array when no sampler.
+   */
+  readonly perStationRework: readonly number[];
 }
 
 /**
@@ -900,6 +907,9 @@ export function runChain(opts: ChainOptions): ChainResult {
           // VROL-619 — cumulative ms-in-state per station; consumer derives
           // fractions per interval by diffing consecutive samples.
           perStationStateMs: stateTimeTrackers.map((t) => t.snapshotInto(tMs)),
+          // VROL-639 — cumulative rework count per station; last sample
+          // matches result.perStationReworked.
+          perStationRework: executors.map((e) => e.reworked),
         });
       } else {
         // Pre-warmup: still advance trackers so the snapshot deltas stay

@@ -15,6 +15,7 @@ function sample(
     perStationCompleted: [],
     perEdgeBufferFill: [],
     perStationStateMs,
+    perStationRework: [],
   };
 }
 

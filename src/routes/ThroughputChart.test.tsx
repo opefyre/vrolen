@@ -14,6 +14,7 @@ describe("ThroughputChart (VROL-613)", () => {
             perStationCompleted: [],
             perEdgeBufferFill: [],
             perStationStateMs: [],
+            perStationRework: [],
           },
         ]}
         horizonMs={10_000}
@@ -30,6 +31,7 @@ describe("ThroughputChart (VROL-613)", () => {
       perStationCompleted: [(i + 1) * 10],
       perEdgeBufferFill: [] as number[],
       perStationStateMs: [] as Readonly<Record<string, number>>[],
+      perStationRework: [] as number[],
     }));
     const { container } = render(
       <ThroughputChart samples={samples} horizonMs={10_000} warmupMs={0} />,
@@ -51,6 +53,7 @@ describe("ThroughputChart (VROL-613)", () => {
       perStationCompleted: [m],
       perEdgeBufferFill: [] as number[],
       perStationStateMs: [] as Readonly<Record<string, number>>[],
+      perStationRework: [] as number[],
     });
     const a = [mk(1_000, 5), mk(2_000, 15), mk(3_000, 35)];
     const b = [mk(1_000, 7), mk(2_000, 18), mk(3_000, 28)];
@@ -83,6 +86,7 @@ describe("ThroughputChart (VROL-613)", () => {
       perStationCompleted: [m],
       perEdgeBufferFill: [] as number[],
       perStationStateMs: [] as Readonly<Record<string, number>>[],
+      perStationRework: [] as number[],
     });
     const { container } = render(
       <ThroughputChart samples={[mk(1_000, 5), mk(2_000, 10)]} horizonMs={2_000} warmupMs={0} />,
@@ -100,6 +104,7 @@ describe("ThroughputChart (VROL-613)", () => {
         perStationCompleted: [10],
         perEdgeBufferFill: [],
         perStationStateMs: [],
+        perStationRework: [],
       },
       {
         tMs: 2_000,
@@ -107,6 +112,7 @@ describe("ThroughputChart (VROL-613)", () => {
         perStationCompleted: [20],
         perEdgeBufferFill: [],
         perStationStateMs: [],
+        perStationRework: [],
       },
     ];
     const { container } = render(
@@ -129,6 +135,7 @@ describe("ThroughputChart (VROL-613)", () => {
         perStationCompleted: [5],
         perEdgeBufferFill: [],
         perStationStateMs: [],
+        perStationRework: [],
       },
       {
         tMs: 2000,
@@ -136,6 +143,7 @@ describe("ThroughputChart (VROL-613)", () => {
         perStationCompleted: [20],
         perEdgeBufferFill: [],
         perStationStateMs: [],
+        perStationRework: [],
       },
       {
         tMs: 3000,
@@ -143,6 +151,7 @@ describe("ThroughputChart (VROL-613)", () => {
         perStationCompleted: [40],
         perEdgeBufferFill: [],
         perStationStateMs: [],
+        perStationRework: [],
       },
     ];
     const { container } = render(
