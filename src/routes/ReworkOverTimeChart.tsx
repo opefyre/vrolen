@@ -8,7 +8,7 @@
  * a safety net we also return a muted hint instead of an empty SVG.
  */
 
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import type { TimeseriesSample } from "@/engine";
 
@@ -17,6 +17,19 @@ interface ReworkOverTimeChartProps {
   readonly stationLabels: readonly string[];
   readonly horizonMs: number;
   readonly warmupMs: number;
+  /**
+   * Optional secondary series for scenario-comparison overlays (VROL-644).
+   * When set, draws one muted dashed line per active station from the
+   * secondary samples on the same X/Y scales. Pass the same stationLabels
+   * for both series — the legend reuses them.
+   */
+  readonly secondarySamples?: readonly TimeseriesSample[];
+  readonly primaryLabel?: string;
+  readonly secondaryLabel?: string;
+}
+
+interface HoverState {
+  readonly idx: number;
 }
 
 const VIEW_W = 240;
@@ -39,43 +52,86 @@ export function ReworkOverTimeChart({
   stationLabels,
   horizonMs,
   warmupMs,
+  secondarySamples,
+  primaryLabel,
+  secondaryLabel,
 }: ReworkOverTimeChartProps) {
-  const { activeStations, paths, maxY } = useMemo(() => {
-    if (samples.length < 2) {
-      return { activeStations: [] as number[], paths: [] as string[], maxY: 0 };
-    }
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [hover, setHover] = useState<HoverState | null>(null);
+  const { activeStations, paths, secondaryPaths, maxY, plotXFor, plotYFor } = useMemo(() => {
+    const empty = {
+      activeStations: [] as number[],
+      paths: [] as string[],
+      secondaryPaths: [] as string[],
+      maxY: 0,
+      plotXFor: () => 0,
+      plotYFor: () => 0,
+    };
+    if (samples.length < 2) return empty;
     const last = samples[samples.length - 1]!.perStationRework;
     const active: number[] = [];
     for (let i = 0; i < last.length; i++) {
       if ((last[i] ?? 0) > 0) active.push(i);
     }
-    if (active.length === 0) {
-      return { activeStations: active, paths: [] as string[], maxY: 0 };
-    }
+    if (active.length === 0) return empty;
     const innerW = VIEW_W - PAD_X * 2;
     const innerH = VIEW_H - PAD_Y * 2;
     const startMs = warmupMs;
     const spanMs = Math.max(1, horizonMs - startMs);
-    let peak = 0;
-    for (const s of samples) {
-      for (const stn of active) {
-        const v = s.perStationRework[stn] ?? 0;
-        if (v > peak) peak = v;
+    const peakAcross = (arr: readonly TimeseriesSample[]): number => {
+      let p = 0;
+      for (const s of arr) {
+        for (const stn of active) {
+          const v = s.perStationRework[stn] ?? 0;
+          if (v > p) p = v;
+        }
       }
-    }
+      return p;
+    };
+    // Y-scale must accommodate both series so neither line clips.
+    const peak = Math.max(peakAcross(samples), secondarySamples ? peakAcross(secondarySamples) : 0);
     const yScale = peak > 0 ? innerH / peak : 0;
     const xOf = (tMs: number): number => PAD_X + ((tMs - startMs) / spanMs) * innerW;
     const yOf = (n: number): number => PAD_Y + innerH - n * yScale;
-    const built = active.map((stn) => {
-      let d = "";
-      samples.forEach((s, i) => {
-        const v = s.perStationRework[stn] ?? 0;
-        d += `${i === 0 ? "M" : " L"} ${String(xOf(s.tMs))} ${String(yOf(v))}`;
+    const buildLines = (arr: readonly TimeseriesSample[]): string[] =>
+      active.map((stn) => {
+        let d = "";
+        arr.forEach((s, i) => {
+          const v = s.perStationRework[stn] ?? 0;
+          d += `${i === 0 ? "M" : " L"} ${String(xOf(s.tMs))} ${String(yOf(v))}`;
+        });
+        return d;
       });
-      return d;
-    });
-    return { activeStations: active, paths: built, maxY: peak };
-  }, [samples, horizonMs, warmupMs]);
+    return {
+      activeStations: active,
+      paths: buildLines(samples),
+      secondaryPaths: secondarySamples ? buildLines(secondarySamples) : [],
+      maxY: peak,
+      plotXFor: xOf,
+      plotYFor: yOf,
+    };
+  }, [samples, secondarySamples, horizonMs, warmupMs]);
+
+  const onMove = (e: React.MouseEvent<SVGSVGElement>): void => {
+    if (samples.length === 0 || !wrapperRef.current) return;
+    const rect = wrapperRef.current.getBoundingClientRect();
+    const ratio = VIEW_W / rect.width;
+    const xInView = (e.clientX - rect.left) * ratio;
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < samples.length; i++) {
+      const dx = Math.abs(plotXFor(samples[i]?.tMs ?? 0) - xInView);
+      if (dx < bestDist) {
+        bestDist = dx;
+        best = i;
+      }
+    }
+    setHover({ idx: best });
+  };
+  const onLeave = (): void => {
+    setHover(null);
+  };
+  const hovered = hover && samples[hover.idx] ? samples[hover.idx] : null;
 
   if (samples.length < 2) {
     return (
@@ -90,7 +146,7 @@ export function ReworkOverTimeChart({
   }
 
   return (
-    <div className="w-full">
+    <div ref={wrapperRef} className="relative w-full">
       <div className="text-muted-foreground mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
         {activeStations.map((stn, i) => {
           const colorClass = STATION_COLORS[i % STATION_COLORS.length] ?? STATION_COLORS[0]!;
@@ -102,11 +158,27 @@ export function ReworkOverTimeChart({
             </span>
           );
         })}
+        {secondaryPaths.length > 0 ? (
+          <span className="text-muted-foreground ml-2 flex items-center gap-1.5">
+            <span
+              className="inline-block h-[2px] w-4 rounded-full"
+              style={{
+                background:
+                  "repeating-linear-gradient(90deg, currentColor 0 3px, transparent 3px 5px)",
+              }}
+            />
+            <span className="text-foreground">
+              {primaryLabel ?? "A"} vs <em>{secondaryLabel ?? "B"}</em>
+            </span>
+          </span>
+        ) : null}
       </div>
       <svg
         viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
         preserveAspectRatio="none"
         className="h-20 w-full"
+        onMouseMove={onMove}
+        onMouseLeave={onLeave}
       >
         {[0, 0.5, 1].map((frac) => {
           const y = PAD_Y + (VIEW_H - PAD_Y * 2) * (1 - frac);
@@ -151,6 +223,48 @@ export function ReworkOverTimeChart({
             />
           );
         })}
+        {secondaryPaths.map((d, i) => {
+          const colorClass = STATION_COLORS[i % STATION_COLORS.length] ?? STATION_COLORS[0]!;
+          return (
+            <path
+              key={`secondary-${String(i)}`}
+              d={d}
+              fill="none"
+              stroke="currentColor"
+              strokeOpacity={0.55}
+              strokeDasharray="3 2"
+              strokeWidth={1.5}
+              className={colorClass}
+            />
+          );
+        })}
+        {hovered ? (
+          <line
+            x1={plotXFor(hovered.tMs)}
+            y1={PAD_Y}
+            x2={plotXFor(hovered.tMs)}
+            y2={VIEW_H - PAD_Y}
+            stroke="currentColor"
+            strokeOpacity={0.35}
+            strokeDasharray="2 2"
+          />
+        ) : null}
+        {hovered
+          ? activeStations.map((stn, i) => {
+              const v = hovered.perStationRework[stn] ?? 0;
+              const colorClass = STATION_COLORS[i % STATION_COLORS.length] ?? STATION_COLORS[0]!;
+              return (
+                <circle
+                  key={`dot-${String(i)}`}
+                  cx={plotXFor(hovered.tMs)}
+                  cy={plotYFor(v)}
+                  r={2.5}
+                  fill="currentColor"
+                  className={colorClass}
+                />
+              );
+            })
+          : null}
       </svg>
       <div className="text-muted-foreground mt-1 flex items-center justify-between text-[10px]">
         <span className="font-mono tabular-nums">
@@ -163,7 +277,22 @@ export function ReworkOverTimeChart({
       </div>
       <div className="text-muted-foreground flex items-center justify-between text-xs">
         <span className="font-mono tabular-nums">0</span>
-        <span>{maxY.toLocaleString()} cumulative rework parts</span>
+        <span>
+          {hovered ? (
+            <span className="font-mono tabular-nums">
+              t={(hovered.tMs / 1000).toFixed(1)}s ·{" "}
+              {activeStations
+                .map((stn) => {
+                  const label = stationLabels[stn] ?? `S${String(stn + 1)}`;
+                  const v = hovered.perStationRework[stn] ?? 0;
+                  return `${label}: ${String(v)}`;
+                })
+                .join(" · ")}
+            </span>
+          ) : (
+            <span>{maxY.toLocaleString()} cumulative rework parts</span>
+          )}
+        </span>
         <span className="font-mono tabular-nums">{maxY.toLocaleString()}</span>
       </div>
     </div>

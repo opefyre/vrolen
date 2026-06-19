@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { TimeseriesSample } from "@/engine";
@@ -89,6 +89,61 @@ describe("ReworkOverTimeChart (VROL-641)", () => {
     const d = path?.getAttribute("d") ?? "";
     const last = d.split(" ").slice(-2);
     expect(Number(last[1])).toBeCloseTo(4, 0);
+  });
+
+  it("renders a hover guide + per-line dots on mouseMove (VROL-644)", () => {
+    const { container } = render(
+      <ReworkOverTimeChart
+        samples={[
+          sample(1_000, [10, 5], [0, 1]),
+          sample(2_000, [20, 10], [0, 3]),
+          sample(3_000, [30, 15], [0, 5]),
+        ]}
+        stationLabels={["Filler", "Capper"]}
+        horizonMs={3_000}
+        warmupMs={0}
+      />,
+    );
+    const svg = container.querySelector("svg")!;
+    // Before move: no guide line + no hover dot.
+    expect(container.querySelectorAll("svg line").length).toBe(6); // 3 Y + 3 X grid
+    expect(container.querySelectorAll("svg circle").length).toBe(0);
+    fireEvent.mouseMove(svg, { clientX: 100, clientY: 30 });
+    // Guide line added + a dot per active station (1 here: Capper).
+    expect(container.querySelectorAll("svg line").length).toBe(7);
+    expect(container.querySelectorAll("svg circle").length).toBe(1);
+    // Hover summary line shows the hovered sample's per-station value.
+    expect(container.textContent).toMatch(/Capper: \d+/);
+  });
+
+  it("renders a secondary dashed line per active station when secondarySamples is provided (VROL-644)", () => {
+    const primary = [
+      sample(1_000, [10, 5], [0, 1]),
+      sample(2_000, [20, 10], [0, 3]),
+      sample(3_000, [30, 15], [0, 5]),
+    ];
+    const secondary = [
+      sample(1_000, [10, 5], [0, 2]),
+      sample(2_000, [20, 10], [0, 4]),
+      sample(3_000, [30, 15], [0, 6]),
+    ];
+    const { container } = render(
+      <ReworkOverTimeChart
+        samples={primary}
+        secondarySamples={secondary}
+        primaryLabel="base"
+        secondaryLabel="with-rework-fix"
+        stationLabels={["Filler", "Capper"]}
+        horizonMs={3_000}
+        warmupMs={0}
+      />,
+    );
+    // 2 paths total: 1 primary + 1 secondary (only Capper is active).
+    const paths = container.querySelectorAll("svg path");
+    expect(paths).toHaveLength(2);
+    // Legend shows the compare-overlay chip.
+    expect(container.textContent).toContain("base");
+    expect(container.textContent).toContain("with-rework-fix");
   });
 
   it("emits cumulative rework lines that are monotone non-decreasing", () => {
