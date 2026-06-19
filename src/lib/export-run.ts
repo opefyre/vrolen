@@ -60,6 +60,7 @@ export function chainResultToCsv(result: ChainResult, meta: ChainResultToCsvOpti
     "label",
     "completed",
     "scrapped",
+    "reworked",
     "runningPct",
     "primaryReason",
     "primaryReasonPct",
@@ -76,6 +77,7 @@ export function chainResultToCsv(result: ChainResult, meta: ChainResultToCsvOpti
     const label = meta.stationLabels[i] ?? `Station ${String(i + 1)}`;
     const completed = result.perStationCompleted[i] ?? 0;
     const scrapped = result.perStationScrapped[i] ?? 0;
+    const reworked = result.perStationReworked[i] ?? 0;
     // bottlenecks[i] doesn't correspond to station i by chain order — find by label.
     const bn = result.bottlenecks.find((b) => (b.label ?? "") === label) ?? result.bottlenecks[i];
     const oee = result.perStationOee[i];
@@ -84,6 +86,7 @@ export function chainResultToCsv(result: ChainResult, meta: ChainResultToCsvOpti
         csvQuote(label),
         String(completed),
         String(scrapped),
+        String(reworked),
         fmt(bn?.runningPct ?? 0),
         csvQuote(bn?.primaryReason ?? ""),
         fmt(bn?.primaryReasonPct ?? 0),
@@ -113,10 +116,15 @@ function chainSamplesToCsv(result: ChainResult, meta: RunExportMeta): string {
   }
   const stateColumns = [...stateSet].sort();
   const edgeColumns = result.samples[0]?.perEdgeBufferFill.length ?? 0;
+  // VROL-628 — surface the run-final per-station rework count alongside the
+  // per-tick state-time. We don't have per-tick rework numbers from the
+  // sampler; reporting the cumulative end-of-run value at every row is the
+  // simplest honest answer for now (downstream consumers de-dup by station).
   const headers = [
     "tMs",
     "station",
     "completed",
+    "reworked",
     ...stateColumns.map((s) => `${s}Ms`),
     ...Array.from({ length: edgeColumns }, (_, i) => `edge${String(i)}Fill`),
   ];
@@ -127,10 +135,12 @@ function chainSamplesToCsv(result: ChainResult, meta: RunExportMeta): string {
       const label = meta.stationLabels[stn] ?? `Station ${String(stn + 1)}`;
       const completed = sample.perStationCompleted[stn] ?? 0;
       const stateMs = sample.perStationStateMs[stn] ?? {};
+      const reworked = result.perStationReworked[stn] ?? 0;
       const row = [
         String(sample.tMs),
         csvQuote(label),
         String(completed),
+        String(reworked),
         ...stateColumns.map((s) => String(stateMs[s] ?? 0)),
         ...Array.from({ length: edgeColumns }, (_, i) => String(sample.perEdgeBufferFill[i] ?? 0)),
       ];

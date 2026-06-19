@@ -154,6 +154,7 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
   const fmt = (n: number, digits = 1) =>
     n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
   const totalScrapped = result.perStationScrapped.reduce((a, b) => a + b, 0);
+  const totalReworked = result.perStationReworked.reduce((a, b) => a + b, 0);
   const totalBreakdowns = (result.perStationBreakdowns ?? []).reduce((a, b) => a + b, 0);
   const finalByMat = result.materialFinal ? new Map(result.materialFinal) : null;
   const finalBottles = finalByMat?.get(BOTTLES_ID) ?? null;
@@ -184,6 +185,7 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
               const max = Math.max(...result.perStationCompleted, 1);
               const pct = (count / max) * 100;
               const scrap = result.perStationScrapped[i] ?? 0;
+              const rework = result.perStationReworked[i] ?? 0;
               return (
                 <div key={i} className="space-y-1">
                   <div className="flex items-baseline justify-between text-sm">
@@ -193,6 +195,11 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
                       {scrap > 0 ? (
                         <span className="text-sim-down-foreground ml-2 text-xs">
                           · {scrap.toLocaleString()} scrap
+                        </span>
+                      ) : null}
+                      {rework > 0 ? (
+                        <span className="text-sim-setup-foreground ml-2 text-xs">
+                          · {rework.toLocaleString()} rework
                         </span>
                       ) : null}
                     </span>
@@ -286,7 +293,7 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
           </div>
         </CardContent>
       </Card>
-      {hasMaterials || hasBreakdowns || hasLabor || totalScrapped > 0 ? (
+      {hasMaterials || hasBreakdowns || hasLabor || totalScrapped > 0 || totalReworked > 0 ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {finalBottles !== null
             ? tile(
@@ -324,6 +331,13 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
                 "Scrap",
                 totalScrapped.toLocaleString(),
                 `${fmt(result.lineScrapRate * 100, 1)}% line scrap rate`,
+              )
+            : null}
+          {totalReworked > 0
+            ? tile(
+                "Rework",
+                totalReworked.toLocaleString(),
+                `${fmt(result.lineReworkRate * 100, 1)}% rerouted vs scrapped (VROL-628)`,
               )
             : null}
         </div>

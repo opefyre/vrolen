@@ -182,13 +182,27 @@ describe("export-run", () => {
     expect(header).toContain("edge1Fill");
   });
 
-  it("stations-mode output is unchanged byte-for-byte after VROL-623 (regression)", () => {
+  it("stations-mode output includes the VROL-628 reworked column", () => {
     const result = fakeResult();
-    const before = [
-      "label,completed,scrapped,runningPct,primaryReason,primaryReasonPct,oee,availability,performance,quality",
-      "Filler,120,0,0.5,blocking,0.45,0.5,1,0.5,1",
-      "Capper,100,0,0.98,running,0.98,0.98,1,0.98,1",
+    const expected = [
+      "label,completed,scrapped,reworked,runningPct,primaryReason,primaryReasonPct,oee,availability,performance,quality",
+      "Filler,120,0,0,0.5,blocking,0.45,0.5,1,0.5,1",
+      "Capper,100,0,0,0.98,running,0.98,0.98,1,0.98,1",
     ].join("\n");
-    expect(chainResultToCsv(result, { stationLabels: ["Filler", "Capper"] })).toBe(before);
+    expect(chainResultToCsv(result, { stationLabels: ["Filler", "Capper"] })).toBe(expected);
+  });
+
+  it("stations-mode reworked column reflects perStationReworked values (VROL-628)", () => {
+    const base = fakeResult();
+    const result: ChainResult = {
+      ...base,
+      perStationReworked: [0, 5],
+      lineReworkRate: 0.022,
+    };
+    const csv = chainResultToCsv(result, { stationLabels: ["Filler", "Capper"] });
+    const capperRow = csv.split("\n").find((l) => l.startsWith("Capper,")) ?? "";
+    // Columns: label, completed, scrapped, reworked, ...
+    const cols = capperRow.split(",");
+    expect(cols[3]).toBe("5");
   });
 });
