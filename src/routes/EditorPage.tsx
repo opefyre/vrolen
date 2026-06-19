@@ -65,6 +65,7 @@ import { Accordion, AccordionStatus } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CapacityChip } from "@/components/canvas/capacity-chip";
+import { DistributionField } from "@/components/ui/distribution-field";
 import { Input } from "@/components/ui/input";
 import { NumberField } from "@/components/ui/number-field";
 import {
@@ -90,7 +91,6 @@ import {
   type ChainWorkerConfig,
   constant,
   type Distribution,
-  meanOf,
   runChain,
   SeededPrng,
 } from "@/engine";
@@ -1487,7 +1487,9 @@ function EditorCanvas() {
                   }}
                 />
               </div>
-              <DistributionEditor
+              <DistributionField
+                label="Cycle distribution"
+                id="inspector-dist-kind"
                 value={
                   ((selectedNode.data as { cycleDistribution?: Distribution }).cycleDistribution ??
                     constant(
@@ -3224,9 +3226,9 @@ function PerProductCyclesEditor({
               </span>
             </label>
             {enabled && dist ? (
-              <DistributionEditor
+              <DistributionField
                 value={dist}
-                onChange={(d) => {
+                onChange={(d: Distribution) => {
                   onChange({ ...value, [p.id]: d });
                 }}
               />
@@ -3463,9 +3465,9 @@ function SetupTimeEditor({
         Setup / changeover time
       </label>
       {enabled ? (
-        <DistributionEditor
+        <DistributionField
           value={value}
-          onChange={(d) => {
+          onChange={(d: Distribution) => {
             onChange(d);
           }}
         />
@@ -3474,236 +3476,6 @@ function SetupTimeEditor({
           When enabled, the station goes Idle → Setup → Running for each cycle.
         </p>
       )}
-    </div>
-  );
-}
-
-function DistributionEditor({
-  value,
-  onChange,
-}: {
-  value: Distribution;
-  onChange: (d: Distribution) => void;
-}) {
-  const numberField = (
-    label: string,
-    id: string,
-    fieldValue: number,
-    setter: (n: number) => void,
-    extras: { min?: number; max?: number; step?: number } = {},
-  ) => (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={id} className="text-muted-foreground text-xs font-medium">
-        {label}
-      </label>
-      <Input
-        id={id}
-        type="number"
-        min={extras.min}
-        max={extras.max}
-        step={extras.step ?? 1}
-        value={fieldValue}
-        onChange={(e) => {
-          const n = Number(e.target.value);
-          if (Number.isFinite(n)) setter(n);
-        }}
-        className="font-mono tabular-nums"
-      />
-    </div>
-  );
-
-  const handleKindChange = (kind: Distribution["kind"]): void => {
-    // Pick sensible defaults derived from the current distribution's mean.
-    const meanGuess =
-      value.kind === "constant"
-        ? value.value
-        : value.kind === "uniform"
-          ? (value.min + value.max) / 2
-          : value.kind === "normal"
-            ? value.mean
-            : value.kind === "triangular"
-              ? (value.min + value.mode + value.max) / 3
-              : 1 / value.rate;
-    switch (kind) {
-      case "constant":
-        onChange({ kind: "constant", value: Math.max(1, Math.round(meanGuess)) });
-        break;
-      case "uniform":
-        onChange({
-          kind: "uniform",
-          min: Math.max(1, Math.round(meanGuess * 0.8)),
-          max: Math.max(2, Math.round(meanGuess * 1.2)),
-        });
-        break;
-      case "normal":
-        onChange({
-          kind: "normal",
-          mean: Math.max(1, Math.round(meanGuess)),
-          stddev: Math.max(1, Math.round(meanGuess * 0.1)),
-        });
-        break;
-      case "triangular":
-        onChange({
-          kind: "triangular",
-          min: Math.max(1, Math.round(meanGuess * 0.7)),
-          mode: Math.max(1, Math.round(meanGuess)),
-          max: Math.max(2, Math.round(meanGuess * 1.5)),
-        });
-        break;
-      case "exponential":
-        onChange({ kind: "exponential", rate: 1 / Math.max(1, meanGuess) });
-        break;
-    }
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="flex flex-col gap-1">
-        <label htmlFor="inspector-dist-kind" className="text-muted-foreground text-xs font-medium">
-          Cycle distribution
-        </label>
-        <select
-          id="inspector-dist-kind"
-          value={value.kind}
-          onChange={(e) => {
-            handleKindChange(e.target.value as Distribution["kind"]);
-          }}
-          className="border-input bg-background h-9 rounded-md border px-3 text-sm"
-        >
-          <option value="constant">Constant</option>
-          <option value="uniform">Uniform</option>
-          <option value="normal">Normal</option>
-          <option value="triangular">Triangular</option>
-          <option value="exponential">Exponential</option>
-        </select>
-      </div>
-      {value.kind === "constant"
-        ? numberField(
-            "Value (ms)",
-            "dist-const-value",
-            value.value,
-            (n) => {
-              onChange({ kind: "constant", value: Math.max(1, n) });
-            },
-            { min: 1 },
-          )
-        : null}
-      {value.kind === "uniform" ? (
-        <div className="grid grid-cols-2 gap-2">
-          {numberField(
-            "Min (ms)",
-            "dist-uniform-min",
-            value.min,
-            (n) => {
-              onChange({ kind: "uniform", min: Math.max(1, n), max: value.max });
-            },
-            { min: 1 },
-          )}
-          {numberField(
-            "Max (ms)",
-            "dist-uniform-max",
-            value.max,
-            (n) => {
-              onChange({ kind: "uniform", min: value.min, max: Math.max(value.min + 1, n) });
-            },
-            { min: value.min + 1 },
-          )}
-        </div>
-      ) : null}
-      {value.kind === "normal" ? (
-        <div className="grid grid-cols-2 gap-2">
-          {numberField(
-            "Mean (ms)",
-            "dist-normal-mean",
-            value.mean,
-            (n) => {
-              onChange({ kind: "normal", mean: Math.max(1, n), stddev: value.stddev });
-            },
-            { min: 1 },
-          )}
-          {numberField(
-            "Std dev (ms)",
-            "dist-normal-stddev",
-            value.stddev,
-            (n) => {
-              onChange({ kind: "normal", mean: value.mean, stddev: Math.max(0.1, n) });
-            },
-            { min: 0.1, step: 0.1 },
-          )}
-        </div>
-      ) : null}
-      {value.kind === "triangular" ? (
-        <div className="grid grid-cols-3 gap-2">
-          {numberField(
-            "Min",
-            "dist-tri-min",
-            value.min,
-            (n) => {
-              onChange({
-                kind: "triangular",
-                min: Math.max(1, n),
-                mode: value.mode,
-                max: value.max,
-              });
-            },
-            { min: 1 },
-          )}
-          {numberField(
-            "Mode",
-            "dist-tri-mode",
-            value.mode,
-            (n) => {
-              onChange({
-                kind: "triangular",
-                min: value.min,
-                mode: Math.max(value.min, n),
-                max: value.max,
-              });
-            },
-            { min: value.min },
-          )}
-          {numberField(
-            "Max",
-            "dist-tri-max",
-            value.max,
-            (n) => {
-              onChange({
-                kind: "triangular",
-                min: value.min,
-                mode: value.mode,
-                max: Math.max(value.mode, n),
-              });
-            },
-            { min: value.mode },
-          )}
-        </div>
-      ) : null}
-      {value.kind === "exponential" ? (
-        <>
-          {numberField(
-            "Mean (ms)",
-            "dist-exp-mean",
-            Math.round(1 / value.rate),
-            (n) => {
-              onChange({ kind: "exponential", rate: 1 / Math.max(1, n) });
-            },
-            { min: 1 },
-          )}
-          <p className="text-muted-foreground text-xs">
-            Implied rate: <span className="font-mono tabular-nums">{value.rate.toFixed(6)}</span>{" "}
-            (events/ms)
-          </p>
-        </>
-      ) : null}
-      <p className="text-muted-foreground text-xs">
-        Expected ≈{" "}
-        <span className="font-mono tabular-nums">
-          {(3_600_000 / Math.max(1, meanOf(value))).toLocaleString("en-US", {
-            maximumFractionDigits: 0,
-          })}
-        </span>{" "}
-        parts/hour at this station alone (no blocking / starvation).
-      </p>
     </div>
   );
 }
