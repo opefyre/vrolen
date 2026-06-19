@@ -109,6 +109,7 @@ import {
 } from "@/lib/run-history";
 import { consumePendingPreset, PRESETS, type Preset } from "@/lib/presets";
 import { runScenario, type ScenarioRunOutcome } from "@/lib/run-scenario";
+import { validateScenario } from "@/lib/validate-scenario";
 import {
   deleteScenario,
   listScenarios,
@@ -716,6 +717,28 @@ function EditorCanvas() {
   };
 
   const handleRun = useCallback((): void => {
+    // VROL-86 — scenario validation. Errors block; warnings surface as a
+    // softer toast but don't block.
+    const validation = validateScenario(nodes, edges, settings);
+    if (validation.errors.length > 0) {
+      const first = validation.errors[0]!;
+      toast.error(
+        `Can't run · ${String(validation.errors.length)} issue${validation.errors.length === 1 ? "" : "s"}`,
+        {
+          description: first.fix ? `${first.message}. ${first.fix}.` : first.message,
+        },
+      );
+      return;
+    }
+    if (validation.warnings.length > 0) {
+      const first = validation.warnings[0]!;
+      toast.warning(
+        `${String(validation.warnings.length)} validation warning${validation.warnings.length === 1 ? "" : "s"}`,
+        {
+          description: first.message,
+        },
+      );
+    }
     const translation = graphToChainOptions(nodes, edges);
     if (translation.error) {
       toast.error("Can't run", { description: translation.error });
