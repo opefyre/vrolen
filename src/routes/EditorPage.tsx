@@ -36,12 +36,15 @@ import {
 } from "@xyflow/react";
 import {
   Boxes,
+  CheckCircle2,
   CircleDot,
   Combine,
   ConciergeBell,
   Download,
   Factory,
   FolderOpen,
+  Loader2,
+  MoreHorizontal,
   Package,
   PackageCheck,
   Play,
@@ -1029,8 +1032,261 @@ function EditorCanvas() {
     });
   }, [edges, result, runMeta, animateFlow]);
 
+  // VROL-634 — derive top-bar status pill state. Idle until first run; pulses
+  // while a run is in flight; stays "Done at HH:MM:SS" after completion.
+  // Uses the same render-time compare-and-set pattern as VROL-621 to capture
+  // the wall-clock time of each new result without firing setState from a
+  // useEffect (which the react-hooks/set-state-in-effect rule rejects).
+  const [doneAt, setDoneAt] = useState<Date | null>(null);
+  const [lastResultSeen, setLastResultSeen] = useState<ChainResult | null>(null);
+  if (result !== lastResultSeen) {
+    setLastResultSeen(result);
+    setDoneAt(result ? new Date() : null);
+  }
+
+  // VROL-634 — secondary actions ("More") menu state + outside-click handler.
+  const [moreOpen, setMoreOpen] = useState<boolean>(false);
+  const moreRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDown = (e: PointerEvent) => {
+      const target = e.target;
+      if (moreRef.current && target instanceof Node && moreRef.current.contains(target)) return;
+      setMoreOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onDown, true);
+    };
+  }, [moreOpen]);
+
+  const downloadJson = useCallback(() => {
+    if (!result || !runMeta) return;
+    const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
+    downloadFile(`${stem}.json`, chainResultToJsonString(result), "application/json");
+    toast.success("Downloaded JSON");
+    setMoreOpen(false);
+  }, [result, runMeta]);
+  const downloadCsvStations = useCallback(() => {
+    if (!result || !runMeta) return;
+    const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
+    downloadFile(
+      `${stem}.csv`,
+      chainResultToCsv(result, { stationLabels: runMeta.stationLabels }),
+      "text/csv",
+    );
+    toast.success("Downloaded CSV");
+    setMoreOpen(false);
+  }, [result, runMeta]);
+  const downloadCsvSamples = useCallback(() => {
+    if (!result || !runMeta || result.samples.length <= 1) return;
+    const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
+    downloadFile(
+      `${stem}-samples.csv`,
+      chainResultToCsv(result, { stationLabels: runMeta.stationLabels, mode: "samples" }),
+      "text/csv",
+    );
+    toast.success("Downloaded timeseries CSV");
+    setMoreOpen(false);
+  }, [result, runMeta]);
+
   return (
     <div className="space-y-3">
+      {/* VROL-634 — sticky top bar: scenario name + status pill + primary
+          actions. Replaces the 9-button stack that used to live in the left
+          column with a horizontal action hierarchy. */}
+      <div className="border-border bg-card/80 supports-[backdrop-filter]:bg-card/60 sticky top-0 z-20 -mx-6 flex flex-wrap items-center gap-3 border-b px-6 py-2 backdrop-blur">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-foreground/80 truncate text-sm font-semibold">
+            {activeScenarioName ?? "Untitled scenario"}
+          </span>
+          {activeScenarioName && activeScenarioIsModified ? (
+            <span className="bg-sim-setup/20 text-sim-setup-foreground rounded-full px-1.5 py-0.5 text-[10px] font-medium">
+              modified
+            </span>
+          ) : null}
+        </div>
+        <span
+          className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+            isRunning
+              ? "bg-sim-running/20 text-sim-running"
+              : result
+                ? "bg-sim-running/15 text-foreground"
+                : "bg-muted text-muted-foreground"
+          }`}
+          aria-live="polite"
+        >
+          {isRunning ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Running…
+            </>
+          ) : result && doneAt ? (
+            <>
+              <CheckCircle2 className="h-3 w-3" />
+              Done at{" "}
+              {doneAt.toLocaleTimeString(undefined, {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              })}
+            </>
+          ) : (
+            <>
+              <CircleDot className="h-3 w-3" />
+              Idle
+            </>
+          )}
+        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setSettingsOpen(true);
+            }}
+            className="gap-2"
+            data-tour="run-settings"
+          >
+            <Settings2 className="h-4 w-4" />
+            Run settings
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setScenarios(listScenarios());
+              setScenariosOpen(true);
+            }}
+            className="gap-2"
+            data-tour="scenarios"
+          >
+            <FolderOpen className="h-4 w-4" />
+            Scenarios
+          </Button>
+          <div ref={moreRef} className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setMoreOpen((v) => !v);
+              }}
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              aria-label="More actions"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+            {moreOpen ? (
+              <div
+                role="menu"
+                className="border-border bg-popover absolute right-0 z-30 mt-1 w-56 rounded-md border p-1 shadow-md"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="hover:bg-accent flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm disabled:opacity-50"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    setConfirmReset(true);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Reset canvas
+                </button>
+                {result && runMeta ? (
+                  <>
+                    <div className="border-border my-1 border-t" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="hover:bg-accent flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm"
+                      onClick={downloadJson}
+                    >
+                      <Download className="h-4 w-4" />
+                      Download JSON
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="hover:bg-accent flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm"
+                      onClick={downloadCsvStations}
+                    >
+                      <Download className="h-4 w-4" />
+                      CSV (per station)
+                    </button>
+                    {result.samples.length > 1 ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="hover:bg-accent flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm"
+                        onClick={downloadCsvSamples}
+                      >
+                        <Download className="h-4 w-4" />
+                        CSV (timeseries)
+                      </button>
+                    ) : null}
+                    <div className="border-border my-1 border-t" />
+                    <label className="hover:bg-accent flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={animateFlow}
+                        onChange={(e) => {
+                          setAnimateFlow(e.target.checked);
+                        }}
+                        className="accent-sim-running h-4 w-4"
+                      />
+                      Animate flow on edges
+                    </label>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          {confirmReset ? (
+            <div
+              ref={(el) => {
+                confirmTargetRef.current = el;
+              }}
+              className="bg-card border-border flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
+            >
+              <span className="text-muted-foreground">Reset?</span>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setConfirmReset(false);
+                  handleReset();
+                }}
+              >
+                Yes
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setConfirmReset(false);
+                }}
+              >
+                No
+              </Button>
+            </div>
+          ) : null}
+          <Button
+            onClick={handleRun}
+            disabled={isRunning}
+            className="gap-2"
+            size="sm"
+            data-tour="run-button"
+          >
+            {isRunning ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="h-4 w-4" />
+            )}
+            {isRunning ? "Running" : "Run"}
+          </Button>
+        </div>
+      </div>
       <div
         className={`grid h-[calc(100vh-13rem)] gap-3 ${
           selectedNode ? "grid-cols-[200px_1fr_260px]" : "grid-cols-[200px_1fr]"
@@ -1060,148 +1316,6 @@ function EditorCanvas() {
                 </div>
               </div>
             ))}
-            <div className="space-y-2 pt-2">
-              <Button onClick={handleRun} disabled={isRunning} className="w-full gap-2" size="sm">
-                <Play className="h-4 w-4" />
-                {isRunning ? "Running…" : "Run simulation"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setSettingsOpen(true);
-                }}
-                className="w-full gap-2"
-              >
-                <Settings2 className="h-4 w-4" />
-                Run settings
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setScenarios(listScenarios());
-                  setScenariosOpen(true);
-                }}
-                className="w-full gap-2"
-              >
-                <FolderOpen className="h-4 w-4" />
-                Scenarios
-              </Button>
-              {confirmReset ? (
-                <div
-                  ref={(el) => {
-                    confirmTargetRef.current = el;
-                  }}
-                  className="flex items-center justify-between gap-1 text-xs"
-                >
-                  <span className="text-muted-foreground">Reset?</span>
-                  <div className="flex gap-1">
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        setConfirmReset(false);
-                        handleReset();
-                      }}
-                    >
-                      Yes
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setConfirmReset(false);
-                      }}
-                    >
-                      No
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setConfirmReset(true);
-                  }}
-                  className="w-full"
-                >
-                  Reset canvas
-                </Button>
-              )}
-              {result && runMeta ? (
-                <>
-                  <div className="border-border my-2 border-t" />
-                  <label className="flex items-center gap-2 text-xs font-medium">
-                    <input
-                      type="checkbox"
-                      checked={animateFlow}
-                      onChange={(e) => {
-                        setAnimateFlow(e.target.checked);
-                      }}
-                      className="accent-sim-running h-4 w-4"
-                    />
-                    Animate flow on edges
-                  </label>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full gap-2"
-                    onClick={() => {
-                      const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
-                      downloadFile(
-                        `${stem}.json`,
-                        chainResultToJsonString(result),
-                        "application/json",
-                      );
-                      toast.success("Downloaded JSON");
-                    }}
-                  >
-                    <Download className="h-4 w-4" />
-                    Download JSON
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full gap-2"
-                    onClick={() => {
-                      const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
-                      downloadFile(
-                        `${stem}.csv`,
-                        chainResultToCsv(result, { stationLabels: runMeta.stationLabels }),
-                        "text/csv",
-                      );
-                      toast.success("Downloaded CSV");
-                    }}
-                  >
-                    <Download className="h-4 w-4" />
-                    CSV (per station)
-                  </Button>
-                  {result.samples.length > 1 ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full gap-2"
-                      onClick={() => {
-                        const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
-                        downloadFile(
-                          `${stem}-samples.csv`,
-                          chainResultToCsv(result, {
-                            stationLabels: runMeta.stationLabels,
-                            mode: "samples",
-                          }),
-                          "text/csv",
-                        );
-                        toast.success("Downloaded timeseries CSV");
-                      }}
-                    >
-                      <Download className="h-4 w-4" />
-                      CSV (timeseries)
-                    </Button>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
           </CardContent>
         </Card>
 
