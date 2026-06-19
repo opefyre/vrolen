@@ -82,6 +82,12 @@ interface TrackedPart {
   readonly enteredSystemAtMs: number;
   /** Optional product identifier (VROL-594). Undefined for single-product runs. */
   readonly productId?: string;
+  /**
+   * Number of times this part has been re-routed via rework (VROL-626).
+   * Mutable: the rework router increments it before pushing into the target
+   * buffer. Compared against MAX_REWORK_PASSES to bound infinite loops.
+   */
+  reworkCount?: number;
 }
 
 /**
@@ -179,6 +185,18 @@ export interface ChainResult {
   readonly perStationScrapped: readonly number[];
   /** Line scrap rate: total scrapped / (total completed + total scrapped). */
   readonly lineScrapRate: number;
+  /**
+   * Per-station rework count (VROL-626) — count of defective parts that
+   * were re-routed to a rework target instead of being scrapped. Always
+   * present (zeros for runs with no rework configured).
+   */
+  readonly perStationReworked: readonly number[];
+  /**
+   * Line rework rate: total rework events / (total completed + total
+   * scrapped + total rework events). Captures how much rework the line is
+   * doing relative to total throughput attempts.
+   */
+  readonly lineReworkRate: number;
   /**
    * Labor utilization — total worker-busy ms across the run, normalized by
    * (worker count × elapsed ms). Undefined when no workers config provided.
@@ -288,6 +306,22 @@ export interface ChainTopologyNode {
    * model "no changeover needed".
    */
   readonly changeoverMatrix?: Record<string, Record<string, Distribution>>;
+  /**
+   * Optional per-station defect rate in [0, 1] (VROL-626 prerequisite). When
+   * a part completes a cycle, the engine samples uniformly and treats the
+   * part as defective if the roll is below this value. Defaults to 0 (no
+   * defects). Without this, rework targeting (below) has nothing to route.
+   */
+  readonly defectRate?: number;
+  /**
+   * Optional rework destination (VROL-626). When set, a defect at THIS
+   * station is routed back to the named target station's input buffer
+   * instead of being scrapped. Bounded by MAX_REWORK_PASSES (3) so a
+   * pathological loop can't form; if the cap is exhausted OR the target
+   * buffer is full, the part falls through to the scrap path. Rework
+   * targets are validated at run init — unknown ids throw.
+   */
+  readonly reworkTargetId?: string;
 }
 
 export interface ChainTopologyEdge {
@@ -347,6 +381,14 @@ interface NormalizedTopology {
   setupTimes: (Distribution | undefined)[];
   changeoverMatrices: (Record<string, Record<string, Distribution>> | undefined)[];
   labels: (string | undefined)[];
+  /** Per-station defect probabilities in [0, 1], default 0 (VROL-626). */
+  defectRates: number[];
+  /**
+   * Per-station rework target node index (VROL-626). undefined when the
+   * station has no rework configured. Validated at topology build time —
+   * unknown ids throw before any executor is constructed.
+   */
+  reworkTargets: (number | undefined)[];
   /** Edges in input order; each carries source + target as node-array indices. */
   edges: { sourceIdx: number; targetIdx: number }[];
   /** For each node index: the indices of nodes it sends parts to. */
@@ -413,6 +455,23 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
         `topology requires exactly one sink (out-degree 0), found ${String(sinks.length)}`,
       );
     }
+    // Resolve rework targets (VROL-626) — validates each reworkTargetId
+    // refers to an existing node before any executor is built. Self-targets
+    // are rejected too; defects that would otherwise rework themselves are
+    // a config bug, not a useful loop.
+    const reworkTargets: (number | undefined)[] = nodes.map((node, i) => {
+      if (!node.reworkTargetId) return undefined;
+      const idx = idToIdx.get(node.reworkTargetId);
+      if (idx === undefined) {
+        throw new Error(
+          `topology: station "${node.id}" reworkTargetId "${node.reworkTargetId}" is not a known node`,
+        );
+      }
+      if (idx === i) {
+        throw new Error(`topology: station "${node.id}" cannot rework to itself`);
+      }
+      return idx;
+    });
     return {
       nodeIds: nodes.map((n) => n.id),
       cycleTimes: nodes.map((n) => n.cycleTimeMs),
@@ -420,6 +479,8 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       setupTimes: nodes.map((n) => n.setupTimeMs),
       changeoverMatrices: nodes.map((n) => n.changeoverMatrix),
       labels: nodes.map((n) => n.label),
+      defectRates: nodes.map((n) => n.defectRate ?? 0),
+      reworkTargets,
       edges: normalizedEdges,
       outgoing,
       incoming,
@@ -447,6 +508,10 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     setupTimes: Array.from({ length: n }, () => undefined),
     changeoverMatrices: Array.from({ length: n }, () => undefined),
     labels: Array.from({ length: n }, (_, i) => opts.stationLabels?.[i]),
+    // Linear mode has no per-station defect config — leave defects off and
+    // rework targets empty. Callers wanting these features use DAG mode.
+    defectRates: Array.from({ length: n }, () => 0),
+    reworkTargets: Array.from({ length: n }, () => undefined),
     edges,
     outgoing,
     incoming,
@@ -569,6 +634,11 @@ export function runChain(opts: ChainOptions): ChainResult {
     );
   }
 
+  // VROL-626 — bounded rework loops. Defective parts at a station with a
+  // reworkTargetId are routed back into the target's input buffer with an
+  // incremented reworkCount; parts whose count hits MAX_REWORK_PASSES fall
+  // through to scrap so a pathological chain can't recurse forever.
+  const MAX_REWORK_PASSES = 3;
   const executors: CycleExecutor<TrackedPart>[] = [];
   for (let i = 0; i < n; i++) {
     const recipe = recipeByStation.get(i);
@@ -589,10 +659,24 @@ export function runChain(opts: ChainOptions): ChainResult {
           return changeoverMatrix[prevId]?.[nextPart.productId];
         }
       : undefined;
+    // Build a router closure when this station has a rework target. The
+    // target's input buffer is resolved AFTER executors are constructed, but
+    // we capture the index now and look up the executor at call time so the
+    // routing works in DAG mode regardless of station ordering.
+    const reworkTargetIdx = topology.reworkTargets[i];
+    const reworkRouter: ((part: TrackedPart) => boolean) | undefined =
+      reworkTargetIdx !== undefined
+        ? (part) => {
+            const count = (part.reworkCount ?? 0) + 1;
+            if (count > MAX_REWORK_PASSES) return false;
+            part.reworkCount = count;
+            return upstreamFor(reworkTargetIdx).push(part);
+          }
+        : undefined;
     const cfg: CycleConfig<TrackedPart> = {
       stationId: stationIds[i] as StationId,
       cycleTimeMs: topology.cycleTimes[i] as Distribution,
-      defectRate: 0,
+      defectRate: topology.defectRates[i] ?? 0,
       capacity: 1,
       upstream: upstreamFor(i),
       downstream: downstreamFor(i),
@@ -601,6 +685,7 @@ export function runChain(opts: ChainOptions): ChainResult {
       ...(setupTimeFor ? { setupTimeFor } : {}),
       ...(materialPool && recipe?.length ? { materialPool, materialRequirements: recipe } : {}),
       ...(workerPool ? { workerPool, ...(requiredSkills ? { requiredSkills } : {}) } : {}),
+      ...(reworkRouter ? { reworkRouter } : {}),
     };
     const ex = new CycleExecutor<TrackedPart>(
       cfg,
@@ -991,6 +1076,14 @@ export function runChain(opts: ChainOptions): ChainResult {
       const totalScrapped = executors.reduce((s, e) => s + e.scrapped, 0);
       const denom = totalCompleted + totalScrapped;
       return denom > 0 ? totalScrapped / denom : 0;
+    })(),
+    perStationReworked: executors.map((e) => e.reworked),
+    lineReworkRate: (() => {
+      const totalCompleted = executors.reduce((s, e) => s + e.completed, 0);
+      const totalScrapped = executors.reduce((s, e) => s + e.scrapped, 0);
+      const totalReworked = executors.reduce((s, e) => s + e.reworked, 0);
+      const denom = totalCompleted + totalScrapped + totalReworked;
+      return denom > 0 ? totalReworked / denom : 0;
     })(),
     samples,
     ...(materialFinal ? { materialFinal, replenishmentsFired } : {}),

@@ -628,6 +628,125 @@ describe("runChain — defect rate KPI (VROL-591)", () => {
   });
 });
 
+describe("runChain — rework loops (VROL-626)", () => {
+  it("per-station defect rate produces scrap on a topology run", () => {
+    // DAG-mode lets us set per-station defectRate. With 0.5 at the sink, ~half
+    // of completed parts should scrap.
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "a", cycleTimeMs: constant(50) },
+          { id: "b", cycleTimeMs: constant(50), defectRate: 0.5 },
+        ],
+        edges: [{ source: "a", target: "b" }],
+      },
+      interStationBufferCapacity: 5,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xc0ffee),
+    });
+    expect(result.perStationScrapped[1]).toBeGreaterThan(5);
+    expect(result.lineScrapRate).toBeGreaterThan(0.1);
+  });
+
+  it("rework router pushes defective parts back upstream + bumps perStationReworked", () => {
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "a", cycleTimeMs: constant(50) },
+          { id: "b", cycleTimeMs: constant(50), defectRate: 0.5, reworkTargetId: "a" },
+        ],
+        edges: [{ source: "a", target: "b" }],
+      },
+      interStationBufferCapacity: 5,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xc0ffee),
+    });
+    expect(result.perStationReworked).toHaveLength(2);
+    expect(result.perStationReworked[1]).toBeGreaterThan(0);
+    expect(result.lineReworkRate).toBeGreaterThan(0);
+    // Scrap rate should be much lower than the no-rework version above since
+    // most defects get re-routed instead of dropped.
+    expect(result.lineScrapRate).toBeLessThan(0.1);
+  });
+
+  it("MAX_REWORK_PASSES caps the loop — parts that re-defect 3 times scrap", () => {
+    // 100% defectRate at the rework target's child guarantees every part
+    // that completes B is defective, and B reworks back to A. After 3
+    // rework passes the same part scraps. Net: scrapped > 0 even with
+    // rework configured.
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "a", cycleTimeMs: constant(50) },
+          { id: "b", cycleTimeMs: constant(50), defectRate: 1.0, reworkTargetId: "a" },
+        ],
+        edges: [{ source: "a", target: "b" }],
+      },
+      interStationBufferCapacity: 10,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(7),
+    });
+    expect(result.perStationScrapped[1]).toBeGreaterThan(0);
+    expect(result.perStationReworked[1]).toBeGreaterThan(0);
+    // Each scrapped part has been reworked exactly MAX_REWORK_PASSES (3) times
+    // — so reworked count should be ~3x the scrap count for the run.
+    expect(result.perStationReworked[1]).toBeGreaterThanOrEqual(
+      (result.perStationScrapped[1] ?? 0) * 2,
+    );
+  });
+
+  it("rejects an unknown reworkTargetId at run init", () => {
+    expect(() =>
+      runChain({
+        topology: {
+          nodes: [
+            { id: "a", cycleTimeMs: constant(50) },
+            { id: "b", cycleTimeMs: constant(50), reworkTargetId: "ghost" },
+          ],
+          edges: [{ source: "a", target: "b" }],
+        },
+        interStationBufferCapacity: 5,
+        horizonMs: 1_000,
+        warmupMs: 0,
+        prng: new SeededPrng(1),
+      }),
+    ).toThrow(/reworkTargetId .*ghost.* is not a known node/);
+  });
+
+  it("rejects a self-targeting rework station", () => {
+    expect(() =>
+      runChain({
+        topology: {
+          nodes: [
+            { id: "a", cycleTimeMs: constant(50) },
+            { id: "b", cycleTimeMs: constant(50), reworkTargetId: "b" },
+          ],
+          edges: [{ source: "a", target: "b" }],
+        },
+        interStationBufferCapacity: 5,
+        horizonMs: 1_000,
+        warmupMs: 0,
+        prng: new SeededPrng(1),
+      }),
+    ).toThrow(/cannot rework to itself/);
+  });
+
+  it("perStationReworked is always present and zero when no rework configured", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(50)],
+      interStationBufferCapacity: 5,
+      horizonMs: 1_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    expect(result.perStationReworked).toEqual([0, 0]);
+    expect(result.lineReworkRate).toBe(0);
+  });
+});
+
 describe("runChain — multi-product mix (VROL-594)", () => {
   it("samples products at the source according to the configured weights", () => {
     // 60/40 A/B mix; over many parts the observed ratio should match within ~5%.

@@ -63,6 +63,8 @@ function fakeResult(): ChainResult {
     bottleneckStationIdx: 1,
     aggregateBufferWipL: 2,
     perEdgeFlowed: [120, 100],
+    perStationReworked: [0, 0],
+    lineReworkRate: 0,
     samples: [],
   };
 }

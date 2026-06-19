@@ -91,6 +91,17 @@ export interface CycleConfig<P> {
    */
   readonly workerPool?: WorkerPool;
   readonly requiredSkills?: readonly string[];
+  /**
+   * Optional rework router (VROL-626). Called on a defect roll BEFORE the
+   * scrap counter increments. Return true if the part was successfully
+   * re-routed (the executor counts it under `reworked` and skips the scrap
+   * path); return false to fall through to scrap. The router owns its own
+   * cap-and-validation policy — chain-harness wires it to push the part
+   * back into an upstream station's input buffer with an incremented
+   * reworkCount, returning false when the cap is hit or the target buffer
+   * is full.
+   */
+  readonly reworkRouter?: (part: P) => boolean;
 }
 
 export interface CompletionEvent<P> {
@@ -115,6 +126,7 @@ export class CycleExecutor<P> {
   private inProgress_ = 0;
   private completed_ = 0;
   private scrapped_ = 0;
+  private reworked_ = 0;
   private nextPartIdx_ = 0;
   /** Last completed part's productId — used by setupTimeFor for changeover lookups. */
   private lastProductId_: string | undefined;
@@ -150,6 +162,11 @@ export class CycleExecutor<P> {
 
   get scrapped(): number {
     return this.scrapped_;
+  }
+
+  /** Count of parts re-routed via reworkRouter at THIS station (VROL-626). */
+  get reworked(): number {
+    return this.reworked_;
   }
 
   /**
@@ -330,6 +347,16 @@ export class CycleExecutor<P> {
     const isDefective = this.prng.nextFloat() < this.config.defectRate;
 
     if (isDefective) {
+      // VROL-626 — defective part is routed to a rework target when the
+      // station has one configured AND the router accepts it (within the cap
+      // and target buffer has space). The router returns false to fall
+      // through to the scrap path.
+      if (this.config.reworkRouter && this.config.reworkRouter(part)) {
+        this.reworked_ += 1;
+        this.notifyCompletion({ stationId: this.config.stationId, part, timeMs, defective: true });
+        this.attemptStart(timeMs);
+        return;
+      }
       this.scrapped_ += 1;
       this.notifyCompletion({ stationId: this.config.stationId, part, timeMs, defective: true });
       this.attemptStart(timeMs);
