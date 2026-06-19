@@ -32,6 +32,12 @@ export interface ValidationIssue {
   readonly path?: string;
   /** Human-readable suggested fix. */
   readonly fix?: string;
+  /**
+   * VROL-304 — when set, the issue is associated with a specific canvas
+   * node so the validation panel can click-to-focus the camera + the node
+   * renderer can paint a red/yellow indicator on it.
+   */
+  readonly nodeId?: string;
 }
 
 export interface ValidationResult {
@@ -107,6 +113,7 @@ function checkReferenceIntegrity(
         message: `Edge ${String(e.id ?? i)} sources from unknown node "${e.source}"`,
         path: `edges[${String(i)}].source`,
         fix: `Delete this edge or add a node with id "${e.source}"`,
+        // No nodeId — the offending node doesn't exist; the issue is on the edge.
       });
     }
     if (!ids.has(e.target)) {
@@ -131,6 +138,7 @@ function checkReferenceIntegrity(
         message: `Station "${n.id}" reworks to unknown node "${raw}"`,
         path: `nodes[${String(i)}].data.reworkTargetNodeId`,
         fix: `Pick a different rework target or remove the setting`,
+        nodeId: n.id,
       });
     }
   });
@@ -176,6 +184,7 @@ function checkTopology(
           message: `Station "${n.id}" has no connections — it won't run`,
           path: `nodes[${String(i)}]`,
           fix: `Connect it to the chain or delete it`,
+          nodeId: n.id,
         });
       }
     });
@@ -261,6 +270,7 @@ function checkResourceFeasibility(
           message: `Station "${n.id}" requires skill "${required}" but no worker has it`,
           path: `nodes[${String(i)}].data.skills`,
           fix: `Add a worker with the "${required}" skill or remove the requirement`,
+          nodeId: n.id,
         });
       }
     }

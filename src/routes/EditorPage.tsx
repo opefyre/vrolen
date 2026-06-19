@@ -42,6 +42,8 @@ import {
   Combine,
   ConciergeBell,
   Download,
+  AlertCircle,
+  AlertTriangle,
   Factory,
   FolderOpen,
   HelpCircle,
@@ -109,7 +111,8 @@ import {
 } from "@/lib/run-history";
 import { consumePendingPreset, PRESETS, type Preset } from "@/lib/presets";
 import { runScenario, type ScenarioRunOutcome } from "@/lib/run-scenario";
-import { validateScenario } from "@/lib/validate-scenario";
+import { validateScenario, type ValidationIssue } from "@/lib/validate-scenario";
+import { ValidationPanel } from "@/components/editor/validation-panel";
 import {
   deleteScenario,
   listScenarios,
@@ -389,10 +392,15 @@ function StationNode({ data, selected }: NodeProps) {
       ? ((d as { capacity: number }).capacity as number)
       : 1;
   const hasParallel = capacity > 1;
+  // VROL-304 — validation severity dot. EditorPage injects this into node
+  // data via nodesForFlow so the StationNode can render an indicator
+  // without coupling to validation state directly.
+  const validationSeverity = (d as { _validationSeverity?: "error" | "warning" })
+    ._validationSeverity;
 
   return (
     <div
-      className={`bg-card min-w-[148px] rounded-lg border border-l-4 px-3 py-2 shadow-sm transition-all ${
+      className={`bg-card relative min-w-[148px] rounded-lg border border-l-4 px-3 py-2 shadow-sm transition-all ${
         accent.border
       } ${
         selected
@@ -400,6 +408,15 @@ function StationNode({ data, selected }: NodeProps) {
           : "border-border hover:shadow-md"
       }`}
     >
+      {/* VROL-304 — validation severity indicator. Errors red, warnings yellow. */}
+      {validationSeverity ? (
+        <span
+          className={`absolute -top-1.5 -right-1.5 h-3 w-3 rounded-full ring-2 ring-white ${
+            validationSeverity === "error" ? "bg-sim-down" : "bg-sim-setup"
+          }`}
+          aria-label={validationSeverity === "error" ? "Validation error" : "Validation warning"}
+        />
+      ) : null}
       <Handle type="target" position={Position.Left} className="!h-3 !w-3" />
       <div className="flex items-center gap-2">
         <span
@@ -511,6 +528,8 @@ function EditorCanvas() {
   const [settings, setSettings] = useState<RunSettings>(() => initial.settings);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [scenariosOpen, setScenariosOpen] = useState<boolean>(false);
+  // VROL-304 — validation panel popover state.
+  const [validationOpen, setValidationOpen] = useState<boolean>(false);
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>(() => listScenarios());
   const [saveNameDraft, setSaveNameDraft] = useState<string>("");
   const [activeScenarioName, setActiveScenarioName] = useState<string | null>(null);
@@ -971,6 +990,18 @@ function EditorCanvas() {
     [nodes, edges, settings, selectedNodeId],
   );
 
+  // VROL-304 — click a validation issue → pan + zoom the canvas to its node.
+  const focusValidationIssue = useCallback(
+    (iss: ValidationIssue) => {
+      if (!iss.nodeId) return;
+      const node = nodes.find((n) => n.id === iss.nodeId);
+      if (!node) return;
+      flow.setCenter(node.position.x + 75, node.position.y + 40, { zoom: 1.2, duration: 400 });
+      setValidationOpen(false);
+    },
+    [flow, nodes],
+  );
+
   // VROL-654 — load a saved comparison back into the sheet.
   const restoreComparison = useCallback((entry: ComparisonEntry) => {
     setComparison({
@@ -1061,27 +1092,62 @@ function EditorCanvas() {
   // VROL-614 — feed each station's cumulative-completed series into its node
   // data so StationNode can render a sparkline. Hidden when no result, no
   // samples, or the station isn't on the analysed chain.
+  // VROL-304 — live validation. Runs on every nodes/edges/settings change.
+  // memo dedup makes it cheap; the heavy check is O(nodes + edges) anyway.
+  const validation = useMemo(
+    () => validateScenario(nodes, edges, settings),
+    [nodes, edges, settings],
+  );
+  // VROL-304 — per-node max-severity map for inline canvas indicators.
+  const severityByNodeId = useMemo(() => {
+    const map = new Map<string, "error" | "warning">();
+    for (const iss of [...validation.errors, ...validation.warnings]) {
+      if (!iss.nodeId) continue;
+      const prev = map.get(iss.nodeId);
+      // error beats warning; same severity is a no-op.
+      if (iss.severity === "error" || prev !== "error") map.set(iss.nodeId, iss.severity);
+    }
+    return map;
+  }, [validation]);
+
   const nodesForFlow = useMemo<Node[]>(() => {
-    if (!result || !runMeta || result.samples.length === 0) return nodes;
+    const sevMap = severityByNodeId;
+    // Build base nodes either from sparkline enrichment or just the raw nodes.
     const idxByNodeId = new Map<string, number>();
-    runMeta.chainNodeIds.forEach((id, i) => idxByNodeId.set(id, i));
+    if (result && runMeta && result.samples.length > 0) {
+      runMeta.chainNodeIds.forEach((id, i) => idxByNodeId.set(id, i));
+    }
     return nodes.map((n) => {
       const stationIdx = idxByNodeId.get(n.id);
-      if (stationIdx === undefined) {
-        // Off-chain (e.g. unconnected palette drop) — strip any stale series.
-        const data = n.data as Record<string, unknown>;
-        if (!("sparklineSeries" in data)) return n;
-        const next = { ...data };
-        delete next.sparklineSeries;
-        return { ...n, data: next };
+      const baseData = n.data as Record<string, unknown>;
+      // sparklineSeries enrichment (VROL-614).
+      let nextData: Record<string, unknown> = baseData;
+      if (result && runMeta && result.samples.length > 0) {
+        if (stationIdx === undefined) {
+          if ("sparklineSeries" in baseData) {
+            const stripped = { ...baseData };
+            delete stripped.sparklineSeries;
+            nextData = stripped;
+          }
+        } else {
+          const series = result.samples.map((s) => s.perStationCompleted[stationIdx] ?? 0);
+          nextData = { ...baseData, sparklineSeries: series };
+        }
       }
-      const series = result.samples.map((s) => s.perStationCompleted[stationIdx] ?? 0);
-      return {
-        ...n,
-        data: { ...(n.data as Record<string, unknown>), sparklineSeries: series },
-      };
+      // VROL-304 — validation severity (overlay applies regardless of result).
+      const sev = sevMap.get(n.id);
+      if (sev) {
+        if (nextData === baseData) nextData = { ...baseData };
+        nextData = { ...nextData, _validationSeverity: sev };
+      } else if ("_validationSeverity" in nextData) {
+        const stripped = { ...nextData };
+        delete stripped._validationSeverity;
+        nextData = stripped;
+      }
+      if (nextData === baseData) return n;
+      return { ...n, data: nextData };
     });
-  }, [nodes, result, runMeta]);
+  }, [nodes, result, runMeta, severityByNodeId]);
 
   const edgesForFlow = useMemo<Edge[]>(() => {
     if (!result || !runMeta || result.elapsedMs <= 0) return edges;
@@ -1395,6 +1461,40 @@ function EditorCanvas() {
               >
                 No
               </Button>
+            </div>
+          ) : null}
+          {/* VROL-304 — validation badge: opens an inline popover with all issues. */}
+          {validation.errors.length + validation.warnings.length > 0 ? (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setValidationOpen((v) => !v);
+                }}
+                className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-2 text-xs font-medium ${
+                  validation.errors.length > 0
+                    ? "border-sim-down/40 bg-sim-down/10 text-sim-down-foreground"
+                    : "border-sim-setup/40 bg-sim-setup/10 text-sim-setup-foreground"
+                }`}
+                aria-label={`${String(validation.errors.length)} errors, ${String(validation.warnings.length)} warnings`}
+                title="Open validation panel"
+              >
+                {validation.errors.length > 0 ? (
+                  <AlertCircle className="h-3.5 w-3.5" />
+                ) : (
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                )}
+                {validation.errors.length > 0 ? `${String(validation.errors.length)} err` : null}
+                {validation.errors.length > 0 && validation.warnings.length > 0 ? " · " : null}
+                {validation.warnings.length > 0
+                  ? `${String(validation.warnings.length)} warn`
+                  : null}
+              </button>
+              {validationOpen ? (
+                <div className="border-border bg-card absolute right-0 z-40 mt-1 w-96 rounded-md border shadow-lg">
+                  <ValidationPanel result={validation} onIssueFocus={focusValidationIssue} />
+                </div>
+              ) : null}
             </div>
           ) : null}
           <Button
