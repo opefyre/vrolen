@@ -45,6 +45,15 @@ export type EngineEvent =
       readonly maxInventory?: number;
     }
   /**
+   * VROL-648 — a scheduled source arrival has landed. The orchestrator
+   * pushes `batchSize` parts into the source station's input buffer +
+   * samples + schedules the next arrival.
+   */
+  | {
+      readonly kind: "source-arrival";
+      readonly batchSize: number;
+    }
+  /**
    * A scheduled worker break has ended (VROL-618). The orchestrator handling
    * this event nudges every executor's attemptStart so stations that were
    * Starved because all workers were on break can resume now that the break

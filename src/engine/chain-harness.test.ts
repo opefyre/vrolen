@@ -155,6 +155,65 @@ describe("runChain — materials (VROL-575)", () => {
     expect(result.completed).toBeGreaterThan(0);
   });
 
+  it("source: interArrivalMs=constant(1000) over 60s ≈ 60 arrivals (VROL-648)", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100)],
+      interStationBufferCapacity: 100,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+      source: { interArrivalMs: constant(1000) },
+    });
+    // t=0, 1000, 2000, ... 60000 = 61 events.
+    expect(result.sourceArrivalsFired).toBe(61);
+    // 1 part per arrival; ~61 completed (give or take downstream draining).
+    expect(result.completed).toBeGreaterThan(50);
+    expect(result.completed).toBeLessThanOrEqual(61);
+  });
+
+  it("source: batchSize=5 multiplies parts per arrival (VROL-648)", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100)],
+      interStationBufferCapacity: 200,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+      source: { interArrivalMs: constant(2000), batchSize: 5 },
+    });
+    // t=0, 2000, 4000, 6000, 8000, 10000 = 6 events × 5 parts = 30 parts injected.
+    expect(result.sourceArrivalsFired).toBe(6);
+    expect(result.completed).toBeGreaterThan(20);
+    expect(result.completed).toBeLessThanOrEqual(30);
+  });
+
+  it("source omitted: sourceArrivalsFired is undefined (back-compat) (VROL-648)", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 1_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    expect(result.sourceArrivalsFired).toBeUndefined();
+    expect(result.completed).toBeGreaterThan(0);
+  });
+
+  it("source: rejects batchSize 0 or non-integer at init (VROL-648)", () => {
+    const base = {
+      stationCycleTimes: [constant(100), constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 1_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    };
+    expect(() =>
+      runChain({ ...base, source: { interArrivalMs: constant(500), batchSize: 0 } }),
+    ).toThrow(/batchSize must be a positive integer/);
+    expect(() =>
+      runChain({ ...base, source: { interArrivalMs: constant(500), batchSize: 1.5 } }),
+    ).toThrow(/batchSize must be a positive integer/);
+  });
+
   it("returns no materialFinal field when materials config is omitted", () => {
     const result = runChain({
       stationCycleTimes: [constant(100), constant(100)],

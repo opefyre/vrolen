@@ -33,6 +33,7 @@ import { MaterialPool, type MaterialRequirement } from "./material-pool";
 import { MultiInputBuffer, MultiOutputBuffer } from "./multi-buffer";
 import { computeOee, type OeeMetrics } from "./oee";
 import type { Prng } from "./prng";
+import { sample } from "./sampling";
 import { Scheduler } from "./scheduler";
 import { StationStateMachine } from "./state-machine";
 import { StateTimeTracker } from "./state-time-tracker";
@@ -170,6 +171,11 @@ export interface ChainResult {
   readonly materialFinal?: ReadonlyArray<readonly [MaterialId, number]>;
   /** Total replenishment-event count fired during the run. */
   readonly replenishmentsFired?: number;
+  /**
+   * Total source-arrival event count fired during the run (VROL-648).
+   * Undefined when ChainOptions.source was omitted (back-compat).
+   */
+  readonly sourceArrivalsFired?: number;
   /** Per-station OEE metrics (Availability × Performance × Quality). */
   readonly perStationOee: readonly OeeMetrics[];
   /**
@@ -417,6 +423,21 @@ export interface ChainOptions {
    * dropped so chart series line up with the published end-of-run KPIs.
    */
   readonly sampler?: ChainSamplerConfig;
+  /**
+   * Optional finite-rate source generation (VROL-648). When set, the source
+   * station's input buffer is filled by scheduled "source-arrival" events
+   * instead of on-demand. interArrivalMs samples from a Distribution
+   * (constant, exponential, etc); batchSize defaults to 1 (one part per
+   * arrival). When omitted, the source produces on-demand as before
+   * (back-compat).
+   */
+  readonly source?: ChainSourceConfig;
+}
+
+export interface ChainSourceConfig {
+  readonly interArrivalMs: Distribution;
+  /** Parts pushed per arrival event. Default 1. Must be a positive integer when set. */
+  readonly batchSize?: number;
 }
 
 /**
@@ -848,18 +869,23 @@ export function runChain(opts: ChainOptions): ChainResult {
   // Refill the input on-demand, ONE part at a time, stamped with the time
   // the source will pull it. This keeps W (time-in-system) at exit honest —
   // a pre-loaded queue would give misleading W values for parts deep in it.
+  // When ChainOptions.source is set (VROL-648), parts are pushed by
+  // scheduled "source-arrival" events instead — refillOne is unused in that
+  // mode and the on-completion-refill below is skipped.
   let nextPartId = 0;
-  const refillOne = (timeMs: number): void => {
-    if (inputBuffer.size === 0) {
-      const productId = pickProduct();
-      inputBuffer.push({
-        id: nextPartId++,
-        enteredSystemAtMs: timeMs,
-        ...(productId !== undefined ? { productId } : {}),
-      });
-    }
+  const pushPart = (timeMs: number): void => {
+    const productId = pickProduct();
+    inputBuffer.push({
+      id: nextPartId++,
+      enteredSystemAtMs: timeMs,
+      ...(productId !== undefined ? { productId } : {}),
+    });
   };
-  refillOne(0);
+  const refillOne = (timeMs: number): void => {
+    if (inputBuffer.size === 0) pushPart(timeMs);
+  };
+  const sourceMode = opts.source !== undefined;
+  if (!sourceMode) refillOne(0);
 
   // Cross-station notifications via the topology adjacency.
   for (let i = 0; i < n; i++) {
@@ -876,10 +902,32 @@ export function runChain(opts: ChainOptions): ChainResult {
 
   // After the source station finishes a cycle, refill the input BEFORE its
   // attemptStart tries to pull. (notifyCompletion runs before attemptStart
-  // inside handleCycleComplete, so this slots in correctly.)
-  executors[topology.sourceIdx]?.onCompletion((event) => {
-    refillOne(event.timeMs);
-  });
+  // inside handleCycleComplete, so this slots in correctly.) VROL-648 —
+  // sourceMode disables this; arrivals are the only injection path.
+  if (!sourceMode) {
+    executors[topology.sourceIdx]?.onCompletion((event) => {
+      refillOne(event.timeMs);
+    });
+  }
+
+  // VROL-648 — finite-rate source generation. Validate config, schedule the
+  // first arrival at t=0, and let the scheduler handler chain the rest.
+  let sourceArrivalsFired = 0;
+  let sourceBatchSize = 1;
+  let sourceInterArrival: Distribution | undefined;
+  if (sourceMode) {
+    const cfg = opts.source!;
+    if (cfg.batchSize !== undefined) {
+      if (!Number.isInteger(cfg.batchSize) || cfg.batchSize < 1) {
+        throw new Error(
+          `source.batchSize must be a positive integer (got ${String(cfg.batchSize)})`,
+        );
+      }
+      sourceBatchSize = cfg.batchSize;
+    }
+    sourceInterArrival = cfg.interArrivalMs;
+    scheduler.schedule(0, { kind: "source-arrival", batchSize: sourceBatchSize });
+  }
 
   // Schedule any replenishment events declared in the materials config.
   let replenishmentsFired = 0;
@@ -1019,6 +1067,21 @@ export function runChain(opts: ChainOptions): ChainResult {
       }
       continue;
     }
+    if (ev.payload.kind === "source-arrival") {
+      // VROL-648 — push `batchSize` parts, nudge the source station, then
+      // sample + schedule the next arrival if there's still horizon left.
+      for (let b = 0; b < ev.payload.batchSize; b++) pushPart(ev.timeMs);
+      sourceArrivalsFired += 1;
+      executors[topology.sourceIdx]?.onUpstreamAvailable(ev.timeMs);
+      if (sourceInterArrival) {
+        const dtMs = sample(sourceInterArrival, opts.prng, { min: 0 });
+        const nextT = ev.timeMs + dtMs;
+        if (nextT <= opts.horizonMs) {
+          scheduler.schedule(nextT, { kind: "source-arrival", batchSize: sourceBatchSize });
+        }
+      }
+      continue;
+    }
     if (ev.payload.kind === "breakdown-start") {
       const idx = stationIds.indexOf(ev.payload.stationId);
       const manager = breakdownManagers?.[idx];
@@ -1086,7 +1149,9 @@ export function runChain(opts: ChainOptions): ChainResult {
       executors[upIdx]?.onDownstreamCleared(ev.timeMs);
     }
 
-    if (idx === topology.sourceIdx) refillOne(ev.timeMs);
+    // VROL-648 — sourceMode disables on-demand refill; arrivals are the
+    // only injection path.
+    if (idx === topology.sourceIdx && !sourceMode) refillOne(ev.timeMs);
 
     // When workers are configured, releasing one inside handleCycleComplete
     // doesn't notify other stations that have been Starved on no-skill. Nudge
@@ -1231,6 +1296,7 @@ export function runChain(opts: ChainOptions): ChainResult {
     })(),
     samples,
     ...(materialFinal ? { materialFinal, replenishmentsFired } : {}),
+    ...(sourceMode ? { sourceArrivalsFired } : {}),
     ...(breakdownCounts ? { perStationBreakdowns: breakdownCounts } : {}),
     ...(opts.maintenance
       ? {

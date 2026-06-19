@@ -180,6 +180,7 @@ export type {
   ChainTopologyNode,
   ChainTopologyEdge,
   ChainSamplerConfig,
+  ChainSourceConfig,
   TimeseriesSample,
 } from "./chain-harness";
 export { runChain, DEFAULT_REWORK_PASS_LIMIT } from "./chain-harness";
