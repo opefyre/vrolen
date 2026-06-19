@@ -92,6 +92,18 @@ function setupDistributionOf(node: Node): Distribution | undefined {
   return undefined;
 }
 
+function defectRateOf(node: Node): number | undefined {
+  const raw = (node.data as { defectRate?: unknown } | undefined)?.defectRate;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  if (raw <= 0) return undefined;
+  return Math.min(1, raw);
+}
+
+function reworkTargetIdOf(node: Node): string | undefined {
+  const raw = (node.data as { reworkTargetNodeId?: unknown } | undefined)?.reworkTargetNodeId;
+  return typeof raw === "string" && raw.length > 0 ? raw : undefined;
+}
+
 function cycleByProductOf(node: Node): Record<string, Distribution> | undefined {
   const raw = (node.data as { cycleByProduct?: unknown } | undefined)?.cycleByProduct;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
@@ -266,6 +278,13 @@ export function graphToChainOptions(
         const setup = setupDistributionOf(node);
         const byProduct = cycleByProductOf(node);
         const matrix = changeoverMatrixOf(node);
+        const defectRate = defectRateOf(node);
+        // VROL-627 — only pass reworkTargetId through if the target is also
+        // in the chain. Off-chain rework targets (e.g., the user pointed
+        // at an unconnected node) would throw at engine init; safer to drop
+        // them here so the run still produces something.
+        const reworkRaw = reworkTargetIdOf(node);
+        const reworkTargetId = reworkRaw && topoSet.has(reworkRaw) ? reworkRaw : undefined;
         return {
           id,
           label: labelOf(node),
@@ -273,6 +292,8 @@ export function graphToChainOptions(
           ...(setup ? { setupTimeMs: setup } : {}),
           ...(byProduct ? { cycleByProduct: byProduct } : {}),
           ...(matrix ? { changeoverMatrix: matrix } : {}),
+          ...(defectRate !== undefined ? { defectRate } : {}),
+          ...(reworkTargetId ? { reworkTargetId } : {}),
         };
       });
       const topoEdges: ChainTopologyEdge[] = edges

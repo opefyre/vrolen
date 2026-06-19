@@ -90,6 +90,43 @@ describe("graphToChainOptions", () => {
     expect(r.stationKeys).toEqual(["key-A", "b"]);
   });
 
+  it("passes reworkTargetNodeId + defectRate through to topology nodes (VROL-627)", () => {
+    // 3-station branching graph so we end up in DAG mode and topology nodes
+    // are produced. b has defectRate + reworkTargetNodeId pointing back at a.
+    const nodes = [
+      node("a", { cycleMs: 50 }),
+      node("b", { cycleMs: 100 }),
+      node("c", { cycleMs: 50 }),
+    ];
+    (nodes[1]!.data as Record<string, unknown>).defectRate = 0.4;
+    (nodes[1]!.data as Record<string, unknown>).reworkTargetNodeId = "a";
+    const edges = [edge("a", "b"), edge("b", "c"), edge("a", "c")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.topology).toBeDefined();
+    const bTopo = r.topology!.nodes.find((n) => n.id === "b");
+    expect(bTopo?.defectRate).toBe(0.4);
+    expect(bTopo?.reworkTargetId).toBe("a");
+  });
+
+  it("drops a reworkTargetNodeId pointing at an unknown node id (VROL-627)", () => {
+    // b references "ghost" which doesn't exist in the node list. Translator
+    // must drop it so the engine doesn't throw on an unknown id at init —
+    // the engine's own validation is a backstop, but the friendly path is
+    // to silently drop here so other config is still runnable.
+    const nodes = [
+      node("a", { cycleMs: 50 }),
+      node("b", { cycleMs: 100 }),
+      node("c", { cycleMs: 50 }),
+    ];
+    (nodes[1]!.data as Record<string, unknown>).reworkTargetNodeId = "ghost";
+    const edges = [edge("a", "b"), edge("b", "c"), edge("a", "c")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    const bTopo = r.topology!.nodes.find((n) => n.id === "b");
+    expect(bTopo?.reworkTargetId).toBeUndefined();
+  });
+
   it("ignores self-loops and edges referencing unknown ids", () => {
     const nodes = [node("a", { cycleMs: 50 }), node("b", { cycleMs: 100 })];
     const edges = [

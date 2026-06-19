@@ -256,6 +256,8 @@ interface StationNodeData {
   changeoverMatrix?: Record<string, Record<string, Distribution>>;
   /** Cumulative-completed series injected by EditorPage when samples exist (VROL-614). */
   sparklineSeries?: number[];
+  /** Defects from THIS station get routed to this node id instead of scrapping (VROL-627). */
+  reworkTargetNodeId?: string;
   [key: string]: unknown;
 }
 
@@ -269,6 +271,7 @@ function StationNode({ data, selected }: NodeProps) {
     d.changeoverMatrix && typeof d.changeoverMatrix === "object"
       ? Object.keys(d.changeoverMatrix).length > 0
       : false;
+  const hasRework = typeof d.reworkTargetNodeId === "string" && d.reworkTargetNodeId.length > 0;
 
   return (
     <div
@@ -281,7 +284,12 @@ function StationNode({ data, selected }: NodeProps) {
         <Icon className="h-4 w-4 shrink-0" />
         <div className="min-w-0 text-sm font-medium">{d.label ?? "Station"}</div>
       </div>
-      {maintenanceCount + skillCount + (hasSetup ? 1 : 0) + (hasMatrix ? 1 : 0) > 0 ? (
+      {maintenanceCount +
+        skillCount +
+        (hasSetup ? 1 : 0) +
+        (hasMatrix ? 1 : 0) +
+        (hasRework ? 1 : 0) >
+      0 ? (
         <div className="text-muted-foreground mt-1.5 flex flex-wrap gap-1 text-[10px]">
           {maintenanceCount > 0 ? (
             <span className="bg-muted rounded-full px-1.5 py-0.5" title="Maintenance windows">
@@ -301,6 +309,11 @@ function StationNode({ data, selected }: NodeProps) {
           {hasMatrix ? (
             <span className="bg-muted rounded-full px-1.5 py-0.5" title="Changeover matrix">
               ⇄
+            </span>
+          ) : null}
+          {hasRework ? (
+            <span className="bg-muted rounded-full px-1.5 py-0.5" title="Rework target set">
+              ↺
             </span>
           ) : null}
         </div>
@@ -1185,6 +1198,43 @@ function EditorCanvas() {
                   }}
                   className="font-mono tabular-nums"
                 />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="inspector-rework"
+                  className="text-muted-foreground text-xs font-medium"
+                >
+                  Rework target (VROL-627)
+                </label>
+                <select
+                  id="inspector-rework"
+                  value={
+                    (selectedNode.data as { reworkTargetNodeId?: string }).reworkTargetNodeId ?? ""
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    updateSelectedNodeData({
+                      reworkTargetNodeId: v.length > 0 ? v : undefined,
+                    });
+                  }}
+                  className="border-input bg-background rounded-md border px-2 py-1.5 text-sm"
+                >
+                  <option value="">None — scrap defects</option>
+                  {nodes
+                    .filter((n) => n.id !== selectedNode.id)
+                    .map((n) => {
+                      const d = n.data as { label?: string };
+                      return (
+                        <option key={n.id} value={n.id}>
+                          {d.label ?? n.id}
+                        </option>
+                      );
+                    })}
+                </select>
+                <p className="text-muted-foreground text-xs">
+                  Where defects from this station get routed for another pass. Bounded by
+                  MAX_REWORK_PASSES = 3.
+                </p>
               </div>
               <p className="text-muted-foreground text-xs">
                 Position: {Math.round(selectedNode.position.x)} ,{" "}
