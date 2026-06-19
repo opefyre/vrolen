@@ -59,6 +59,7 @@ function fakeResult(overrides: Partial<ChainResult> = {}): ChainResult {
     aggregateBufferWipL: 2,
     perEdgeFlowed: [120, 100],
     samples: [],
+    perStationCapacity: [1, 1],
     ...overrides,
   };
 }

@@ -66,6 +66,7 @@ function fakeResult(): ChainResult {
     perStationReworked: [0, 0],
     lineReworkRate: 0,
     samples: [],
+    perStationCapacity: [1, 1],
   };
 }
 

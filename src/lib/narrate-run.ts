@@ -61,15 +61,46 @@ function oeeBandSentence(result: ChainResult): string | undefined {
   return undefined;
 }
 
+/**
+ * VROL-652 — capacity-aware remediation hint. Appended (not replaced) when
+ * the bottleneck is saturated on its own cycle so the user has a concrete
+ * next step. capacity=1 → suggest raising parallel cycles; capacity>1 →
+ * already-parallel, suggest shortening the cycle.
+ */
+function capacityHint(result: ChainResult): string | undefined {
+  const top = result.bottlenecks[0];
+  if (!top || top.primaryReason !== "running") return undefined;
+  const idx = result.bottleneckStationIdx;
+  const capacity = result.perStationCapacity?.[idx] ?? 1;
+  if (capacity === 1) return "Consider raising parallel cycles on this station.";
+  return `Already at capacity ${String(capacity)} — speed up the cycle instead.`;
+}
+
+/**
+ * VROL-652 — source-rate remediation hint. Fires when finite-rate source
+ * was used AND the bottleneck is starvation (upstream is the gate). Pairs
+ * with the capacity hint — both can land in the same run.
+ */
+function sourceRateHint(result: ChainResult): string | undefined {
+  if (result.sourceArrivalsFired === undefined) return undefined;
+  const top = result.bottlenecks[0];
+  if (!top || top.primaryReason !== "starvation") return undefined;
+  return "Source rate is the gate — shorten the inter-arrival or raise batch size.";
+}
+
 export function narrateRun(result: ChainResult): readonly string[] {
   const out: string[] = [];
   const bottleneck = bottleneckSentence(result);
   if (bottleneck) out.push(bottleneck);
+  const cap = capacityHint(result);
+  if (cap) out.push(cap);
+  const src = sourceRateHint(result);
+  if (src) out.push(src);
   const rework = reworkSentence(result);
   const scrap = scrapSentence(result);
   if (rework) out.push(rework);
   if (scrap) out.push(scrap);
-  if (!rework && !scrap) {
+  if (!rework && !scrap && !cap && !src) {
     const band = oeeBandSentence(result);
     if (band) out.push(band);
   }

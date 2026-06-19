@@ -176,6 +176,13 @@ export interface ChainResult {
    * Undefined when ChainOptions.source was omitted (back-compat).
    */
   readonly sourceArrivalsFired?: number;
+  /**
+   * Per-station parallel-cycle capacity (VROL-652). Aligned with
+   * perStationCompleted by index. 1 for stations using the default
+   * (sequential) cycle. Surfaces capacity for downstream consumers like
+   * narrate-run that need to suggest "raise capacity" vs "raise rate".
+   */
+  readonly perStationCapacity: readonly number[];
   /** Per-station OEE metrics (Availability × Performance × Quality). */
   readonly perStationOee: readonly OeeMetrics[];
   /**
@@ -1278,6 +1285,7 @@ export function runChain(opts: ChainOptions): ChainResult {
     throughputLambda,
     avgTimeInSystemW,
     perStationCompleted: executors.map((e) => e.completed),
+    perStationCapacity: topology.capacities,
     bottlenecks,
     perStationOee,
     lineOee,
