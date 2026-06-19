@@ -164,37 +164,110 @@ function ensureStationKeys(nodes: Node[]): Node[] {
   });
 }
 
+/**
+ * Default bottling line — designed to surface every interesting engine
+ * feature in a single Run so a first-time visitor sees the simulator do
+ * something meaningful before they touch anything.
+ *
+ * Topology (DAG with branching):
+ *
+ *               ┌─→ Filler A ─┐
+ *   Input ──────┤             ├─→ Capper ─→ QC ─→ Labeler ─→ Packer
+ *               └─→ Filler B ─┘                ↺
+ *                                           rework on
+ *                                          QC defects
+ *
+ * Cycle times are chosen so Capper is the bottleneck (a 180ms station
+ * fed by two ~120ms parallel fillers — the buffer at Capper's input fills
+ * up visibly). Plus:
+ *  - Capper has a 40ms setup distribution so it goes Idle → Setup → Running
+ *  - Filler A has a maintenance window at 30s–35s (visible mid-run drop)
+ *  - QC has a 15% defect rate AND reworks defects back to Capper (VROL-626):
+ *    completed parts that fail QC re-enter Capper's input buffer for
+ *    another pass, demonstrating the side-channel rework loop.
+ *
+ * With the sampler on, the throughput chart shows the maintenance dip, the
+ * OEE chart shows Capper's high running %, and the rework KPI tile renders
+ * with a non-zero count. A complete tour in one click of Run.
+ */
 const INITIAL_NODES: Node[] = [
   {
     id: "n1",
     type: "station",
-    position: { x: 80, y: 120 },
+    position: { x: 60, y: 180 },
     data: {
-      label: "Filler",
+      label: "Input",
       stationType: "input",
-      cycleDistribution: constant(50),
+      cycleDistribution: constant(30),
       defectRate: 0,
     },
   },
   {
     id: "n2",
     type: "station",
-    position: { x: 320, y: 120 },
+    position: { x: 240, y: 60 },
     data: {
-      label: "Capper",
+      label: "Filler A",
       stationType: "machine",
-      cycleDistribution: constant(200),
+      cycleDistribution: constant(120),
       defectRate: 0,
+      maintenanceWindows: [{ startMs: 30_000, endMs: 35_000 }],
     },
   },
   {
     id: "n3",
     type: "station",
-    position: { x: 560, y: 120 },
+    position: { x: 240, y: 300 },
+    data: {
+      label: "Filler B",
+      stationType: "machine",
+      cycleDistribution: constant(130),
+      defectRate: 0,
+    },
+  },
+  {
+    id: "n4",
+    type: "station",
+    position: { x: 440, y: 180 },
+    data: {
+      label: "Capper",
+      stationType: "machine",
+      cycleDistribution: constant(180),
+      setupDistribution: constant(40),
+      defectRate: 0,
+    },
+  },
+  {
+    id: "n5",
+    type: "station",
+    position: { x: 640, y: 180 },
+    data: {
+      label: "QC",
+      stationType: "qc",
+      cycleDistribution: constant(60),
+      defectRate: 0.15,
+      reworkTargetNodeId: "n4",
+    },
+  },
+  {
+    id: "n6",
+    type: "station",
+    position: { x: 840, y: 180 },
     data: {
       label: "Labeler",
-      stationType: "qc",
-      cycleDistribution: constant(50),
+      stationType: "machine",
+      cycleDistribution: constant(90),
+      defectRate: 0,
+    },
+  },
+  {
+    id: "n7",
+    type: "station",
+    position: { x: 1040, y: 180 },
+    data: {
+      label: "Packer",
+      stationType: "output",
+      cycleDistribution: constant(30),
       defectRate: 0,
     },
   },
@@ -202,7 +275,12 @@ const INITIAL_NODES: Node[] = [
 
 const INITIAL_EDGES: Edge[] = [
   { id: "e1-2", source: "n1", target: "n2" },
-  { id: "e2-3", source: "n2", target: "n3" },
+  { id: "e1-3", source: "n1", target: "n3" },
+  { id: "e2-4", source: "n2", target: "n4" },
+  { id: "e3-4", source: "n3", target: "n4" },
+  { id: "e4-5", source: "n4", target: "n5" },
+  { id: "e5-6", source: "n5", target: "n6" },
+  { id: "e6-7", source: "n6", target: "n7" },
 ];
 
 interface PersistedGraph {
