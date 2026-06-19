@@ -112,6 +112,15 @@ function reworkPassLimitOf(node: Node): number | undefined {
   return n;
 }
 
+function capacityOf(node: Node): number | undefined {
+  const raw = (node.data as { capacity?: unknown } | undefined)?.capacity;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  const n = Math.floor(raw);
+  if (n < 1 || n > 10) return undefined;
+  if (n === 1) return undefined; // default; drop from output to keep topology clean
+  return n;
+}
+
 function cycleByProductOf(node: Node): Record<string, Distribution> | undefined {
   const raw = (node.data as { cycleByProduct?: unknown } | undefined)?.cycleByProduct;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
@@ -294,6 +303,7 @@ export function graphToChainOptions(
         const reworkRaw = reworkTargetIdOf(node);
         const reworkTargetId = reworkRaw && topoSet.has(reworkRaw) ? reworkRaw : undefined;
         const reworkPassLimit = reworkTargetId ? reworkPassLimitOf(node) : undefined;
+        const capacity = capacityOf(node);
         return {
           id,
           label: labelOf(node),
@@ -304,6 +314,7 @@ export function graphToChainOptions(
           ...(defectRate !== undefined ? { defectRate } : {}),
           ...(reworkTargetId ? { reworkTargetId } : {}),
           ...(reworkPassLimit !== undefined ? { reworkPassLimit } : {}),
+          ...(capacity !== undefined ? { capacity } : {}),
         };
       });
       const topoEdges: ChainTopologyEdge[] = edges

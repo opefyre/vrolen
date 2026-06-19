@@ -1425,6 +1425,19 @@ function EditorCanvas() {
                   updateSelectedNodeData({ defectRate: n });
                 }}
               />
+              <NumberField
+                id="inspector-capacity"
+                label="Parallel cycles"
+                value={Number((selectedNode.data as { capacity?: unknown }).capacity ?? 1)}
+                min={1}
+                max={10}
+                step={1}
+                helperText="Number of parts this station processes simultaneously. Default 1."
+                onChange={(n) => {
+                  const v = Math.max(1, Math.min(10, Math.floor(n)));
+                  updateSelectedNodeData({ capacity: v === 1 ? undefined : v });
+                }}
+              />
             </CardContent>
             {/* VROL-633 — advanced settings collapsed by default. Power users
                 expand once; the toggle's open/closed state persists per

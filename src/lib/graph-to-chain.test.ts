@@ -125,6 +125,23 @@ describe("graphToChainOptions", () => {
     expect(bTopo?.reworkPassLimit).toBe(5);
   });
 
+  it("forwards capacity > 1 + drops capacity = 1 default (VROL-646)", () => {
+    const nodes = [
+      node("a", { cycleMs: 50 }),
+      node("b", { cycleMs: 100 }),
+      node("c", { cycleMs: 50 }),
+    ];
+    (nodes[1]!.data as Record<string, unknown>).capacity = 3;
+    (nodes[2]!.data as Record<string, unknown>).capacity = 1; // default — should be dropped
+    const edges = [edge("a", "b"), edge("b", "c"), edge("a", "c")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    const bTopo = r.topology!.nodes.find((n) => n.id === "b");
+    const cTopo = r.topology!.nodes.find((n) => n.id === "c");
+    expect(bTopo?.capacity).toBe(3);
+    expect(cTopo?.capacity).toBeUndefined();
+  });
+
   it("drops reworkPassLimit when no rework target is set (VROL-638)", () => {
     // A pass limit without a rework target is meaningless; translator drops
     // it so the engine schema stays clean.

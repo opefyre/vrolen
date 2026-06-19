@@ -921,6 +921,112 @@ describe("runChain — rework loops (VROL-626)", () => {
     expect(reworked / scrapped).toBeLessThan(1.5);
   });
 
+  it("station with capacity=3 completes roughly 3× the parts of capacity=1 (VROL-646)", () => {
+    // Two-station chain. Source feeds fast (cycle=50ms). The downstream
+    // bottleneck has cycle=200ms — at capacity=1 it limits the line to
+    // 5 parts/sec; at capacity=3 it should match the source roughly and
+    // run ~3x faster overall.
+    const cap1 = runChain({
+      topology: {
+        nodes: [
+          { id: "fast", cycleTimeMs: constant(50) },
+          { id: "slow", cycleTimeMs: constant(200), capacity: 1 },
+        ],
+        edges: [{ source: "fast", target: "slow" }],
+      },
+      interStationBufferCapacity: 20,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    const cap3 = runChain({
+      topology: {
+        nodes: [
+          { id: "fast", cycleTimeMs: constant(50) },
+          { id: "slow", cycleTimeMs: constant(200), capacity: 3 },
+        ],
+        edges: [{ source: "fast", target: "slow" }],
+      },
+      interStationBufferCapacity: 20,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // capacity=1: slow station caps line at 10_000 / 200 = 50 parts.
+    // capacity=3: roughly 3× that, less buffer/source friction.
+    expect(cap1.completed).toBeLessThanOrEqual(60);
+    expect(cap3.completed).toBeGreaterThan(cap1.completed * 2);
+  });
+
+  it("rejects a non-positive or out-of-range capacity at build (VROL-646)", () => {
+    const base = {
+      stationCycleTimes: [constant(50), constant(50)],
+      interStationBufferCapacity: 5,
+      horizonMs: 1_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    };
+    expect(() =>
+      runChain({
+        ...base,
+        topology: {
+          nodes: [
+            { id: "a", cycleTimeMs: constant(50) },
+            { id: "b", cycleTimeMs: constant(50), capacity: 0 },
+          ],
+          edges: [{ source: "a", target: "b" }],
+        },
+      }),
+    ).toThrow(/capacity must be an integer between 1 and 10/);
+    expect(() =>
+      runChain({
+        ...base,
+        topology: {
+          nodes: [
+            { id: "a", cycleTimeMs: constant(50) },
+            { id: "b", cycleTimeMs: constant(50), capacity: 11 },
+          ],
+          edges: [{ source: "a", target: "b" }],
+        },
+      }),
+    ).toThrow(/capacity must be an integer between 1 and 10/);
+    expect(() =>
+      runChain({
+        ...base,
+        topology: {
+          nodes: [
+            { id: "a", cycleTimeMs: constant(50) },
+            { id: "b", cycleTimeMs: constant(50), capacity: 1.5 },
+          ],
+          edges: [{ source: "a", target: "b" }],
+        },
+      }),
+    ).toThrow(/capacity must be an integer between 1 and 10/);
+  });
+
+  it("OEE ideal-cycle-time stays per-cycle when capacity > 1 (VROL-646)", () => {
+    // capacity > 1 means MORE parts per unit wall-clock, but each individual
+    // cycle still takes the same time. OEE.performance compares actual cycle
+    // time vs ideal cycle time per part — so a saturated parallel station
+    // should hit performance ≈ 1 just like a saturated sequential one.
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "fast", cycleTimeMs: constant(20) },
+          { id: "slow", cycleTimeMs: constant(100), capacity: 3 },
+        ],
+        edges: [{ source: "fast", target: "slow" }],
+      },
+      interStationBufferCapacity: 20,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(7),
+    });
+    const slowOee = result.perStationOee[1]!;
+    // Ideal cycle time should be ~100ms (per-cycle, not per-part-divided-by-cap).
+    expect(slowOee.idealCycleTimeMs).toBeCloseTo(100, 0);
+  });
+
   it("rejects a non-integer or zero reworkPassLimit at build (VROL-638)", () => {
     expect(() =>
       runChain({

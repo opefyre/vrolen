@@ -356,6 +356,15 @@ export interface ChainTopologyNode {
    * Only meaningful alongside reworkTargetId.
    */
   readonly reworkPassLimit?: number;
+  /**
+   * Optional parallel-cycle count (VROL-646). When > 1, the station can
+   * have multiple parts in flight simultaneously — e.g. capacity = 3
+   * models three identical fillers running side-by-side. The CycleExecutor
+   * already supports this; this field exposes it to scenario authors.
+   * Default 1 (sequential). Must be a positive integer 1..10 at build
+   * time so a typo can't spawn thousands of parallel cycles.
+   */
+  readonly capacity?: number;
 }
 
 /**
@@ -434,6 +443,11 @@ interface NormalizedTopology {
    * DEFAULT_REWORK_PASS_LIMIT at the executor. Validated >= 1 at build.
    */
   reworkPassLimits: (number | undefined)[];
+  /**
+   * Per-station parallel-cycle count (VROL-646). Default 1 (sequential).
+   * Validated as positive integer 1..10 at build.
+   */
+  capacities: number[];
   /** Edges in input order; each carries source + target as node-array indices. */
   edges: { sourceIdx: number; targetIdx: number }[];
   /** For each node index: the indices of nodes it sends parts to. */
@@ -526,6 +540,15 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       }
       return node.reworkPassLimit;
     });
+    const capacities: number[] = nodes.map((node) => {
+      const cap = node.capacity ?? 1;
+      if (!Number.isInteger(cap) || cap < 1 || cap > 10) {
+        throw new Error(
+          `topology: station "${node.id}" capacity must be an integer between 1 and 10 (got ${String(cap)})`,
+        );
+      }
+      return cap;
+    });
     return {
       nodeIds: nodes.map((n) => n.id),
       cycleTimes: nodes.map((n) => n.cycleTimeMs),
@@ -536,6 +559,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       defectRates: nodes.map((n) => n.defectRate ?? 0),
       reworkTargets,
       reworkPassLimits,
+      capacities,
       edges: normalizedEdges,
       outgoing,
       incoming,
@@ -568,6 +592,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     defectRates: Array.from({ length: n }, () => 0),
     reworkTargets: Array.from({ length: n }, () => undefined),
     reworkPassLimits: Array.from({ length: n }, () => undefined),
+    capacities: Array.from({ length: n }, () => 1),
     edges,
     outgoing,
     incoming,
@@ -757,7 +782,7 @@ export function runChain(opts: ChainOptions): ChainResult {
       stationId: stationIds[i] as StationId,
       cycleTimeMs: topology.cycleTimes[i] as Distribution,
       defectRate: topology.defectRates[i] ?? 0,
-      capacity: 1,
+      capacity: topology.capacities[i] ?? 1,
       upstream: upstreamFor(i),
       downstream: downstreamFor(i),
       ...(cycleTimeFor ? { cycleTimeFor } : {}),
