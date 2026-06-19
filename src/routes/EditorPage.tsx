@@ -92,6 +92,7 @@ import {
   listRuns as listRunHistory,
   type RunHistoryEntry,
 } from "@/lib/run-history";
+import { consumePendingPreset, PRESETS, type Preset } from "@/lib/presets";
 import { runScenario, type ScenarioRunOutcome } from "@/lib/run-scenario";
 import {
   deleteScenario,
@@ -339,9 +340,27 @@ interface StationNodeData {
   [key: string]: unknown;
 }
 
+// VROL-631 — per-station-type accent: a Tailwind class pair for the icon
+// pill background and a subtle left border. Keeps types visually distinct
+// without recoloring the card body so badges + sparklines stay readable.
+const STATION_TYPE_ACCENT: Record<string, { pill: string; border: string }> = {
+  machine: { pill: "bg-sim-running/15 text-sim-running", border: "border-l-sim-running/60" },
+  qc: { pill: "bg-sim-setup/15 text-sim-setup", border: "border-l-sim-setup/60" },
+  transport: {
+    pill: "bg-sim-blocked/15 text-sim-blocked",
+    border: "border-l-sim-blocked/60",
+  },
+  input: { pill: "bg-sim-idle/25 text-foreground", border: "border-l-sim-idle/80" },
+  output: {
+    pill: "bg-sim-maintenance/15 text-sim-maintenance",
+    border: "border-l-sim-maintenance/60",
+  },
+};
+
 function StationNode({ data, selected }: NodeProps) {
   const d = data as StationNodeData;
   const Icon = STATION_TYPE_ICON[d.stationType ?? "machine"] ?? Factory;
+  const accent = STATION_TYPE_ACCENT[d.stationType ?? "machine"] ?? STATION_TYPE_ACCENT.machine!;
   const maintenanceCount = Array.isArray(d.maintenanceWindows) ? d.maintenanceWindows.length : 0;
   const skillCount = Array.isArray(d.skills) ? d.skills.length : 0;
   const hasSetup = !!d.setupDistribution;
@@ -353,14 +372,22 @@ function StationNode({ data, selected }: NodeProps) {
 
   return (
     <div
-      className={`border-border bg-card min-w-[140px] rounded-md border px-3 py-2 shadow-sm transition-shadow ${
-        selected ? "ring-foreground/30 ring-2" : ""
+      className={`bg-card min-w-[148px] rounded-lg border border-l-4 px-3 py-2 shadow-sm transition-all ${
+        accent.border
+      } ${
+        selected
+          ? "ring-foreground/40 border-foreground/30 shadow-md ring-2"
+          : "border-border hover:shadow-md"
       }`}
     >
       <Handle type="target" position={Position.Left} className="!h-3 !w-3" />
       <div className="flex items-center gap-2">
-        <Icon className="h-4 w-4 shrink-0" />
-        <div className="min-w-0 text-sm font-medium">{d.label ?? "Station"}</div>
+        <span
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${accent.pill}`}
+        >
+          <Icon className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 truncate text-[13px] font-semibold">{d.label ?? "Station"}</div>
       </div>
       {maintenanceCount +
         skillCount +
@@ -426,14 +453,38 @@ const ComparisonTable = lazy(() =>
 const EDGE_TYPES = { animated: AnimatedEdge };
 
 function EditorCanvas() {
-  const initial = useMemo(() => loadGraph(), []);
+  // VROL-630 — consume any pending preset BEFORE seeding useState so the
+  // landing-page handoff arrives as the initial render, not after a flash
+  // of the persisted graph. useState's lazy initializer is React's
+  // sanctioned spot for one-shot side effects (vs useMemo, which the React
+  // Compiler treats as a pure-value cache).
+  const [initial] = useState(() => {
+    const preset = consumePendingPreset();
+    if (preset) {
+      const nodesCopy = preset.graph.nodes.map((n) => ({ ...n, data: { ...n.data } }));
+      const edgesCopy = preset.graph.edges.map((e) => ({ ...e }));
+      return {
+        nodes: ensureStationKeys(nodesCopy),
+        edges: edgesCopy,
+        settings: { ...preset.settings },
+        presetTitle: preset.title as string | undefined,
+      };
+    }
+    const g = loadGraph();
+    return {
+      nodes: g.nodes,
+      edges: g.edges,
+      settings: loadRunSettings(),
+      presetTitle: undefined as string | undefined,
+    };
+  });
   const [nodes, setNodes] = useState<Node[]>(initial.nodes);
   const [edges, setEdges] = useState<Edge[]>(initial.edges);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [result, setResult] = useState<ChainResult | null>(null);
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
   const [isRunning, setIsRunning] = useState<boolean>(false);
-  const [settings, setSettings] = useState<RunSettings>(loadRunSettings);
+  const [settings, setSettings] = useState<RunSettings>(() => initial.settings);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [scenariosOpen, setScenariosOpen] = useState<boolean>(false);
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>(() => listScenarios());
@@ -853,6 +904,36 @@ function EditorCanvas() {
     },
     [setNodes, setEdges, setSettings],
   );
+
+  // VROL-630 — load a Preset by deep-copying its graph + settings. Presets
+  // themselves are read-only; this hands the user an editable copy that's
+  // identical to "load a manually-saved scenario."
+  const loadPresetInto = useCallback(
+    (preset: Preset): void => {
+      const nodesCopy = preset.graph.nodes.map((n) => ({ ...n, data: { ...n.data } }));
+      const edgesCopy = preset.graph.edges.map((e) => ({ ...e }));
+      setNodes(ensureStationKeys(nodesCopy));
+      setEdges(edgesCopy);
+      setSettings({ ...preset.settings });
+      setSelectedNodeId(null);
+      setResult(null);
+      setRunMeta(null);
+      setActiveScenarioName(null);
+      nodeIdRef.current =
+        nodesCopy.reduce((max, n) => Math.max(max, parseInt(n.id.replace(/\D/g, ""), 10) || 0), 0) +
+        1;
+      setScenariosOpen(false);
+      toast.success(`Loaded preset "${preset.title}"`);
+    },
+    [setNodes, setEdges, setSettings],
+  );
+
+  // VROL-630 — surface a toast so the user knows they're looking at a
+  // preset (initial state was already seeded above). Runs once on mount.
+  const presetTitle = initial.presetTitle;
+  useEffect(() => {
+    if (presetTitle) toast.success(`Loaded preset "${presetTitle}"`);
+  }, [presetTitle]);
 
   // Detect whether the canvas + settings have drifted from the active scenario's
   // snapshot. Cheap deep-compare via JSON.stringify; only computed when a
@@ -1435,6 +1516,42 @@ function EditorCanvas() {
                 Save
               </Button>
             </form>
+            {/* VROL-630 — Examples (preset scenarios) above the user's saved list. */}
+            <div className="border-border space-y-2 rounded-md border border-dashed p-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">Examples</div>
+                <span className="text-muted-foreground text-[10px]">
+                  {PRESETS.length} preset{PRESETS.length === 1 ? "" : "s"}
+                </span>
+              </div>
+              <p className="text-muted-foreground text-xs">
+                Pre-built scenarios that exercise distinct engine features. Loading replaces the
+                canvas + run settings with the preset's editable copy.
+              </p>
+              <ul className="space-y-1.5">
+                {PRESETS.map((preset) => (
+                  <li
+                    key={preset.id}
+                    className="bg-card border-border flex items-start gap-2 rounded-md border px-2 py-1.5"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{preset.title}</div>
+                      <div className="text-muted-foreground text-[11px]">{preset.highlight}</div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={() => {
+                        loadPresetInto(preset);
+                      }}
+                    >
+                      Load
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
             {scenarios.length === 0 ? (
               <p className="text-muted-foreground text-sm">
                 No saved scenarios yet. Click <strong>Save current</strong> to capture the graph +

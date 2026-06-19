@@ -1,0 +1,53 @@
+import { describe, expect, it } from "vitest";
+
+import { runChain, SeededPrng } from "@/engine";
+
+import { graphToChainOptions } from "./graph-to-chain";
+import { PRESETS, getPreset } from "./presets";
+
+describe("presets (VROL-630)", () => {
+  it("each preset has a non-empty title + blurb + highlight", () => {
+    for (const p of PRESETS) {
+      expect(p.id.length).toBeGreaterThan(0);
+      expect(p.title.length).toBeGreaterThan(0);
+      expect(p.blurb.length).toBeGreaterThan(0);
+      expect(p.highlight.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("each preset's graph has at least 3 stations + at least 2 edges", () => {
+    for (const p of PRESETS) {
+      expect(p.graph.nodes.length).toBeGreaterThanOrEqual(3);
+      expect(p.graph.edges.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("getPreset(id) resolves a known preset and returns undefined for unknown", () => {
+    expect(getPreset("bottling-line")?.id).toBe("bottling-line");
+    expect(getPreset("nope")).toBeUndefined();
+  });
+
+  it("each preset's graph round-trips through the translator without errors", () => {
+    for (const p of PRESETS) {
+      const r = graphToChainOptions(p.graph.nodes, p.graph.edges);
+      expect(r.error).toBeNull();
+    }
+  });
+
+  it("Bottling line preset runs end-to-end and produces completed parts", () => {
+    const p = getPreset("bottling-line");
+    expect(p).toBeDefined();
+    const translation = graphToChainOptions(p!.graph.nodes, p!.graph.edges);
+    expect(translation.error).toBeNull();
+    const result = runChain({
+      ...(translation.topology
+        ? { topology: translation.topology }
+        : { stationCycleTimes: [...translation.cycleDistributions] }),
+      interStationBufferCapacity: 5,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    expect(result.completed).toBeGreaterThan(0);
+  });
+});
