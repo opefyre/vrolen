@@ -37,6 +37,7 @@ import {
 import {
   Boxes,
   CheckCircle2,
+  ChevronDown,
   CircleDot,
   Combine,
   ConciergeBell,
@@ -499,6 +500,8 @@ function EditorCanvas() {
     kind: "load" | "load-run" | "delete";
   } | null>(null);
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
+  /** VROL-633 — Inspector advanced section collapsed by default. */
+  const [inspectorAdvancedOpen, setInspectorAdvancedOpen] = useState<boolean>(false);
   /** Inline-confirm state for per-history-entry Replay (VROL-611). */
   const [confirmReplay, setConfirmReplay] = useState<{ scenario: string; idx: number } | null>(
     null,
@@ -1395,67 +1398,12 @@ function EditorCanvas() {
                   updateSelectedNodeData({ cycleDistribution: d });
                 }}
               />
-              <SetupTimeEditor
-                value={
-                  (selectedNode.data as { setupDistribution?: Distribution }).setupDistribution ??
-                  null
-                }
-                onChange={(d) => {
-                  updateSelectedNodeData({ setupDistribution: d ?? undefined });
-                }}
-              />
-              {settings.products.enabled && settings.products.list.length > 0 ? (
-                <PerProductCyclesEditor
-                  products={settings.products.list}
-                  value={
-                    (selectedNode.data as { cycleByProduct?: Record<string, Distribution> })
-                      .cycleByProduct ?? {}
-                  }
-                  onChange={(next) => {
-                    updateSelectedNodeData({
-                      cycleByProduct: Object.keys(next).length > 0 ? next : undefined,
-                    });
-                  }}
-                />
-              ) : null}
-              <MaintenanceWindowsEditor
-                value={
-                  Array.isArray(
-                    (selectedNode.data as { maintenanceWindows?: unknown }).maintenanceWindows,
-                  )
-                    ? ((
-                        selectedNode.data as {
-                          maintenanceWindows: { startMs: number; endMs: number }[];
-                        }
-                      ).maintenanceWindows ?? [])
-                    : []
-                }
-                onChange={(next) => {
-                  updateSelectedNodeData({ maintenanceWindows: next });
-                }}
-              />
-            </CardContent>
-            <CardContent className="border-border space-y-3 border-t pt-3">
-              <SkillsField
-                value={
-                  Array.isArray((selectedNode.data as { skills?: unknown }).skills)
-                    ? ((selectedNode.data as { skills: string[] }).skills as string[])
-                    : []
-                }
-                onChange={(next) => {
-                  updateSelectedNodeData({ skills: next });
-                }}
-                label="Required skills"
-                placeholder="e.g. capping, qc"
-                id="inspector-skills"
-                helpText="Empty = any worker on shift can take the station."
-              />
               <div className="flex flex-col gap-1">
                 <label
                   htmlFor="inspector-defect"
                   className="text-muted-foreground text-xs font-medium"
                 >
-                  Defect rate (0–1)
+                  Defect rate
                 </label>
                 <Input
                   id="inspector-defect"
@@ -1471,49 +1419,129 @@ function EditorCanvas() {
                   }}
                   className="font-mono tabular-nums"
                 />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label
-                  htmlFor="inspector-rework"
-                  className="text-muted-foreground text-xs font-medium"
-                >
-                  Rework target (VROL-627)
-                </label>
-                <select
-                  id="inspector-rework"
-                  value={
-                    (selectedNode.data as { reworkTargetNodeId?: string }).reworkTargetNodeId ?? ""
-                  }
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    updateSelectedNodeData({
-                      reworkTargetNodeId: v.length > 0 ? v : undefined,
-                    });
-                  }}
-                  className="border-input bg-background rounded-md border px-2 py-1.5 text-sm"
-                >
-                  <option value="">None — scrap defects</option>
-                  {nodes
-                    .filter((n) => n.id !== selectedNode.id)
-                    .map((n) => {
-                      const d = n.data as { label?: string };
-                      return (
-                        <option key={n.id} value={n.id}>
-                          {d.label ?? n.id}
-                        </option>
-                      );
-                    })}
-                </select>
-                <p className="text-muted-foreground text-xs">
-                  Where defects from this station get routed for another pass. Bounded by
-                  MAX_REWORK_PASSES = 3.
+                <p className="text-muted-foreground text-[11px]">
+                  Probability that a finished part is defective (0–1).
                 </p>
               </div>
-              <p className="text-muted-foreground text-xs">
-                Position: {Math.round(selectedNode.position.x)} ,{" "}
-                {Math.round(selectedNode.position.y)}
-              </p>
             </CardContent>
+            {/* VROL-633 — advanced settings collapsed by default. Power users
+                expand once; the toggle's open/closed state persists per
+                station via the inspectorAdvancedOpen useState below. */}
+            <CardContent className="border-border border-t pt-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setInspectorAdvancedOpen((v) => !v);
+                }}
+                className="hover:bg-accent flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm font-medium"
+                aria-expanded={inspectorAdvancedOpen}
+              >
+                <span>{inspectorAdvancedOpen ? "Hide" : "Show"} advanced</span>
+                <ChevronDown
+                  className={`h-4 w-4 transition-transform ${
+                    inspectorAdvancedOpen ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
+            </CardContent>
+            {inspectorAdvancedOpen ? (
+              <CardContent className="space-y-3">
+                <SetupTimeEditor
+                  value={
+                    (selectedNode.data as { setupDistribution?: Distribution }).setupDistribution ??
+                    null
+                  }
+                  onChange={(d) => {
+                    updateSelectedNodeData({ setupDistribution: d ?? undefined });
+                  }}
+                />
+                {settings.products.enabled && settings.products.list.length > 0 ? (
+                  <PerProductCyclesEditor
+                    products={settings.products.list}
+                    value={
+                      (selectedNode.data as { cycleByProduct?: Record<string, Distribution> })
+                        .cycleByProduct ?? {}
+                    }
+                    onChange={(next) => {
+                      updateSelectedNodeData({
+                        cycleByProduct: Object.keys(next).length > 0 ? next : undefined,
+                      });
+                    }}
+                  />
+                ) : null}
+                <MaintenanceWindowsEditor
+                  value={
+                    Array.isArray(
+                      (selectedNode.data as { maintenanceWindows?: unknown }).maintenanceWindows,
+                    )
+                      ? ((
+                          selectedNode.data as {
+                            maintenanceWindows: { startMs: number; endMs: number }[];
+                          }
+                        ).maintenanceWindows ?? [])
+                      : []
+                  }
+                  onChange={(next) => {
+                    updateSelectedNodeData({ maintenanceWindows: next });
+                  }}
+                />
+                <SkillsField
+                  value={
+                    Array.isArray((selectedNode.data as { skills?: unknown }).skills)
+                      ? ((selectedNode.data as { skills: string[] }).skills as string[])
+                      : []
+                  }
+                  onChange={(next) => {
+                    updateSelectedNodeData({ skills: next });
+                  }}
+                  label="Required skills"
+                  placeholder="e.g. capping, qc"
+                  id="inspector-skills"
+                  helpText="Empty = any worker on shift can take the station."
+                />
+                <div className="flex flex-col gap-1">
+                  <label
+                    htmlFor="inspector-rework"
+                    className="text-muted-foreground text-xs font-medium"
+                  >
+                    Rework target
+                  </label>
+                  <select
+                    id="inspector-rework"
+                    value={
+                      (selectedNode.data as { reworkTargetNodeId?: string }).reworkTargetNodeId ??
+                      ""
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      updateSelectedNodeData({
+                        reworkTargetNodeId: v.length > 0 ? v : undefined,
+                      });
+                    }}
+                    className="border-input bg-background rounded-md border px-2 py-1.5 text-sm"
+                  >
+                    <option value="">None — scrap defects</option>
+                    {nodes
+                      .filter((n) => n.id !== selectedNode.id)
+                      .map((n) => {
+                        const d = n.data as { label?: string };
+                        return (
+                          <option key={n.id} value={n.id}>
+                            {d.label ?? n.id}
+                          </option>
+                        );
+                      })}
+                  </select>
+                  <p className="text-muted-foreground text-[11px]">
+                    Where defects route for another pass. Bounded to 3 passes.
+                  </p>
+                </div>
+                <p className="text-muted-foreground text-[11px]">
+                  Position: {Math.round(selectedNode.position.x)} ,{" "}
+                  {Math.round(selectedNode.position.y)}
+                </p>
+              </CardContent>
+            ) : null}
           </Card>
         ) : null}
       </div>
@@ -1896,12 +1924,59 @@ function EditorCanvas() {
         <SheetContent side="right" className="w-[24rem] sm:max-w-md">
           <SheetHeader>
             <SheetTitle>Run settings</SheetTitle>
-            <SheetDescription>
-              Applied to every Run from /editor. Persisted to localStorage. /run page has its own
-              independent fixture.
-            </SheetDescription>
+            <SheetDescription>Applied to every Run. Persisted across reloads.</SheetDescription>
           </SheetHeader>
           <div className="space-y-5 px-4 pb-6">
+            {/* VROL-633 — at-a-glance status strip so the user sees which
+                optional features are active without scrolling through five
+                collapsed sections. */}
+            <div className="flex flex-wrap gap-1.5 text-[10px]">
+              <span
+                className={`rounded-full px-2 py-0.5 ${
+                  settings.samplerIntervalMs > 0
+                    ? "bg-sim-running/15 text-sim-running"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                Sampler: {settings.samplerIntervalMs > 0 ? "on" : "off"}
+              </span>
+              <span
+                className={`rounded-full px-2 py-0.5 ${
+                  settings.materials.enabled
+                    ? "bg-sim-running/15 text-sim-running"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                Materials: {settings.materials.enabled ? "on" : "off"}
+              </span>
+              <span
+                className={`rounded-full px-2 py-0.5 ${
+                  settings.breakdowns.enabled
+                    ? "bg-sim-running/15 text-sim-running"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                Breakdowns: {settings.breakdowns.enabled ? "on" : "off"}
+              </span>
+              <span
+                className={`rounded-full px-2 py-0.5 ${
+                  settings.workers.enabled
+                    ? "bg-sim-running/15 text-sim-running"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                Workers: {settings.workers.enabled ? "on" : "off"}
+              </span>
+              <span
+                className={`rounded-full px-2 py-0.5 ${
+                  settings.products.enabled
+                    ? "bg-sim-running/15 text-sim-running"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                Products: {settings.products.enabled ? "on" : "off"}
+              </span>
+            </div>
             <section className="space-y-3">
               <h3 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
                 Engine
