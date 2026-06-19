@@ -73,7 +73,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
-  asMaterialId,
   asResourceId,
   type ChainBreakdownConfig,
   type ChainMaintenanceConfig,
@@ -87,6 +86,7 @@ import {
   runChain,
   SeededPrng,
 } from "@/engine";
+import { settingsToMaterialsCfg } from "@/lib/settings-to-materials-cfg";
 import {
   chainResultToCsv,
   chainResultToJsonString,
@@ -115,9 +115,6 @@ import {
   type RunSettings,
   saveRunSettings,
 } from "./editor-run-settings";
-
-const BOTTLES_ID = asMaterialId("bottles");
-const CAPS_ID = asMaterialId("caps");
 
 const STORAGE_KEY = "vrolen.editor-graph";
 
@@ -726,42 +723,7 @@ function EditorCanvas() {
           description: "Select a node in the chain before enabling materials in the drawer.",
         });
       } else {
-        materialsCfg = {
-          initialInventory: [
-            [BOTTLES_ID, settings.materials.bottles],
-            [CAPS_ID, settings.materials.caps],
-          ],
-          stationRecipes: [
-            {
-              stationIndex,
-              requirements: [
-                { materialId: BOTTLES_ID, qtyPerPart: 1 },
-                { materialId: CAPS_ID, qtyPerPart: 1 },
-              ],
-            },
-          ],
-          ...(settings.materials.replenishment.enabled
-            ? {
-                replenishments: [
-                  {
-                    materialId: BOTTLES_ID,
-                    amount: settings.materials.replenishment.amount,
-                    atMs: settings.materials.replenishment.atMs,
-                  },
-                ],
-              }
-            : {}),
-          ...(settings.materials.recurring.length > 0
-            ? {
-                recurringReplenishments: settings.materials.recurring.map((r) => ({
-                  materialId: r.material === "caps" ? CAPS_ID : BOTTLES_ID,
-                  amount: r.amount,
-                  intervalMs: r.intervalMs,
-                  ...(r.maxInventory !== undefined ? { maxInventory: r.maxInventory } : {}),
-                })),
-              }
-            : {}),
-        };
+        materialsCfg = settingsToMaterialsCfg(settings.materials, stationIndex);
       }
     }
 

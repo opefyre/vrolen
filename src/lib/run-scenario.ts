@@ -10,7 +10,6 @@
 import type { Edge, Node } from "@xyflow/react";
 
 import {
-  asMaterialId,
   asResourceId,
   type ChainBreakdownConfig,
   type ChainMaintenanceConfig,
@@ -24,10 +23,8 @@ import {
 } from "@/engine";
 
 import { graphToChainOptions } from "./graph-to-chain";
+import { settingsToMaterialsCfg } from "./settings-to-materials-cfg";
 import type { RunSettings } from "@/routes/editor-run-settings";
-
-const BOTTLES_ID = asMaterialId("bottles");
-const CAPS_ID = asMaterialId("caps");
 
 export interface ScenarioRunMeta {
   chainNodeIds: string[];
@@ -77,42 +74,7 @@ export function runScenario(
     if (stationIndex < 0) {
       return { kind: "materials-no-selection" };
     }
-    materialsCfg = {
-      initialInventory: [
-        [BOTTLES_ID, settings.materials.bottles],
-        [CAPS_ID, settings.materials.caps],
-      ],
-      stationRecipes: [
-        {
-          stationIndex,
-          requirements: [
-            { materialId: BOTTLES_ID, qtyPerPart: 1 },
-            { materialId: CAPS_ID, qtyPerPart: 1 },
-          ],
-        },
-      ],
-      ...(settings.materials.replenishment.enabled
-        ? {
-            replenishments: [
-              {
-                materialId: BOTTLES_ID,
-                amount: settings.materials.replenishment.amount,
-                atMs: settings.materials.replenishment.atMs,
-              },
-            ],
-          }
-        : {}),
-      ...(settings.materials.recurring.length > 0
-        ? {
-            recurringReplenishments: settings.materials.recurring.map((r) => ({
-              materialId: r.material === "caps" ? CAPS_ID : BOTTLES_ID,
-              amount: r.amount,
-              intervalMs: r.intervalMs,
-              ...(r.maxInventory !== undefined ? { maxInventory: r.maxInventory } : {}),
-            })),
-          }
-        : {}),
-    };
+    materialsCfg = settingsToMaterialsCfg(settings.materials, stationIndex);
   }
 
   const perStationSkills: string[][] = translation.chainNodeIds.map((id) => {
