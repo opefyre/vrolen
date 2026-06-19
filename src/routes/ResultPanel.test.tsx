@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { ChainResult } from "@/engine";
@@ -88,9 +88,29 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
         warmupMs={0}
       />,
     );
-    // Rework tile in the bottom KPI row
+    // Rework tile in the bottom KPI row (always visible).
     expect(screen.getByText(/^Rework$/i)).toBeInTheDocument();
-    // Per-station completed card shows the · 7 rework annotation
+    // Per-station completed card is collapsed by default (VROL-636);
+    // expand it to verify the annotation lives inside.
+    fireEvent.click(screen.getByRole("button", { name: /Per-station completed/i }));
     expect(screen.getByText(/· 7 rework/)).toBeInTheDocument();
+  });
+
+  it("Per-station completed + state breakdown are collapsed by default (VROL-636)", () => {
+    render(
+      <ResultPanel
+        result={fakeResult()}
+        runMeta={{ stationLabels: ["Filler", "Capper"] }}
+        horizonMs={60_000}
+        warmupMs={0}
+      />,
+    );
+    // Header buttons render even when collapsed; bodies should not.
+    expect(screen.getByRole("button", { name: /Per-station completed/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Per-station state breakdown/i }),
+    ).toBeInTheDocument();
+    // Filler bar (rendered inside the per-station card body) is hidden.
+    expect(screen.queryByText("Filler")).toBeNull();
   });
 });

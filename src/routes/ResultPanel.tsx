@@ -7,8 +7,11 @@
  * and exposes the same shape KpiStrip had inline.
  */
 
+import { useState } from "react";
+
 import type { ChainResult } from "@/engine";
 import { asMaterialId } from "@/engine";
+import { Accordion, AccordionStatus } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 import { OeeOverTimeChart } from "./OeeOverTimeChart";
@@ -60,42 +63,32 @@ function stateColor(state: string): string {
   }
 }
 
-function ProductMixCard({ result }: { result: ChainResult }) {
+/** Inner body for the product-mix accordion (no Card wrapper of its own). */
+function ProductMixBody({ result }: { result: ChainResult }) {
   const entries = [...(result.perProductCompleted?.entries() ?? [])].sort((a, b) => b[1] - a[1]);
   const total = entries.reduce((s, [, n]) => s + n, 0);
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="font-heading text-base">Product mix at sink</CardTitle>
-        <CardDescription>
-          Per-product completion counts. Compare to the configured intent in the Products section of
-          Run settings.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-2">
-          {entries.map(([productId, n]) => {
-            const pct = total > 0 ? (n / total) * 100 : 0;
-            return (
-              <div key={productId} className="space-y-1">
-                <div className="flex justify-between text-sm">
-                  <span className="text-foreground/80">{productId}</span>
-                  <span className="font-mono tabular-nums">
-                    {n.toLocaleString()} ({pct.toFixed(1)}%)
-                  </span>
-                </div>
-                <div className="bg-muted h-2 overflow-hidden rounded-full">
-                  <div
-                    className="bg-sim-running h-full rounded-full"
-                    style={{ width: `${String(pct)}%` }}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
+    <div className="space-y-2">
+      {entries.map(([productId, n]) => {
+        const pct = total > 0 ? (n / total) * 100 : 0;
+        return (
+          <div key={productId} className="space-y-1">
+            <div className="flex justify-between text-sm">
+              <span className="text-foreground/80">{productId}</span>
+              <span className="font-mono tabular-nums">
+                {n.toLocaleString()} ({pct.toFixed(1)}%)
+              </span>
+            </div>
+            <div className="bg-muted h-2 overflow-hidden rounded-full">
+              <div
+                className="bg-sim-running h-full rounded-full"
+                style={{ width: `${String(pct)}%` }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -156,6 +149,17 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
   const totalScrapped = result.perStationScrapped.reduce((a, b) => a + b, 0);
   const totalReworked = result.perStationReworked.reduce((a, b) => a + b, 0);
   const totalBreakdowns = (result.perStationBreakdowns ?? []).reduce((a, b) => a + b, 0);
+  // VROL-636 — Per-station completed / state breakdown / product mix start
+  // collapsed. KPI tiles + Bottleneck card + Throughput + OEE charts stay
+  // visible as the primary read.
+  const [openSections, setOpenSections] = useState<{
+    perStation: boolean;
+    stateBreakdown: boolean;
+    productMix: boolean;
+  }>({ perStation: false, stateBreakdown: false, productMix: false });
+  const toggleSection = (key: keyof typeof openSections): void => {
+    setOpenSections((s) => ({ ...s, [key]: !s[key] }));
+  };
   const finalByMat = result.materialFinal ? new Map(result.materialFinal) : null;
   const finalBottles = finalByMat?.get(BOTTLES_ID) ?? null;
   const finalCaps = finalByMat?.get(CAPS_ID) ?? null;
@@ -170,52 +174,56 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
         {tile("Line OEE", `${fmt(result.lineOee * 100)}%`, "geometric mean")}
         {tile("Time-in-system", `${fmt(result.avgTimeInSystemW, 0)} ms`, "average W per part")}
       </div>
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-heading text-base">Per-station completed</CardTitle>
-          <CardDescription>
-            Counts at each station in topology order. Lower values downstream usually mean
-            BlockedOut or warm-up bleed; lower upstream means Starved.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            {result.perStationCompleted.map((count, i) => {
-              const label = runMeta.stationLabels[i] ?? `Station ${String(i + 1)}`;
-              const max = Math.max(...result.perStationCompleted, 1);
-              const pct = (count / max) * 100;
-              const scrap = result.perStationScrapped[i] ?? 0;
-              const rework = result.perStationReworked[i] ?? 0;
-              return (
-                <div key={i} className="space-y-1">
-                  <div className="flex items-baseline justify-between text-sm">
-                    <span className="text-foreground/80">{label}</span>
-                    <span className="font-mono tabular-nums">
-                      {count.toLocaleString()}
-                      {scrap > 0 ? (
-                        <span className="text-sim-down-foreground ml-2 text-xs">
-                          · {scrap.toLocaleString()} scrap
-                        </span>
-                      ) : null}
-                      {rework > 0 ? (
-                        <span className="text-sim-setup-foreground ml-2 text-xs">
-                          · {rework.toLocaleString()} rework
-                        </span>
-                      ) : null}
-                    </span>
-                  </div>
-                  <div className="bg-muted h-2 overflow-hidden rounded-full">
-                    <div
-                      className="bg-sim-running h-full rounded-full transition-[width]"
-                      style={{ width: `${String(pct)}%` }}
-                    />
-                  </div>
+      <Accordion
+        title="Per-station completed"
+        status={
+          <AccordionStatus tone="configured">
+            {`${String(result.perStationCompleted.length)} station${
+              result.perStationCompleted.length === 1 ? "" : "s"
+            }`}
+          </AccordionStatus>
+        }
+        expanded={openSections.perStation}
+        onToggle={() => {
+          toggleSection("perStation");
+        }}
+      >
+        <div className="space-y-2">
+          {result.perStationCompleted.map((count, i) => {
+            const label = runMeta.stationLabels[i] ?? `Station ${String(i + 1)}`;
+            const max = Math.max(...result.perStationCompleted, 1);
+            const pct = (count / max) * 100;
+            const scrap = result.perStationScrapped[i] ?? 0;
+            const rework = result.perStationReworked[i] ?? 0;
+            return (
+              <div key={i} className="space-y-1">
+                <div className="flex items-baseline justify-between text-sm">
+                  <span className="text-foreground/80">{label}</span>
+                  <span className="font-mono tabular-nums">
+                    {count.toLocaleString()}
+                    {scrap > 0 ? (
+                      <span className="text-sim-down-foreground ml-2 text-xs">
+                        · {scrap.toLocaleString()} scrap
+                      </span>
+                    ) : null}
+                    {rework > 0 ? (
+                      <span className="text-sim-setup-foreground ml-2 text-xs">
+                        · {rework.toLocaleString()} rework
+                      </span>
+                    ) : null}
+                  </span>
                 </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
+                <div className="bg-muted h-2 overflow-hidden rounded-full">
+                  <div
+                    className="bg-sim-running h-full rounded-full transition-[width]"
+                    style={{ width: `${String(pct)}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Accordion>
 
       <BottleneckExplanationCard result={result} />
 
@@ -250,49 +258,62 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
       </Card>
 
       {result.perProductCompleted && result.perProductCompleted.size > 0 ? (
-        <ProductMixCard result={result} />
+        <Accordion
+          title="Product mix at sink"
+          status={
+            <AccordionStatus tone="configured">
+              {`${String(result.perProductCompleted.size)} product${
+                result.perProductCompleted.size === 1 ? "" : "s"
+              }`}
+            </AccordionStatus>
+          }
+          expanded={openSections.productMix}
+          onToggle={() => {
+            toggleSection("productMix");
+          }}
+        >
+          <ProductMixBody result={result} />
+        </Accordion>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-heading text-base">Per-station state breakdown</CardTitle>
-          <CardDescription>
-            Time-weighted share of each state across the measurement window. Hover a segment to see
-            exact percentages.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {result.bottlenecks.map((b) => (
-              <div key={String(b.stationId)} className="space-y-1">
-                <div className="text-foreground/80 text-sm">{b.label ?? String(b.stationId)}</div>
-                <div className="bg-muted flex h-2 overflow-hidden rounded-full">
-                  {b.breakdown
-                    .filter((seg) => seg.pct > 0.001)
-                    .map((seg) => (
-                      <div
-                        key={seg.state}
-                        title={`${seg.state}: ${(seg.pct * 100).toFixed(1)}%`}
-                        className={`h-full ${stateColor(seg.state)}`}
-                        style={{ width: `${String(seg.pct * 100)}%` }}
-                      />
-                    ))}
-                </div>
+      <Accordion
+        title="Per-station state breakdown"
+        status={<AccordionStatus tone="configured">Time-weighted %</AccordionStatus>}
+        expanded={openSections.stateBreakdown}
+        onToggle={() => {
+          toggleSection("stateBreakdown");
+        }}
+      >
+        <div className="space-y-3">
+          {result.bottlenecks.map((b) => (
+            <div key={String(b.stationId)} className="space-y-1">
+              <div className="text-foreground/80 text-sm">{b.label ?? String(b.stationId)}</div>
+              <div className="bg-muted flex h-2 overflow-hidden rounded-full">
+                {b.breakdown
+                  .filter((seg) => seg.pct > 0.001)
+                  .map((seg) => (
+                    <div
+                      key={seg.state}
+                      title={`${seg.state}: ${(seg.pct * 100).toFixed(1)}%`}
+                      className={`h-full ${stateColor(seg.state)}`}
+                      style={{ width: `${String(seg.pct * 100)}%` }}
+                    />
+                  ))}
               </div>
-            ))}
-          </div>
-          <div className="text-muted-foreground mt-3 flex flex-wrap gap-2 text-xs">
-            {["Running", "Setup", "Maintenance", "Down", "BlockedOut", "Starved", "Idle"].map(
-              (state) => (
-                <span key={state} className="flex items-center gap-1.5">
-                  <span className={`h-2.5 w-2.5 rounded-sm ${stateColor(state)}`} />
-                  {state}
-                </span>
-              ),
-            )}
-          </div>
-        </CardContent>
-      </Card>
+            </div>
+          ))}
+        </div>
+        <div className="text-muted-foreground mt-3 flex flex-wrap gap-2 text-xs">
+          {["Running", "Setup", "Maintenance", "Down", "BlockedOut", "Starved", "Idle"].map(
+            (state) => (
+              <span key={state} className="flex items-center gap-1.5">
+                <span className={`h-2.5 w-2.5 rounded-sm ${stateColor(state)}`} />
+                {state}
+              </span>
+            ),
+          )}
+        </div>
+      </Accordion>
       {hasMaterials || hasBreakdowns || hasLabor || totalScrapped > 0 || totalReworked > 0 ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {finalBottles !== null
