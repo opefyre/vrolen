@@ -443,6 +443,9 @@ export function ComparisonTable({
 }) {
   const fmt = (n: number, digits = 1) =>
     n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  // VROL-653 — collapse the dense scalar table behind an accordion. KPI delta
+  // tiles + charts stay always-visible at the top.
+  const [allDeltasOpen, setAllDeltasOpen] = useState(false);
 
   type Row = {
     label: string;
@@ -490,50 +493,124 @@ export function ComparisonTable({
   const aHasSamples = aResult.samples.length > 1;
   const bHasSamples = bResult.samples.length > 1;
   const showChartRow = aHasSamples || bHasSamples;
+
+  // VROL-653 — top-line KPI delta tiles (the 4 metrics users care about most).
+  const kpiTiles = [
+    {
+      label: "Completed",
+      a: aResult.completed,
+      b: bResult.completed,
+      fmtVal: (n: number) => n.toLocaleString(),
+    },
+    {
+      label: "Throughput/h",
+      a: aResult.throughputLambda * 3_600_000,
+      b: bResult.throughputLambda * 3_600_000,
+      fmtVal: (n: number) => fmt(n, 0),
+    },
+    {
+      label: "Line OEE",
+      a: aResult.lineOee,
+      b: bResult.lineOee,
+      fmtVal: (n: number) => `${fmt(n * 100)}%`,
+    },
+    {
+      label: "Time-in-sys",
+      a: aResult.avgTimeInSystemW,
+      b: bResult.avgTimeInSystemW,
+      fmtVal: (n: number) => `${fmt(n, 0)} ms`,
+    },
+  ];
+
   return (
     <div className="space-y-4">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-muted-foreground border-border border-b text-left text-xs tracking-wide uppercase">
-              <th className="py-2 pr-3 font-medium">Metric</th>
-              <th className="px-3 py-2 text-right font-medium" title={aName}>
-                A · {aName.length > 12 ? `${aName.slice(0, 11)}…` : aName}
-              </th>
-              <th className="px-3 py-2 text-right font-medium">B · {bName}</th>
-              <th className="py-2 pl-3 text-right font-medium">Δ (B−A)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const delta = row.b - row.a;
-              const pctDelta = row.a !== 0 ? (delta / Math.abs(row.a)) * 100 : 0;
-              const isUp = delta > 0;
-              return (
-                <tr key={row.label} className="border-border/50 border-b last:border-0">
-                  <td className="py-2 pr-3">{row.label}</td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums">{row.fmt(row.a)}</td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums">{row.fmt(row.b)}</td>
-                  <td
-                    className={`py-2 pl-3 text-right font-mono tabular-nums ${
-                      delta === 0
-                        ? "text-muted-foreground"
-                        : isUp
-                          ? "text-sim-running-foreground"
-                          : "text-sim-down-foreground"
-                    }`}
-                  >
-                    {delta === 0 ? "0" : `${isUp ? "+" : ""}${row.fmt(delta)}`}
-                    {row.a !== 0 && delta !== 0 ? (
-                      <span className="text-muted-foreground ml-1">({fmt(pctDelta, 0)}%)</span>
-                    ) : null}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {kpiTiles.map((t) => {
+          const delta = t.b - t.a;
+          const pctDelta = t.a !== 0 ? (delta / Math.abs(t.a)) * 100 : 0;
+          const isUp = delta > 0;
+          return (
+            <div key={t.label} className="border-border bg-card rounded-md border p-3">
+              <div className="text-muted-foreground text-xs tracking-wide uppercase">{t.label}</div>
+              <div className="font-mono text-base font-semibold tabular-nums">{t.fmtVal(t.b)}</div>
+              <div
+                className={`mt-0.5 text-xs ${
+                  delta === 0
+                    ? "text-muted-foreground"
+                    : isUp
+                      ? "text-sim-running-foreground"
+                      : "text-sim-down-foreground"
+                }`}
+              >
+                {delta === 0
+                  ? `= ${t.fmtVal(t.a)}`
+                  : `${isUp ? "▲" : "▼"} ${t.fmtVal(Math.abs(delta))}${
+                      t.a !== 0 ? ` (${fmt(pctDelta, 0)}%)` : ""
+                    } vs A`}
+              </div>
+            </div>
+          );
+        })}
       </div>
+      <Accordion
+        title="All scalar deltas"
+        status={
+          <AccordionStatus tone="configured">
+            {`${String(rows.length)} metric${rows.length === 1 ? "" : "s"} · B vs A`}
+          </AccordionStatus>
+        }
+        expanded={allDeltasOpen}
+        onToggle={() => {
+          setAllDeltasOpen((v) => !v);
+        }}
+      >
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-muted-foreground border-border border-b text-left text-xs tracking-wide uppercase">
+                <th className="py-2 pr-3 font-medium">Metric</th>
+                <th className="px-3 py-2 text-right font-medium" title={aName}>
+                  A · {aName.length > 12 ? `${aName.slice(0, 11)}…` : aName}
+                </th>
+                <th className="px-3 py-2 text-right font-medium">B · {bName}</th>
+                <th className="py-2 pl-3 text-right font-medium">Δ (B−A)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const delta = row.b - row.a;
+                const pctDelta = row.a !== 0 ? (delta / Math.abs(row.a)) * 100 : 0;
+                const isUp = delta > 0;
+                return (
+                  <tr key={row.label} className="border-border/50 border-b last:border-0">
+                    <td className="py-2 pr-3">{row.label}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">
+                      {row.fmt(row.a)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">
+                      {row.fmt(row.b)}
+                    </td>
+                    <td
+                      className={`py-2 pl-3 text-right font-mono tabular-nums ${
+                        delta === 0
+                          ? "text-muted-foreground"
+                          : isUp
+                            ? "text-sim-running-foreground"
+                            : "text-sim-down-foreground"
+                      }`}
+                    >
+                      {delta === 0 ? "0" : `${isUp ? "+" : ""}${row.fmt(delta)}`}
+                      {row.a !== 0 && delta !== 0 ? (
+                        <span className="text-muted-foreground ml-1">({fmt(pctDelta, 0)}%)</span>
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Accordion>
       {showChartRow ? (
         <div className="space-y-3">
           <div className="border-border space-y-2 rounded-md border p-3">

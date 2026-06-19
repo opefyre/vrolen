@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ChainResult } from "@/engine";
 
-import { ResultPanel } from "./ResultPanel";
+import { ComparisonTable, ResultPanel } from "./ResultPanel";
 
 function fakeResult(overrides: Partial<ChainResult> = {}): ChainResult {
   return {
@@ -154,6 +154,32 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
       />,
     );
     expect(screen.queryByRole("button", { name: /Rework over time/i })).toBeNull();
+  });
+
+  it("ComparisonTable: KPI delta tiles always visible + scalar table behind accordion (VROL-653)", () => {
+    const a = fakeResult({ completed: 80, throughputLambda: 80 / 60_000 });
+    const b = fakeResult({ completed: 120, throughputLambda: 120 / 60_000 });
+    render(
+      <ComparisonTable
+        aName="base"
+        aResult={a}
+        aStationLabels={["Filler", "Capper"]}
+        bName="tuned"
+        bResult={b}
+        bStationLabels={["Filler", "Capper"]}
+        horizonMs={60_000}
+        warmupMs={0}
+      />,
+    );
+    // KPI tiles visible: Completed (80 → 120, delta +40).
+    expect(screen.getByText(/^Completed$/)).toBeInTheDocument();
+    expect(screen.getByText(/▲ 40/)).toBeInTheDocument();
+    // Scalar table is collapsed by default — header visible, body rows not.
+    expect(screen.getByRole("button", { name: /All scalar deltas/i })).toBeInTheDocument();
+    expect(screen.queryByText(/^Avg time-in-system \(ms\)$/)).toBeNull();
+    // Expand → body appears.
+    fireEvent.click(screen.getByRole("button", { name: /All scalar deltas/i }));
+    expect(screen.getByText(/^Avg time-in-system \(ms\)$/)).toBeInTheDocument();
   });
 
   it("Per-station completed + state breakdown are collapsed by default (VROL-636)", () => {
