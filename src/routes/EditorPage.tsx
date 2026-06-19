@@ -60,6 +60,7 @@ import {
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { Accordion, AccordionStatus } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -505,6 +506,16 @@ function EditorCanvas() {
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
   /** VROL-633 — Inspector advanced section collapsed by default. */
   const [inspectorAdvancedOpen, setInspectorAdvancedOpen] = useState<boolean>(false);
+  /** VROL-635 — Drawer optional-sections expanded state (closed by default). */
+  const [drawerSections, setDrawerSections] = useState<{
+    materials: boolean;
+    products: boolean;
+    workers: boolean;
+    breakdowns: boolean;
+  }>({ materials: false, products: false, workers: false, breakdowns: false });
+  const toggleDrawerSection = useCallback((key: keyof typeof drawerSections) => {
+    setDrawerSections((s) => ({ ...s, [key]: !s[key] }));
+  }, []);
   /**
    * VROL-632 — onboarding tour state. Auto-opens on first visit (gated by
    * the localStorage flag). Re-launchable via the toolbar '?' icon.
@@ -2136,7 +2147,19 @@ function EditorCanvas() {
               </div>
             </section>
 
-            <section className="border-border space-y-3 rounded-md border border-dashed p-3">
+            <Accordion
+              title="Materials"
+              icon={<Package className="h-4 w-4" />}
+              status={
+                <AccordionStatus tone={settings.materials.enabled ? "on" : "off"}>
+                  {settings.materials.enabled ? "On" : "Off"}
+                </AccordionStatus>
+              }
+              expanded={drawerSections.materials}
+              onToggle={() => {
+                toggleDrawerSection("materials");
+              }}
+            >
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input
                   type="checkbox"
@@ -2150,8 +2173,7 @@ function EditorCanvas() {
                   }}
                   className="accent-sim-running h-4 w-4"
                 />
-                <Package className="h-4 w-4" />
-                Materials (1 bottle + 1 cap per part)
+                Enable bottle + cap consumption per part
               </label>
               {settings.materials.enabled ? (
                 <>
@@ -2299,9 +2321,25 @@ function EditorCanvas() {
                   ) : null}
                 </>
               ) : null}
-            </section>
+            </Accordion>
 
-            <section className="border-border space-y-3 rounded-md border border-dashed p-3">
+            <Accordion
+              title="Multi-product mix"
+              icon={<Boxes className="h-4 w-4" />}
+              status={
+                <AccordionStatus tone={settings.products.enabled ? "on" : "off"}>
+                  {settings.products.enabled
+                    ? `On · ${String(settings.products.list.length)} product${
+                        settings.products.list.length === 1 ? "" : "s"
+                      }`
+                    : "Off"}
+                </AccordionStatus>
+              }
+              expanded={drawerSections.products}
+              onToggle={() => {
+                toggleDrawerSection("products");
+              }}
+            >
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input
                   type="checkbox"
@@ -2315,8 +2353,7 @@ function EditorCanvas() {
                   }}
                   className="accent-sim-running h-4 w-4"
                 />
-                <Boxes className="h-4 w-4" />
-                Multi-product mix at source
+                Enable multi-product mix at source
               </label>
               {settings.products.enabled ? (
                 <div className="space-y-2">
@@ -2454,9 +2491,25 @@ function EditorCanvas() {
                   </Button>
                 </div>
               ) : null}
-            </section>
+            </Accordion>
 
-            <section className="border-border space-y-3 rounded-md border border-dashed p-3">
+            <Accordion
+              title="Workers"
+              icon={<CircleDot className="h-4 w-4" />}
+              status={
+                <AccordionStatus tone={settings.workers.enabled ? "on" : "off"}>
+                  {settings.workers.enabled
+                    ? `On · ${String(settings.workers.list.length)} worker${
+                        settings.workers.list.length === 1 ? "" : "s"
+                      }`
+                    : "Off"}
+                </AccordionStatus>
+              }
+              expanded={drawerSections.workers}
+              onToggle={() => {
+                toggleDrawerSection("workers");
+              }}
+            >
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input
                   type="checkbox"
@@ -2470,8 +2523,7 @@ function EditorCanvas() {
                   }}
                   className="accent-sim-running h-4 w-4"
                 />
-                <CircleDot className="h-4 w-4" />
-                Workers (require 1 per station)
+                Require 1 worker per station
               </label>
               {settings.workers.enabled ? (
                 <div className="space-y-3">
@@ -2617,9 +2669,21 @@ function EditorCanvas() {
                   </p>
                 </div>
               ) : null}
-            </section>
+            </Accordion>
 
-            <section className="border-border space-y-3 rounded-md border border-dashed p-3">
+            <Accordion
+              title="Breakdowns"
+              icon={<Zap className="h-4 w-4" />}
+              status={
+                <AccordionStatus tone={settings.breakdowns.enabled ? "on" : "off"}>
+                  {settings.breakdowns.enabled ? "On" : "Off"}
+                </AccordionStatus>
+              }
+              expanded={drawerSections.breakdowns}
+              onToggle={() => {
+                toggleDrawerSection("breakdowns");
+              }}
+            >
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input
                   type="checkbox"
@@ -2633,8 +2697,7 @@ function EditorCanvas() {
                   }}
                   className="accent-sim-running h-4 w-4"
                 />
-                <Zap className="h-4 w-4" />
-                Stochastic breakdowns
+                Enable stochastic breakdowns
               </label>
               {settings.breakdowns.enabled ? (
                 <>
@@ -2703,7 +2766,7 @@ function EditorCanvas() {
                   </p>
                 </>
               ) : null}
-            </section>
+            </Accordion>
 
             <div className="flex justify-between gap-2">
               <Button
