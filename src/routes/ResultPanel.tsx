@@ -17,6 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { narrateRun } from "@/lib/narrate-run";
 
 import { OeeOverTimeChart } from "./OeeOverTimeChart";
+import { ReworkOverTimeChart } from "./ReworkOverTimeChart";
 import { ThroughputChart } from "./ThroughputChart";
 
 const BOTTLES_ID = asMaterialId("bottles");
@@ -177,10 +178,19 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
     perStation: boolean;
     stateBreakdown: boolean;
     productMix: boolean;
-  }>({ perStation: false, stateBreakdown: false, productMix: false });
+    rework: boolean;
+  }>({ perStation: false, stateBreakdown: false, productMix: false, rework: false });
   const toggleSection = (key: keyof typeof openSections): void => {
     setOpenSections((s) => ({ ...s, [key]: !s[key] }));
   };
+  // VROL-641 — Only show the rework-over-time accordion when at least one
+  // station had rework AND the sampler ran. Otherwise the section is
+  // pointless noise. Count active stations for the status chip.
+  const reworkActiveStationCount = result.perStationReworked.reduce(
+    (n, c) => n + (c > 0 ? 1 : 0),
+    0,
+  );
+  const showReworkChart = reworkActiveStationCount > 0 && result.samples.length >= 2;
   const finalByMat = result.materialFinal ? new Map(result.materialFinal) : null;
   const finalBottles = finalByMat?.get(BOTTLES_ID) ?? null;
   const finalCaps = finalByMat?.get(CAPS_ID) ?? null;
@@ -272,6 +282,30 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
           />
         </CardContent>
       </Card>
+
+      {showReworkChart ? (
+        <Accordion
+          title="Rework over time"
+          status={
+            <AccordionStatus tone="configured">
+              {`${String(reworkActiveStationCount)} station${
+                reworkActiveStationCount === 1 ? "" : "s"
+              } · rework`}
+            </AccordionStatus>
+          }
+          expanded={openSections.rework}
+          onToggle={() => {
+            toggleSection("rework");
+          }}
+        >
+          <ReworkOverTimeChart
+            samples={result.samples}
+            stationLabels={runMeta.stationLabels}
+            horizonMs={horizonMs}
+            warmupMs={warmupMs}
+          />
+        </Accordion>
+      ) : null}
 
       {result.perProductCompleted && result.perProductCompleted.size > 0 ? (
         <Accordion

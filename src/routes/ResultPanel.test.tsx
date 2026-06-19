@@ -110,6 +110,51 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
     expect(banner.textContent).toContain("Capper is the bottleneck");
   });
 
+  it("renders the rework-over-time accordion when a station has rework + samples (VROL-641)", () => {
+    render(
+      <ResultPanel
+        result={fakeResult({
+          perStationReworked: [0, 7],
+          lineReworkRate: 0.034,
+          samples: [
+            {
+              tMs: 10_000,
+              lineCompleted: 50,
+              perStationCompleted: [60, 50],
+              perEdgeBufferFill: [0],
+              perStationStateMs: [],
+              perStationRework: [0, 3],
+            },
+            {
+              tMs: 60_000,
+              lineCompleted: 100,
+              perStationCompleted: [120, 100],
+              perEdgeBufferFill: [0],
+              perStationStateMs: [],
+              perStationRework: [0, 7],
+            },
+          ],
+        })}
+        runMeta={{ stationLabels: ["Filler", "Capper"] }}
+        horizonMs={60_000}
+        warmupMs={0}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Rework over time/i })).toBeInTheDocument();
+  });
+
+  it("hides the rework-over-time accordion when no station has rework", () => {
+    render(
+      <ResultPanel
+        result={fakeResult()}
+        runMeta={{ stationLabels: ["Filler", "Capper"] }}
+        horizonMs={60_000}
+        warmupMs={0}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /Rework over time/i })).toBeNull();
+  });
+
   it("Per-station completed + state breakdown are collapsed by default (VROL-636)", () => {
     render(
       <ResultPanel
