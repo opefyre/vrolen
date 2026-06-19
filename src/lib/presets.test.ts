@@ -42,6 +42,13 @@ describe("presets (VROL-630)", () => {
     expect((filler!.data as { capacity?: number }).capacity).toBe(3);
   });
 
+  it("Source rate preset has finite-rate source enabled (VROL-656)", () => {
+    const p = getPreset("source-rate");
+    expect(p).toBeDefined();
+    expect(p!.settings.source.enabled).toBe(true);
+    expect(p!.settings.source.intervalMs).toBeGreaterThan(0);
+  });
+
   it("Bottling line preset runs end-to-end and produces completed parts", () => {
     const p = getPreset("bottling-line");
     expect(p).toBeDefined();

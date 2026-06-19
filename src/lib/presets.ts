@@ -210,12 +210,36 @@ const PARALLEL_FILLERS: Preset = {
   settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000 },
 };
 
+// ─── 6. Source rate (VROL-656 — showcases VROL-648 finite-rate source) ─────
+const SOURCE_RATE: Preset = {
+  id: "source-rate",
+  title: "Source rate",
+  blurb:
+    "Three-station line where the source only emits a part every 2 minutes. Stations idle between arrivals — throughput is gated by upstream supply, not station cycles.",
+  highlight: "finite-rate source (inter-arrival)",
+  graph: {
+    nodes: [
+      station("n1", "Source", "input", 60, 180, { cycleDistribution: constant(30) }),
+      station("n2", "Filler", "machine", 260, 180, { cycleDistribution: constant(100) }),
+      station("n3", "Capper", "machine", 460, 180, { cycleDistribution: constant(100) }),
+      station("n4", "QC", "qc", 660, 180, { cycleDistribution: constant(50) }),
+    ],
+    edges: [edge("e1-2", "n1", "n2"), edge("e2-3", "n2", "n3"), edge("e3-4", "n3", "n4")],
+  },
+  settings: {
+    ...DEFAULT_RUN_SETTINGS,
+    samplerIntervalMs: 1_000,
+    source: { enabled: true, intervalMs: 120_000, batchSize: 1 },
+  },
+};
+
 export const PRESETS: readonly Preset[] = [
   BOTTLING_LINE,
   MULTI_PRODUCT_CHANGEOVER,
   MAINTENANCE_BOUND,
   WORKER_BOTTLENECK,
   PARALLEL_FILLERS,
+  SOURCE_RATE,
 ];
 
 export function getPreset(id: string): Preset | undefined {
