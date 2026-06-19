@@ -44,6 +44,7 @@ import {
   Download,
   Factory,
   FolderOpen,
+  HelpCircle,
   Loader2,
   MoreHorizontal,
   Package,
@@ -443,6 +444,8 @@ const NODE_TYPES = { station: StationNode };
 // bloat the first non-editor route. It's used inside this lazy-loaded file,
 // so a normal import is fine.
 import { AnimatedEdge } from "./AnimatedEdge";
+import { OnboardingTour } from "./OnboardingTour";
+import { hasSeenOnboarding } from "./onboarding-state";
 import { Sparkline } from "./Sparkline";
 
 // VROL-625 — lazy-load the result-panel cards + compare table + the charts
@@ -502,6 +505,15 @@ function EditorCanvas() {
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
   /** VROL-633 — Inspector advanced section collapsed by default. */
   const [inspectorAdvancedOpen, setInspectorAdvancedOpen] = useState<boolean>(false);
+  /**
+   * VROL-632 — onboarding tour state. Auto-opens on first visit (gated by
+   * the localStorage flag). Re-launchable via the toolbar '?' icon.
+   * Skipped when the user arrived with a preset — the preset itself acts
+   * as guided onboarding.
+   */
+  const [tourOpen, setTourOpen] = useState<boolean>(
+    () => !initial.presetTitle && !hasSeenOnboarding(),
+  );
   /** Inline-confirm state for per-history-entry Replay (VROL-611). */
   const [confirmReplay, setConfirmReplay] = useState<{ scenario: string; idx: number } | null>(
     null,
@@ -1095,6 +1107,13 @@ function EditorCanvas() {
 
   return (
     <div className="space-y-3">
+      {/* VROL-632 — first-run onboarding tour. Renders nothing when !tourOpen. */}
+      <OnboardingTour
+        open={tourOpen}
+        onClose={() => {
+          setTourOpen(false);
+        }}
+      />
       {/* VROL-634 — sticky top bar: scenario name + status pill + primary
           actions. Replaces the 9-button stack that used to live in the left
           column with a horizontal action hierarchy. */}
@@ -1142,6 +1161,17 @@ function EditorCanvas() {
           )}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              setTourOpen(true);
+            }}
+            aria-label="Restart the tour"
+            title="Tour"
+          >
+            <HelpCircle className="h-4 w-4" />
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -1295,7 +1325,7 @@ function EditorCanvas() {
           selectedNode ? "grid-cols-[200px_1fr_260px]" : "grid-cols-[200px_1fr]"
         }`}
       >
-        <Card className="overflow-y-auto">
+        <Card className="overflow-y-auto" data-tour="palette">
           <CardHeader>
             <CardTitle className="font-heading text-base">Stations</CardTitle>
             <CardDescription>Drag onto the canvas</CardDescription>
