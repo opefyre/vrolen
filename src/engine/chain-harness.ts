@@ -885,7 +885,15 @@ export function runChain(opts: ChainOptions): ChainResult {
     if (inputBuffer.size === 0) pushPart(timeMs);
   };
   const sourceMode = opts.source !== undefined;
-  if (!sourceMode) refillOne(0);
+  // VROL-655 — single dispatcher for the "source station just consumed
+  // (or is about to consume) — does anyone need to refill?" decision.
+  // sourceMode means arrivals are the only injection path; this is a no-op.
+  // Otherwise we ensure the input buffer always has the next part queued.
+  const onSourceTickMaybeRefill = (timeMs: number): void => {
+    if (sourceMode) return;
+    refillOne(timeMs);
+  };
+  onSourceTickMaybeRefill(0);
 
   // Cross-station notifications via the topology adjacency.
   for (let i = 0; i < n; i++) {
@@ -902,13 +910,11 @@ export function runChain(opts: ChainOptions): ChainResult {
 
   // After the source station finishes a cycle, refill the input BEFORE its
   // attemptStart tries to pull. (notifyCompletion runs before attemptStart
-  // inside handleCycleComplete, so this slots in correctly.) VROL-648 —
-  // sourceMode disables this; arrivals are the only injection path.
-  if (!sourceMode) {
-    executors[topology.sourceIdx]?.onCompletion((event) => {
-      refillOne(event.timeMs);
-    });
-  }
+  // inside handleCycleComplete, so this slots in correctly.) VROL-655 —
+  // dispatched via the single helper so sourceMode skips it.
+  executors[topology.sourceIdx]?.onCompletion((event) => {
+    onSourceTickMaybeRefill(event.timeMs);
+  });
 
   // VROL-648 — finite-rate source generation. Validate config, schedule the
   // first arrival at t=0, and let the scheduler handler chain the rest.
@@ -1149,9 +1155,8 @@ export function runChain(opts: ChainOptions): ChainResult {
       executors[upIdx]?.onDownstreamCleared(ev.timeMs);
     }
 
-    // VROL-648 — sourceMode disables on-demand refill; arrivals are the
-    // only injection path.
-    if (idx === topology.sourceIdx && !sourceMode) refillOne(ev.timeMs);
+    // VROL-655 — single dispatcher; sourceMode skips refill internally.
+    if (idx === topology.sourceIdx) onSourceTickMaybeRefill(ev.timeMs);
 
     // When workers are configured, releasing one inside handleCycleComplete
     // doesn't notify other stations that have been Starved on no-skill. Nudge
