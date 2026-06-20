@@ -233,7 +233,13 @@ export default function LandingPage() {
       {/* Presets */}
       <section className="space-y-4">
         <div className="flex items-baseline justify-between gap-3">
-          <h2 className="font-heading text-xl font-semibold">Try a preset</h2>
+          <h2 className="font-heading flex items-center gap-2 text-xl font-semibold">
+            Try a preset
+            {/* VROL-760 — count badge. */}
+            <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-[10px] font-medium">
+              {PRESETS.length}
+            </span>
+          </h2>
           <span className="text-muted-foreground text-xs">
             One click → editor, fully configured.
           </span>

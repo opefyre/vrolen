@@ -1805,7 +1805,7 @@ function EditorCanvas() {
       <div
         role="toolbar"
         aria-label="Scenario actions"
-        className="border-border bg-card/80 supports-[backdrop-filter]:bg-card/60 sticky top-0 z-20 -mx-6 flex flex-wrap items-center gap-3 border-b px-6 py-2 backdrop-blur"
+        className="border-border bg-card/80 supports-[backdrop-filter]:bg-card/60 sticky top-0 z-20 -mx-6 flex flex-wrap items-center gap-2 border-b px-3 py-2 backdrop-blur sm:gap-3 sm:px-6"
       >
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-foreground/80 truncate text-sm font-semibold">
@@ -2921,10 +2921,21 @@ function EditorCanvas() {
                           return;
                         }
                         const names = new Set(parsed.scenarios.map((s) => s.name));
-                        const summary = importBundle(parsed, names, "overwrite");
+                        // VROL-759 — confirm before overwriting existing scenarios; switch to
+                        // skip policy when the user declines so duplicates land as no-ops.
+                        const existing = new Set(listScenarios().map((s) => s.name));
+                        const overlap = [...names].filter((n) => existing.has(n));
+                        const policy =
+                          overlap.length === 0 ||
+                          window.confirm(
+                            `${String(overlap.length)} scenario${overlap.length === 1 ? "" : "s"} already exist (${overlap.join(", ")}). Overwrite?`,
+                          )
+                            ? "overwrite"
+                            : "skip";
+                        const summary = importBundle(parsed, names, policy);
                         setScenarios(listScenarios());
                         toast.success("Imported scenarios", {
-                          description: `${String(summary.imported)} imported · ${String(summary.skipped)} skipped`,
+                          description: `${String(summary.imported)} imported · ${String(summary.skipped)} skipped (policy: ${policy})`,
                         });
                       } catch (err) {
                         const m = err instanceof Error ? err.message : String(err);
