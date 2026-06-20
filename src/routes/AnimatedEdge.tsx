@@ -7,8 +7,14 @@
  * undefined, the edge renders as a standard bezier path with no dots.
  */
 
-import { BaseEdge, EdgeLabelRenderer, type EdgeProps, getBezierPath } from "@xyflow/react";
-import { useId } from "react";
+import {
+  BaseEdge,
+  EdgeLabelRenderer,
+  type EdgeProps,
+  getBezierPath,
+  useReactFlow,
+} from "@xyflow/react";
+import { useId, useState } from "react";
 
 import { Sparkline } from "./Sparkline";
 
@@ -42,6 +48,66 @@ export function AnimatedEdge(props: EdgeProps) {
     targetPosition: props.targetPosition,
   });
   const pathId = `edge-path-${useId()}`;
+  const flow = useReactFlow();
+  const [hover, setHover] = useState<boolean>(false);
+
+  // Mid-edge × button shown on hover so the user can delete an edge
+  // without opening a menu. EdgeLabelRenderer puts the DOM node inside
+  // a fixed overlay at flow-space coords; we re-enable pointer events
+  // and listen for click → setEdges(filter).
+  const deleteButton = (
+    <EdgeLabelRenderer>
+      <div
+        style={{
+          position: "absolute",
+          transform: `translate(-50%, -50%) translate(${String(labelX)}px, ${String(labelY)}px)`,
+          pointerEvents: "all",
+        }}
+        onPointerEnter={() => {
+          setHover(true);
+        }}
+        onPointerLeave={() => {
+          setHover(false);
+        }}
+        className="z-10 flex items-center justify-center"
+      >
+        <button
+          type="button"
+          aria-label="Delete edge"
+          title="Delete edge"
+          onClick={(e) => {
+            e.stopPropagation();
+            flow.setEdges((eds) => eds.filter((ed) => ed.id !== props.id));
+          }}
+          className={`bg-card flex h-5 w-5 items-center justify-center rounded-full border shadow-md transition-opacity ${
+            hover ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          <span aria-hidden className="text-foreground text-[12px] leading-none">
+            ×
+          </span>
+        </button>
+      </div>
+    </EdgeLabelRenderer>
+  );
+
+  // Invisible thick stroke directly under the visible edge so the hover
+  // hit-target is generous (1.5px lines are hell to hover).
+  const hitArea = (
+    <path
+      d={edgePath}
+      stroke="transparent"
+      strokeWidth={18}
+      fill="none"
+      style={{ pointerEvents: "stroke", cursor: "pointer" }}
+      onPointerEnter={() => {
+        setHover(true);
+      }}
+      onPointerLeave={() => {
+        setHover(false);
+      }}
+    />
+  );
 
   // Live playback — fatten the edge by current buffer fill so the user
   // sees congestion in real time. Stroke color shifts toward the
@@ -98,7 +164,9 @@ export function AnimatedEdge(props: EdgeProps) {
     return (
       <>
         <BaseEdge {...baseEdgeProps} />
+        {hitArea}
         {sparkline}
+        {deleteButton}
       </>
     );
   }
@@ -118,6 +186,7 @@ export function AnimatedEdge(props: EdgeProps) {
   return (
     <>
       <BaseEdge {...baseEdgeProps} />
+      {hitArea}
       <defs>
         <path id={pathId} d={edgePath} fill="none" />
       </defs>
@@ -134,6 +203,7 @@ export function AnimatedEdge(props: EdgeProps) {
         </circle>
       ))}
       {sparkline}
+      {deleteButton}
     </>
   );
 }

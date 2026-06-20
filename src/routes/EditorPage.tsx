@@ -17,6 +17,8 @@ import "@xyflow/react/dist/style.css";
 import {
   Background,
   BackgroundVariant,
+  type Connection,
+  ConnectionMode,
   Controls,
   type Edge,
   Handle,
@@ -32,6 +34,7 @@ import {
   addEdge,
   applyEdgeChanges,
   applyNodeChanges,
+  reconnectEdge,
   useReactFlow,
 } from "@xyflow/react";
 import {
@@ -466,6 +469,7 @@ function StationNode({ data, selected, id }: NodeProps) {
   // injects the station's current dominant state. Drives the body tint
   // + the pulsing dot so the canvas reads like a live simulation.
   const playbackState = (d as { _playbackState?: string })._playbackState;
+  const isLocked = (d as { _locked?: boolean })._locked === true;
   const playbackTint =
     playbackState === "Running"
       ? "bg-sim-running/10 ring-sim-running/40"
@@ -536,6 +540,19 @@ function StationNode({ data, selected, id }: NodeProps) {
           title="This station capped the line in the last run."
         >
           Bottleneck
+        </span>
+      ) : null}
+      {/* Lock badge — set via right-click → Lock. The node's draggable
+          flag is also flipped so React Flow refuses to move it. */}
+      {isLocked ? (
+        <span
+          className="bg-muted text-muted-foreground absolute -right-2 -bottom-2 z-10 rounded-full p-1 shadow-sm ring-2 ring-white"
+          aria-label="Locked"
+          title="Locked. Right-click → Unlock to move."
+        >
+          <span aria-hidden className="text-[9px]">
+            🔒
+          </span>
         </span>
       ) : null}
       <Handle
@@ -625,6 +642,7 @@ function StationNode({ data, selected, id }: NodeProps) {
 
 import { AlignmentGuidesOverlay } from "@/components/canvas/alignment-guides";
 import { useAlignmentGuides } from "@/components/canvas/use-alignment-guides";
+import { CanvasContextMenu, type ContextMenuTarget } from "@/components/canvas/context-menu";
 import { StickyNoteNode } from "@/components/canvas/sticky-note-node";
 
 const NODE_TYPES = { station: StationNode, sticky: StickyNoteNode };
@@ -912,6 +930,15 @@ function EditorCanvas() {
     initial.nodes.reduce((max, n) => Math.max(max, parseInt(n.id.replace(/\D/g, ""), 10) || 0), 0) +
       1,
   );
+  // In-memory clipboard for Cmd+C / Cmd+V across the active editor session.
+  // `count` is mirrored to state so the context menu's "Paste" item can
+  // disable itself without reading the ref during render.
+  const clipboardRef = useRef<{ nodes: readonly Node[]; edges: readonly Edge[] } | null>(null);
+  const [clipboardCount, setClipboardCount] = useState<number>(0);
+  // Right-click context menu — { kind, nodeId, clientX, clientY }.
+  const [contextMenu, setContextMenu] = useState<ContextMenuTarget | null>(null);
+  // Save the right-click client position so we can paste at the cursor.
+  const lastRightClickRef = useRef<{ clientX: number; clientY: number } | null>(null);
 
   // VROL-738 — autosave indicator flash. Drives off the same effect as the
   // saveGraph call so the chip pulses 'Saving…' for ~250ms after each change.
@@ -1054,6 +1081,185 @@ function EditorCanvas() {
     },
     [setEdges],
   );
+
+  // Edge reconnection — drag the end of a connection and drop on a
+  // different port to re-target it. Drop on empty canvas deletes it.
+  // A ref tracks whether the in-flight reconnect actually landed on a
+  // valid target so the onReconnectEnd handler knows whether to delete.
+  const reconnectSucceededRef = useRef<boolean>(true);
+  const onReconnectStart = useCallback(() => {
+    reconnectSucceededRef.current = false;
+  }, []);
+  const onReconnect = useCallback(
+    (oldEdge: Edge, newConnection: Connection) => {
+      reconnectSucceededRef.current = true;
+      setEdges((eds) => reconnectEdge(oldEdge, newConnection, eds));
+    },
+    [setEdges],
+  );
+  const onReconnectEnd = useCallback(
+    (_e: MouseEvent | TouchEvent, edge: Edge) => {
+      if (!reconnectSucceededRef.current) {
+        setEdges((eds) => eds.filter((e) => e.id !== edge.id));
+      }
+      reconnectSucceededRef.current = true;
+    },
+    [setEdges],
+  );
+
+  // Right-click context menu hooks.
+  const onNodeContextMenu = useCallback((e: React.MouseEvent, node: Node) => {
+    e.preventDefault();
+    lastRightClickRef.current = { clientX: e.clientX, clientY: e.clientY };
+    const isLocked = node.draggable === false;
+    setContextMenu({
+      kind: "node",
+      nodeId: node.id,
+      isLocked,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    });
+  }, []);
+  const onPaneContextMenu = useCallback((e: React.MouseEvent | MouseEvent) => {
+    e.preventDefault();
+    const ev = e as React.MouseEvent;
+    lastRightClickRef.current = { clientX: ev.clientX, clientY: ev.clientY };
+    setContextMenu({ kind: "pane", clientX: ev.clientX, clientY: ev.clientY });
+  }, []);
+
+  // Shared auto-layout — same algorithm the toolbar button runs, broken
+  // out so the pane context menu can call it too.
+  const runAutoLayout = useCallback(() => {
+    if (nodes.length === 0) {
+      toast.info("Canvas is empty");
+      return;
+    }
+    const depth = new Map<string, number>();
+    const idToNode = new Map(nodes.map((n) => [n.id, n]));
+    const order = nodes.map((n) => n.id);
+    for (const id of order) {
+      if (!depth.has(id)) depth.set(id, 0);
+    }
+    let changed = true;
+    let iters = 0;
+    while (changed && iters < 100) {
+      changed = false;
+      iters++;
+      for (const e of edges) {
+        const s = depth.get(e.source) ?? 0;
+        const t = depth.get(e.target) ?? 0;
+        if (t < s + 1) {
+          depth.set(e.target, s + 1);
+          changed = true;
+        }
+      }
+    }
+    const cols = new Map<number, string[]>();
+    for (const id of order) {
+      const d = depth.get(id) ?? 0;
+      const arr = cols.get(d) ?? [];
+      arr.push(id);
+      cols.set(d, arr);
+    }
+    setNodes((ns) =>
+      ns.map((n) => {
+        const d = depth.get(n.id) ?? 0;
+        const colIds = cols.get(d) ?? [];
+        const rank = colIds.indexOf(n.id);
+        if (!idToNode.get(n.id)) return n;
+        return { ...n, position: { x: 40 + d * 220, y: 40 + rank * 120 } };
+      }),
+    );
+    toast.success("Auto-layout applied");
+  }, [nodes, edges, setNodes]);
+
+  // Z-order helpers — bring to front / send to back operate on the
+  // selection if there is one, otherwise on the contextMenu's nodeId.
+  const targetIds = useCallback((): readonly string[] => {
+    const sel = nodes.filter((n) => n.selected).map((n) => n.id);
+    if (sel.length > 0) return sel;
+    return contextMenu?.nodeId ? [contextMenu.nodeId] : [];
+  }, [nodes, contextMenu]);
+  const bringToFront = useCallback(() => {
+    const ids = new Set(targetIds());
+    if (ids.size === 0) return;
+    const maxZ = nodes.reduce((m, n) => Math.max(m, n.zIndex ?? 0), 0);
+    setNodes((ns) => ns.map((n, i) => (ids.has(n.id) ? { ...n, zIndex: maxZ + 1 + i } : n)));
+  }, [nodes, setNodes, targetIds]);
+  const sendToBack = useCallback(() => {
+    const ids = new Set(targetIds());
+    if (ids.size === 0) return;
+    const minZ = nodes.reduce((m, n) => Math.min(m, n.zIndex ?? 0), 0);
+    setNodes((ns) => ns.map((n, i) => (ids.has(n.id) ? { ...n, zIndex: minZ - 1 - i } : n)));
+  }, [nodes, setNodes, targetIds]);
+  const toggleLock = useCallback(() => {
+    const ids = new Set(targetIds());
+    if (ids.size === 0) return;
+    setNodes((ns) =>
+      ns.map((n) =>
+        ids.has(n.id)
+          ? {
+              ...n,
+              draggable: n.draggable === false ? true : false,
+              data: {
+                ...(n.data as Record<string, unknown>),
+                _locked: !(n.draggable === false),
+              },
+            }
+          : n,
+      ),
+    );
+  }, [setNodes, targetIds]);
+  const deleteSelection = useCallback(() => {
+    const ids = new Set(targetIds());
+    if (ids.size === 0) return;
+    setNodes((ns) => ns.filter((n) => !ids.has(n.id)));
+    setEdges((eds) => eds.filter((e) => !ids.has(e.source) && !ids.has(e.target)));
+    setSelectedNodeId(null);
+  }, [setNodes, setEdges, targetIds]);
+  const duplicateSelection = useCallback(() => {
+    const ids = new Set(targetIds());
+    const selected = nodes.filter((n) => ids.has(n.id));
+    if (selected.length === 0) return;
+    const newNodes: Node[] = selected.map((n) => ({
+      ...n,
+      id: `n${String(nodeIdRef.current++)}`,
+      position: { x: n.position.x + 24, y: n.position.y + 24 },
+      data: { ...(n.data as Record<string, unknown>) },
+      selected: true,
+    }));
+    setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), ...newNodes]);
+  }, [nodes, setNodes, targetIds]);
+  const pasteAtCursor = useCallback(() => {
+    const clip = clipboardRef.current;
+    if (!clip || clip.nodes.length === 0) return;
+    const cursorClient = lastRightClickRef.current;
+    const cursorFlow = cursorClient
+      ? flow.screenToFlowPosition({ x: cursorClient.clientX, y: cursorClient.clientY })
+      : null;
+    // Anchor paste at the first clipboard node's original position so the
+    // offset to the cursor lines up nicely.
+    const anchor = clip.nodes[0]?.position ?? { x: 0, y: 0 };
+    const offsetX = cursorFlow ? cursorFlow.x - anchor.x : 24;
+    const offsetY = cursorFlow ? cursorFlow.y - anchor.y : 24;
+    const idMap = new Map<string, string>();
+    for (const n of clip.nodes) idMap.set(n.id, `n${String(nodeIdRef.current++)}`);
+    const newNodes: Node[] = clip.nodes.map((n) => ({
+      ...n,
+      id: idMap.get(n.id) ?? n.id,
+      position: { x: n.position.x + offsetX, y: n.position.y + offsetY },
+      data: { ...(n.data as Record<string, unknown>) },
+      selected: true,
+    }));
+    const newEdges: Edge[] = clip.edges.map((ed) => ({
+      ...ed,
+      id: `e${String(Date.now())}-${idMap.get(ed.source) ?? ed.source}-${idMap.get(ed.target) ?? ed.target}`,
+      source: idMap.get(ed.source) ?? ed.source,
+      target: idMap.get(ed.target) ?? ed.target,
+    }));
+    setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), ...newNodes]);
+    if (newEdges.length > 0) setEdges((eds) => [...eds, ...newEdges]);
+  }, [flow, setNodes, setEdges]);
 
   const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1518,6 +1724,58 @@ function EditorCanvas() {
           const m = err instanceof Error ? err.message : String(err);
           toast.error("Save failed", { description: m });
         }
+      } else if (key === "a") {
+        // Cmd/Ctrl+A — select all nodes on the canvas.
+        e.preventDefault();
+        setNodes((ns) => ns.map((n) => ({ ...n, selected: true })));
+      } else if (key === "c") {
+        // Cmd/Ctrl+C — copy the current selection to the in-memory clipboard.
+        const selected = nodes.filter((n) => n.selected || n.id === selectedNodeId);
+        if (selected.length === 0) return;
+        e.preventDefault();
+        const ids = new Set(selected.map((n) => n.id));
+        const selectedEdges = edges.filter((ed) => ids.has(ed.source) && ids.has(ed.target));
+        clipboardRef.current = {
+          nodes: selected.map((n) => ({
+            ...n,
+            position: { ...n.position },
+            data: { ...(n.data as Record<string, unknown>) },
+            selected: false,
+          })),
+          edges: selectedEdges,
+        };
+        setClipboardCount(selected.length);
+        toast.success(`Copied ${String(selected.length)} node${selected.length === 1 ? "" : "s"}`);
+      } else if (key === "v") {
+        // Cmd/Ctrl+V — paste from clipboard with a +24/+24 offset and
+        // re-map ids so the pastes don't collide.
+        const clip = clipboardRef.current;
+        if (!clip || clip.nodes.length === 0) return;
+        e.preventDefault();
+        const idMap = new Map<string, string>();
+        for (const n of clip.nodes) {
+          idMap.set(n.id, `n${String(nodeIdRef.current++)}`);
+        }
+        const offsetX = 24;
+        const offsetY = 24;
+        const newNodes: Node[] = clip.nodes.map((n) => ({
+          ...n,
+          id: idMap.get(n.id) ?? n.id,
+          position: { x: n.position.x + offsetX, y: n.position.y + offsetY },
+          data: { ...(n.data as Record<string, unknown>) },
+          selected: true,
+        }));
+        const newEdges: Edge[] = clip.edges.map((ed) => ({
+          ...ed,
+          id: `e${String(Date.now())}-${idMap.get(ed.source) ?? ed.source}-${idMap.get(ed.target) ?? ed.target}`,
+          source: idMap.get(ed.source) ?? ed.source,
+          target: idMap.get(ed.target) ?? ed.target,
+        }));
+        setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), ...newNodes]);
+        if (newEdges.length > 0) {
+          setEdges((eds) => [...eds, ...newEdges]);
+        }
+        toast.success(`Pasted ${String(newNodes.length)} node${newNodes.length === 1 ? "" : "s"}`);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -2434,6 +2692,11 @@ function EditorCanvas() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onReconnectStart={onReconnectStart}
+            onReconnect={onReconnect}
+            onReconnectEnd={onReconnectEnd}
+            onNodeContextMenu={onNodeContextMenu}
+            onPaneContextMenu={onPaneContextMenu}
             onSelectionChange={onSelectionChange}
             onNodeDragStart={alignmentGuides.onNodeDragStart}
             onNodeDrag={alignmentGuides.onNodeDrag}
@@ -2449,16 +2712,29 @@ function EditorCanvas() {
             // Handle styles.
             connectionRadius={30}
             connectionLineStyle={{ strokeWidth: 2 }}
+            // connectionMode="loose" lets the user connect target→source as
+            // well as source→target (any handle to any handle). The graph
+            // engine still treats the underlying direction by edge.source /
+            // edge.target.
+            connectionMode={ConnectionMode.Loose}
+            // Every edge is reconnectable by default — drag either endpoint
+            // to retarget it; drop in empty space deletes the edge. Using
+            // the custom `animated` type for all edges so the hover-delete
+            // × button and live playback rendering apply everywhere.
+            defaultEdgeOptions={{ reconnectable: true, type: "animated" }}
             // Miro-style: drag empty space = marquee, drag node = move,
-            // right/middle mouse = pan. Snap-to-grid covers everyone; the
-            // alignment-guides hook adds neighbor-aware snapping on top.
-            // Multi-select uses Cmd (Mac) / Ctrl (Win) — Shift is reserved
-            // for axis-lock during single-node drag.
+            // right/middle mouse = pan, hold Space for left-mouse pan.
+            // Snap-to-grid covers everyone; the alignment-guides hook adds
+            // neighbor-aware snapping on top. Multi-select uses Cmd (Mac) /
+            // Ctrl (Win) — Shift is reserved for axis-lock during drag.
             snapToGrid
             snapGrid={[8, 8]}
             selectionOnDrag
             panOnDrag={[1, 2]}
+            panActivationKeyCode="Space"
             multiSelectionKeyCode={["Meta", "Control"]}
+            deleteKeyCode={["Backspace", "Delete"]}
+            selectionKeyCode={null}
           >
             <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
             <Controls />
@@ -2491,6 +2767,28 @@ function EditorCanvas() {
                 onPlaybackChange={setPlaybackMs}
               />
             </div>
+          ) : null}
+          {contextMenu ? (
+            <CanvasContextMenu
+              target={contextMenu}
+              onClose={() => {
+                setContextMenu(null);
+              }}
+              onDuplicate={duplicateSelection}
+              onBringToFront={bringToFront}
+              onSendToBack={sendToBack}
+              onToggleLock={toggleLock}
+              onDelete={deleteSelection}
+              onPaste={pasteAtCursor}
+              onSelectAll={() => {
+                setNodes((ns) => ns.map((n) => ({ ...n, selected: true })));
+              }}
+              onFitView={() => {
+                flow.fitView({ duration: 400, padding: 0.2 });
+              }}
+              onAutoLayout={runAutoLayout}
+              hasClipboard={clipboardCount > 0}
+            />
           ) : null}
         </div>
 
