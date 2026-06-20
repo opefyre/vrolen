@@ -18,6 +18,7 @@ import { narrateRun } from "@/lib/narrate-run";
 
 import { OeeOverTimeChart } from "./OeeOverTimeChart";
 import { ReworkOverTimeChart } from "./ReworkOverTimeChart";
+import { StatePareto } from "./StatePareto";
 import { ThroughputChart } from "./ThroughputChart";
 
 const BOTTLES_ID = asMaterialId("bottles");
@@ -258,6 +259,15 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
       </Accordion>
 
       <BottleneckExplanationCard result={result} />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-heading text-base">State Pareto</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <StatePareto result={result} />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

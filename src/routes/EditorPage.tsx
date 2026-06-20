@@ -1842,7 +1842,35 @@ function EditorCanvas() {
                 <X className="h-4 w-4" />
               </Button>
             </CardHeader>
-            <CardContent className="space-y-3">
+            {/* VROL-669 — jump strip. Click scrolls the Inspector body to the
+                anchor; the actual sections still render in document order. */}
+            <div className="border-border flex gap-1 border-b px-3 pb-2 text-[11px]">
+              {(
+                [
+                  ["#insp-general", "General"],
+                  ["#insp-recipe", "Recipe"],
+                  ["#insp-custom", "Custom"],
+                  ["#insp-advanced", "Advanced"],
+                ] as const
+              ).map(([hash, label]) => (
+                <button
+                  key={hash}
+                  type="button"
+                  className="hover:bg-muted text-muted-foreground hover:text-foreground rounded px-2 py-0.5"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    const id = hash.slice(1);
+                    document.getElementById(id)?.scrollIntoView({
+                      behavior: "smooth",
+                      block: "start",
+                    });
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <CardContent id="insp-general" className="scroll-mt-4 space-y-3">
               <div className="flex flex-col gap-1">
                 <label
                   htmlFor="inspector-label"
@@ -1920,7 +1948,7 @@ function EditorCanvas() {
                   are enabled. The recipe applies to the station that's
                   selected when Run fires. */}
               {settings.materials.enabled ? (
-                <div className="flex flex-col gap-1.5">
+                <div id="insp-recipe" className="flex scroll-mt-4 flex-col gap-1.5">
                   <div className="text-muted-foreground text-xs font-medium">Recipe</div>
                   <div className="grid grid-cols-2 gap-2">
                     <NumberField
@@ -1984,22 +2012,24 @@ function EditorCanvas() {
                 </div>
               ) : null}
               {/* VROL-286 — customParams editor. Always available. */}
-              <CustomParamsField
-                value={
-                  ((selectedNode.data as { customParams?: readonly CustomParam[] }).customParams ??
-                    []) as readonly CustomParam[]
-                }
-                onChange={(next) => {
-                  updateSelectedNodeData({
-                    customParams: next.length > 0 ? next : undefined,
-                  });
-                }}
-              />
+              <div id="insp-custom" className="scroll-mt-4">
+                <CustomParamsField
+                  value={
+                    ((selectedNode.data as { customParams?: readonly CustomParam[] })
+                      .customParams ?? []) as readonly CustomParam[]
+                  }
+                  onChange={(next) => {
+                    updateSelectedNodeData({
+                      customParams: next.length > 0 ? next : undefined,
+                    });
+                  }}
+                />
+              </div>
             </CardContent>
             {/* VROL-633 — advanced settings collapsed by default. Power users
                 expand once; the toggle's open/closed state persists per
                 station via the inspectorAdvancedOpen useState below. */}
-            <CardContent className="border-border border-t pt-3">
+            <CardContent id="insp-advanced" className="border-border scroll-mt-4 border-t pt-3">
               <button
                 type="button"
                 onClick={() => {
@@ -2188,12 +2218,47 @@ function EditorCanvas() {
         }}
       >
         <SheetContent side="right" className="w-[28rem] sm:max-w-lg">
-          <SheetHeader>
-            <SheetTitle>Comparison</SheetTitle>
-            <SheetDescription>
-              Both scenarios were run with their own settings. Deltas are{" "}
-              <span className="font-medium">B − A</span> (current canvas vs saved scenario).
-            </SheetDescription>
+          <SheetHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
+            <div className="space-y-1">
+              <SheetTitle>Comparison</SheetTitle>
+              <SheetDescription>
+                Both scenarios were run with their own settings. Deltas are{" "}
+                <span className="font-medium">B − A</span> (current canvas vs saved scenario).
+              </SheetDescription>
+            </div>
+            {comparison ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  // VROL-668 — export comparison as JSON.
+                  const payload = {
+                    savedAtMs: Date.now(),
+                    horizonMs: comparison.horizonMs,
+                    warmupMs: comparison.warmupMs,
+                    a: {
+                      name: comparison.aName,
+                      stationLabels: comparison.aStationLabels,
+                      result: JSON.parse(chainResultToJsonString(comparison.aResult)) as unknown,
+                    },
+                    b: {
+                      name: comparison.bName,
+                      stationLabels: comparison.bStationLabels,
+                      result: JSON.parse(chainResultToJsonString(comparison.bResult)) as unknown,
+                    },
+                  };
+                  const stem = suggestedFilenameStem(`${comparison.aName}-vs-${comparison.bName}`);
+                  downloadFile(
+                    `${stem}-compare.json`,
+                    JSON.stringify(payload, null, 2),
+                    "application/json",
+                  );
+                }}
+              >
+                <Download className="mr-1 h-3.5 w-3.5" />
+                JSON
+              </Button>
+            ) : null}
           </SheetHeader>
           {comparison ? (
             <div className="space-y-4 px-4 pb-6">
