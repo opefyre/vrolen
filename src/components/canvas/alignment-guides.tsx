@@ -30,30 +30,36 @@ export function AlignmentGuidesOverlay({ guideLines }: AlignmentGuidesOverlayPro
         transform={`translate(${String(viewport.x)} ${String(viewport.y)}) scale(${String(viewport.zoom)})`}
       >
         {guideLines.map((g, i) => {
+          // Strokes are inverse-zoomed so they stay ~1px on screen at any
+          // zoom level. Dash pattern likewise.
+          const sw = 1 / viewport.zoom;
+          const dash = `${String(4 / viewport.zoom)} ${String(3 / viewport.zoom)}`;
           if (g.axis === "vertical") {
             return (
               <line
                 key={i}
                 x1={g.at}
-                y1={g.from - 24}
+                y1={g.from}
                 x2={g.at}
-                y2={g.to + 24}
+                y2={g.to}
                 stroke="#ec4899"
-                strokeWidth={1 / viewport.zoom}
-                strokeDasharray={`${String(4 / viewport.zoom)} ${String(3 / viewport.zoom)}`}
+                strokeOpacity={0.85}
+                strokeWidth={sw}
+                strokeDasharray={dash}
               />
             );
           }
           return (
             <line
               key={i}
-              x1={g.from - 24}
+              x1={g.from}
               y1={g.at}
-              x2={g.to + 24}
+              x2={g.to}
               y2={g.at}
               stroke="#ec4899"
-              strokeWidth={1 / viewport.zoom}
-              strokeDasharray={`${String(4 / viewport.zoom)} ${String(3 / viewport.zoom)}`}
+              strokeOpacity={0.85}
+              strokeWidth={sw}
+              strokeDasharray={dash}
             />
           );
         })}
