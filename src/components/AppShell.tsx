@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { KeyboardShortcutsOverlay } from "@/components/editor/keyboard-shortcuts";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -113,6 +114,7 @@ export function AppShell({ children }: AppShellProps) {
       <main className="col-start-2 row-start-2 row-end-3 overflow-auto lg:col-start-2">
         {children}
       </main>
+      <KeyboardShortcutsOverlay />
     </div>
   );
 }

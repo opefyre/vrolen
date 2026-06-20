@@ -118,6 +118,7 @@ import {
   validateScenario,
   type ValidationIssue,
 } from "@/lib/validate-scenario";
+import { EmptyState } from "@/components/EmptyState";
 import { BulkInspector } from "@/components/editor/bulk-inspector";
 import { CustomParamsField } from "@/components/editor/custom-params-field";
 import type { CustomParam } from "@/lib/custom-params";
@@ -1790,6 +1791,20 @@ function EditorCanvas() {
             <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
             <Controls />
             <MiniMap pannable zoomable />
+            {nodesForFlow.length === 0 ? (
+              <div
+                className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+                data-testid="canvas-empty-state"
+              >
+                <div className="border-border bg-card/95 text-card-foreground pointer-events-auto max-w-sm rounded-lg border border-dashed px-6 py-8 text-center shadow-sm">
+                  <div className="font-heading text-base font-semibold">Empty canvas</div>
+                  <p className="text-muted-foreground mt-2 text-sm">
+                    Drag a station from the palette on the left to start building a line. Connect
+                    them with edges to route parts through.
+                  </p>
+                </div>
+              </div>
+            ) : null}
           </ReactFlow>
         </div>
 
@@ -2419,10 +2434,16 @@ function EditorCanvas() {
               </ul>
             </div>
             {scenarios.length === 0 ? (
-              <p className="text-muted-foreground text-sm">
-                No saved scenarios yet. Click <strong>Save current</strong> to capture the graph +
-                run settings under a name.
-              </p>
+              <EmptyState
+                icon={Save}
+                title="No saved scenarios yet"
+                body={
+                  <>
+                    Click <strong>Save current</strong> to capture the graph + run settings under a
+                    name.
+                  </>
+                }
+              />
             ) : (
               <ul className="space-y-2">
                 {scenarios.map((s) => {

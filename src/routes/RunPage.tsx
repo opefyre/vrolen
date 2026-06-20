@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { EmptyState } from "@/components/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -646,7 +647,7 @@ export default function RunPage() {
       </Card>
 
       {result ? (
-        <section className="space-y-3">
+        <section className="space-y-3" data-testid="run-results">
           <h2 className="font-heading text-xl font-semibold tracking-tight">Results</h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <KpiCard
@@ -948,9 +949,11 @@ export default function RunPage() {
           </Card>
         </section>
       ) : (
-        <p className="text-muted-foreground text-sm">
-          Press <strong>Run simulation</strong> to see results.
-        </p>
+        <EmptyState
+          icon={Play}
+          title="No results yet"
+          body="Set your horizon, warmup, and station cycle times, then press Run simulation."
+        />
       )}
     </div>
   );
