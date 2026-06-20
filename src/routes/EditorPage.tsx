@@ -1254,7 +1254,40 @@ function EditorCanvas() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
+      // VROL-731 / VROL-732 — non-modifier hotkeys (Delete/Backspace, Escape)
+      // are dispatched here regardless of mod-state. Only swallow if not in an
+      // input/textarea.
+      if (!mod) {
+        const t0 = e.target as HTMLElement | null;
+        if (
+          t0 &&
+          (t0.tagName === "INPUT" ||
+            t0.tagName === "TEXTAREA" ||
+            t0.tagName === "SELECT" ||
+            t0.isContentEditable)
+        ) {
+          return;
+        }
+        if (e.key === "Delete" || e.key === "Backspace") {
+          if (selectedNodeId) {
+            e.preventDefault();
+            const id = selectedNodeId;
+            setNodes((ns) => ns.filter((n) => n.id !== id));
+            setEdges((es) => es.filter((ed) => ed.source !== id && ed.target !== id));
+            setSelectedNodeId(null);
+          }
+        } else if (e.key === "Escape") {
+          // Close open sheets.
+          if (scenariosOpen) {
+            setScenariosOpen(false);
+          } else if (settingsOpen) {
+            setSettingsOpen(false);
+          } else if (comparison !== null) {
+            setComparison(null);
+          }
+        }
+        return;
+      }
       // Skip if the user is typing in an input / textarea / contenteditable.
       const t = e.target as HTMLElement | null;
       if (
@@ -1286,13 +1319,48 @@ function EditorCanvas() {
         setNodes((ns) => [...ns, copy]);
         setSelectedNodeId(newId);
         toast.success(`Duplicated ${(original.data as { label?: string }).label ?? "station"}`);
+      } else if (key === "enter") {
+        // VROL-730 — Cmd/Ctrl+Enter triggers Run.
+        e.preventDefault();
+        if (!isRunning) handleRun();
+      } else if (key === "s" && activeScenarioName) {
+        // VROL-733 — Cmd/Ctrl+S saves the active scenario in place.
+        e.preventDefault();
+        try {
+          saveScenario(activeScenarioName, {
+            graph: { nodes: [...nodes], edges: [...edges] },
+            settings,
+            savedAtMs: Date.now(),
+          });
+          setScenarios(listScenarios());
+          setActiveScenarioSnapshot(JSON.stringify({ graph: { nodes, edges }, settings }));
+          toast.success(`Saved "${activeScenarioName}"`);
+        } catch (err) {
+          const m = err instanceof Error ? err.message : String(err);
+          toast.error("Save failed", { description: m });
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
     };
-  }, [handleUndo, handleRedo, selectedNodeId, nodes, setNodes]);
+  }, [
+    handleUndo,
+    handleRedo,
+    selectedNodeId,
+    nodes,
+    edges,
+    settings,
+    setNodes,
+    setEdges,
+    activeScenarioName,
+    isRunning,
+    handleRun,
+    scenariosOpen,
+    settingsOpen,
+    comparison,
+  ]);
 
   // VROL-304 — click a validation issue → pan + zoom the canvas to its node.
   const focusValidationIssue = useCallback(
