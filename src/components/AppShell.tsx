@@ -2,6 +2,7 @@ import {
   BookOpen,
   Factory,
   LayoutGrid,
+  Layers,
   Network,
   Palette,
   PanelLeftClose,
@@ -26,6 +27,8 @@ const NAV_ITEMS: readonly NavItem[] = [
   { href: "/", label: "Home", icon: LayoutGrid },
   { href: "/run", label: "Run", icon: Play },
   { href: "/editor", label: "Editor", icon: Network },
+  // VROL-442 — /templates entry in the primary nav.
+  { href: "/templates", label: "Templates", icon: Layers },
   { href: "/help", label: "Glossary", icon: BookOpen },
   { href: "/design-tokens", label: "Design tokens", icon: Palette },
 ];

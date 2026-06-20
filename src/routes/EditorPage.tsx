@@ -190,6 +190,15 @@ const PALETTE: readonly PaletteItem[] = [
   { stationType: "transport", label: "Transport", icon: Truck, summary: "Move parts" },
   { stationType: "input", label: "Material input", icon: ConciergeBell, summary: "Source" },
   { stationType: "output", label: "Output", icon: Wrench, summary: "Sink" },
+  // VROL-270 — packaging closes the 10-type palette set: end-of-line case
+  // packers, palletisers, shrink-wrappers. Distinct accent from Machine so
+  // it reads as the "ship it" affordance.
+  {
+    stationType: "packaging",
+    label: "Packaging",
+    icon: Package,
+    summary: "End-of-line cartoning / palletising",
+  },
   // VROL-274 — generic escape-hatch.
   { stationType: "custom", label: "Custom", icon: HelpCircle, summary: "Generic timed-delay" },
 ];
@@ -405,6 +414,12 @@ const STATION_TYPE_ACCENT: Record<string, { pill: string; border: string }> = {
   output: {
     pill: "bg-sim-maintenance/15 text-sim-maintenance",
     border: "border-l-sim-maintenance/60",
+  },
+  // VROL-270 — packaging accent uses the maintenance hue at higher saturation
+  // so it reads distinct from output and machine.
+  packaging: {
+    pill: "bg-sim-down/15 text-sim-down-foreground",
+    border: "border-l-sim-down/60",
   },
   // VROL-274 — neutral muted accent so a CustomStation reads as "tell me
   // what this is" rather than borrowing semantics from one of the typed types.
@@ -4694,6 +4709,32 @@ function EditorCanvas() {
                         ? "Single worker — chain is rate-limited by labor."
                         : `${String(settings.workers.list.length)} workers — partial labor contention.`}
                   </p>
+                  {/* VROL-301 — skill coverage chips so the user can see which
+                      skills the pool covers without expanding every worker. */}
+                  {(() => {
+                    const counts = new Map<string, number>();
+                    for (const w of settings.workers.list) {
+                      for (const s of w.skills) {
+                        counts.set(s, (counts.get(s) ?? 0) + 1);
+                      }
+                    }
+                    if (counts.size === 0) return null;
+                    return (
+                      <div className="flex flex-wrap gap-1 text-[10px]">
+                        {[...counts.entries()]
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([skill, n]) => (
+                            <span
+                              key={skill}
+                              className="bg-muted text-foreground rounded-full px-1.5 py-0.5 font-mono"
+                            >
+                              {skill}
+                              {n > 1 ? ` × ${String(n)}` : ""}
+                            </span>
+                          ))}
+                      </div>
+                    );
+                  })()}
                 </div>
               ) : null}
             </Accordion>

@@ -3,10 +3,12 @@ import { lazy, Suspense } from "react";
 import { AppShell } from "@/components/AppShell";
 import { Toaster } from "@/components/Toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import DemoPage from "@/routes/DemoPage";
 import DesignTokens from "@/routes/DesignTokens";
 import HelpPage from "@/routes/HelpPage";
 import LandingPage from "@/routes/LandingPage";
 import RunPage from "@/routes/RunPage";
+import TemplatesPage from "@/routes/TemplatesPage";
 
 // /editor is the largest route (xyflow + inspector + drawer + per-product UI).
 // Lazy-load it so the home page + /run + /design-tokens don't pay for its
@@ -26,6 +28,8 @@ export default function App() {
   let page;
   if (pathname === "/design-tokens") page = <DesignTokens />;
   else if (pathname === "/help") page = <HelpPage />;
+  else if (pathname === "/templates") page = <TemplatesPage />;
+  else if (pathname === "/demo") page = <DemoPage />;
   else if (pathname === "/run") page = <RunPage />;
   else if (pathname === "/editor")
     page = (

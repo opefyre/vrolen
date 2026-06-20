@@ -208,6 +208,16 @@ export default function LandingPage() {
           >
             Load the bottling demo
           </Button>
+          {/* VROL-437 — /demo is a one-click external entry point. */}
+          <Button
+            size="lg"
+            variant="ghost"
+            onClick={() => {
+              if (typeof window !== "undefined") window.location.href = "/templates";
+            }}
+          >
+            Browse templates
+          </Button>
         </div>
       </section>
 
