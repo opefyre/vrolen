@@ -41,6 +41,7 @@ import {
   CircleDot,
   Combine,
   ConciergeBell,
+  Dice5,
   Download,
   AlertCircle,
   AlertTriangle,
@@ -1786,6 +1787,25 @@ function EditorCanvas() {
             )}
             {isRunning ? "Running" : "Run"}
           </Button>
+          {/* VROL-689 — re-roll the PRNG seed and immediately re-run. */}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isRunning}
+            className="gap-2"
+            aria-label="Re-run with a new random seed"
+            title="Re-run with a fresh seed"
+            onClick={() => {
+              const next = Math.floor(Math.random() * 1_000_000);
+              setSettings((s) => ({ ...s, seed: next }));
+              setTimeout(() => {
+                handleRun();
+              }, 0);
+            }}
+          >
+            <Dice5 className="h-4 w-4" />
+            New seed
+          </Button>
         </div>
       </div>
       <div
@@ -1987,7 +2007,7 @@ function EditorCanvas() {
                 min={0}
                 max={1}
                 step={0.01}
-                helperText="Probability that a finished part is defective (0–1)."
+                helperText="Probability that a finished part is defective (0–1). Raises scrap rate; drops Line OEE × Quality. Each defect cascades to scrap or rework."
                 inputClassName="font-mono tabular-nums w-32"
                 onChange={(n) => {
                   updateSelectedNodeData({ defectRate: n });
@@ -2009,7 +2029,7 @@ function EditorCanvas() {
                 min={1}
                 max={10}
                 step={1}
-                helperText="Number of parts this station processes simultaneously. Default 1."
+                helperText="Number of parts this station processes simultaneously. Lifts throughput linearly when this is the bottleneck. Default 1."
                 onChange={(n) => {
                   const v = Math.max(1, Math.min(10, Math.floor(n)));
                   updateSelectedNodeData({ capacity: v === 1 ? undefined : v });

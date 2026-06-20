@@ -19,6 +19,8 @@ import { toast } from "@/lib/toast";
 
 import { OeeOverTimeChart } from "./OeeOverTimeChart";
 import { ReworkOverTimeChart } from "./ReworkOverTimeChart";
+import { BufferSummary } from "./BufferSummary";
+import { FinalStateCard } from "./FinalStateCard";
 import { OeeBreakdown } from "./OeeBreakdown";
 import { RecommendationsCard } from "./RecommendationsCard";
 import { StatePareto } from "./StatePareto";
@@ -354,6 +356,30 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
         </CardHeader>
         <CardContent>
           <OeeBreakdown result={result} />
+        </CardContent>
+      </Card>
+
+      <Card id="buffer-summary">
+        <CardHeader>
+          <CardTitle className="font-heading text-base">
+            <AnchorTitle anchorId="buffer-summary">Buffer fill</AnchorTitle>
+          </CardTitle>
+          <CardDescription>Average + peak fill per inter-station edge.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <BufferSummary result={result} />
+        </CardContent>
+      </Card>
+
+      <Card id="final-state">
+        <CardHeader>
+          <CardTitle className="font-heading text-base">
+            <AnchorTitle anchorId="final-state">Final state</AnchorTitle>
+          </CardTitle>
+          <CardDescription>Each station's dominant state at horizon end.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <FinalStateCard result={result} stationLabels={runMeta.stationLabels} />
         </CardContent>
       </Card>
 
