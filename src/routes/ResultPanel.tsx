@@ -7,7 +7,7 @@
  * and exposes the same shape KpiStrip had inline.
  */
 
-import { Lightbulb } from "lucide-react";
+import { Lightbulb, Link as LinkIcon } from "lucide-react";
 import { useState } from "react";
 
 import type { ChainResult } from "@/engine";
@@ -15,10 +15,12 @@ import { asMaterialId } from "@/engine";
 import { Accordion, AccordionStatus } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { narrateRun } from "@/lib/narrate-run";
+import { toast } from "@/lib/toast";
 
 import { OeeOverTimeChart } from "./OeeOverTimeChart";
 import { ReworkOverTimeChart } from "./ReworkOverTimeChart";
 import { OeeBreakdown } from "./OeeBreakdown";
+import { RecommendationsCard } from "./RecommendationsCard";
 import { StatePareto } from "./StatePareto";
 import { ThroughputChart } from "./ThroughputChart";
 
@@ -46,6 +48,45 @@ interface ResultPanelProps {
   readonly runMeta: ResultPanelRunMeta;
   readonly horizonMs: number;
   readonly warmupMs: number;
+}
+
+/**
+ * VROL-681 — section title with a clickable anchor link icon. Clicking
+ * copies the deep-link URL to the user's clipboard for sharing.
+ */
+function AnchorTitle({
+  anchorId,
+  children,
+}: {
+  readonly anchorId: string;
+  readonly children: React.ReactNode;
+}) {
+  const onClick = (): void => {
+    if (typeof window === "undefined") return;
+    const href = `${window.location.origin}${window.location.pathname}#${anchorId}`;
+    if (typeof window.history?.replaceState === "function") {
+      window.history.replaceState(null, "", `#${anchorId}`);
+    }
+    try {
+      void navigator.clipboard?.writeText(href);
+      toast.success("Link copied", { description: anchorId });
+    } catch {
+      toast.message("Link", { description: href });
+    }
+  };
+  return (
+    <span className="group inline-flex items-center gap-1.5">
+      <span>{children}</span>
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={`Copy link to ${anchorId}`}
+        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring opacity-0 transition-opacity group-hover:opacity-100 focus-visible:rounded focus-visible:opacity-100 focus-visible:ring-2"
+      >
+        <LinkIcon className="h-3.5 w-3.5" />
+      </button>
+    </span>
+  );
 }
 
 function stateColor(state: string): string {
@@ -261,18 +302,34 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
 
       <BottleneckExplanationCard result={result} />
 
-      <Card>
+      <Card id="recommendations">
         <CardHeader>
-          <CardTitle className="font-heading text-base">State Pareto</CardTitle>
+          <CardTitle className="font-heading text-base">
+            <AnchorTitle anchorId="recommendations">Recommendations</AnchorTitle>
+          </CardTitle>
+          <CardDescription>Ranked by expected impact on throughput.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <RecommendationsCard result={result} />
+        </CardContent>
+      </Card>
+
+      <Card id="state-pareto">
+        <CardHeader>
+          <CardTitle className="font-heading text-base">
+            <AnchorTitle anchorId="state-pareto">State Pareto</AnchorTitle>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <StatePareto result={result} />
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="oee-breakdown">
         <CardHeader>
-          <CardTitle className="font-heading text-base">OEE breakdown</CardTitle>
+          <CardTitle className="font-heading text-base">
+            <AnchorTitle anchorId="oee-breakdown">OEE breakdown</AnchorTitle>
+          </CardTitle>
           <CardDescription>
             Availability × Performance × Quality per station. The slim factor is the lever.
           </CardDescription>
@@ -282,18 +339,22 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="throughput">
         <CardHeader>
-          <CardTitle className="font-heading text-base">Throughput over time</CardTitle>
+          <CardTitle className="font-heading text-base">
+            <AnchorTitle anchorId="throughput">Throughput over time</AnchorTitle>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <ThroughputChart samples={result.samples} horizonMs={horizonMs} warmupMs={warmupMs} />
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="bottleneck-state">
         <CardHeader>
-          <CardTitle className="font-heading text-base">Bottleneck state over time</CardTitle>
+          <CardTitle className="font-heading text-base">
+            <AnchorTitle anchorId="bottleneck-state">Bottleneck state over time</AnchorTitle>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <OeeOverTimeChart
@@ -475,6 +536,7 @@ export function ComparisonTable({
     a: number;
     b: number;
     fmt: (n: number) => string;
+    higherIsBetter: boolean;
     hideDiffWhenZero?: boolean;
   };
   const rows: Row[] = [
@@ -483,25 +545,35 @@ export function ComparisonTable({
       a: aResult.completed,
       b: bResult.completed,
       fmt: (n) => n.toLocaleString(),
+      higherIsBetter: true,
     },
     {
       label: "Throughput (parts/hour)",
       a: aResult.throughputLambda * 3_600_000,
       b: bResult.throughputLambda * 3_600_000,
       fmt: (n) => fmt(n, 0),
+      higherIsBetter: true,
     },
-    { label: "Line OEE", a: aResult.lineOee, b: bResult.lineOee, fmt: (n) => `${fmt(n * 100)}%` },
+    {
+      label: "Line OEE",
+      a: aResult.lineOee,
+      b: bResult.lineOee,
+      fmt: (n) => `${fmt(n * 100)}%`,
+      higherIsBetter: true,
+    },
     {
       label: "Avg time-in-system (ms)",
       a: aResult.avgTimeInSystemW,
       b: bResult.avgTimeInSystemW,
       fmt: (n) => fmt(n, 0),
+      higherIsBetter: false,
     },
     {
       label: "Line scrap rate",
       a: aResult.lineScrapRate,
       b: bResult.lineScrapRate,
       fmt: (n) => `${fmt(n * 100)}%`,
+      higherIsBetter: false,
     },
   ];
   if (aResult.laborUtilization !== undefined || bResult.laborUtilization !== undefined) {
@@ -510,6 +582,7 @@ export function ComparisonTable({
       a: aResult.laborUtilization ?? 0,
       b: bResult.laborUtilization ?? 0,
       fmt: (n) => `${fmt(n * 100)}%`,
+      higherIsBetter: true,
     });
   }
 
@@ -518,30 +591,42 @@ export function ComparisonTable({
   const showChartRow = aHasSamples || bHasSamples;
 
   // VROL-653 — top-line KPI delta tiles (the 4 metrics users care about most).
-  const kpiTiles = [
+  // VROL-679 — `higherIsBetter` lets us color deltas by *direction-aware*
+  // semantics (down time-in-system = green, up time-in-system = red).
+  const kpiTiles: readonly {
+    readonly label: string;
+    readonly a: number;
+    readonly b: number;
+    readonly fmtVal: (n: number) => string;
+    readonly higherIsBetter: boolean;
+  }[] = [
     {
       label: "Completed",
       a: aResult.completed,
       b: bResult.completed,
       fmtVal: (n: number) => n.toLocaleString(),
+      higherIsBetter: true,
     },
     {
       label: "Throughput/h",
       a: aResult.throughputLambda * 3_600_000,
       b: bResult.throughputLambda * 3_600_000,
       fmtVal: (n: number) => fmt(n, 0),
+      higherIsBetter: true,
     },
     {
       label: "Line OEE",
       a: aResult.lineOee,
       b: bResult.lineOee,
       fmtVal: (n: number) => `${fmt(n * 100)}%`,
+      higherIsBetter: true,
     },
     {
       label: "Time-in-sys",
       a: aResult.avgTimeInSystemW,
       b: bResult.avgTimeInSystemW,
       fmtVal: (n: number) => `${fmt(n, 0)} ms`,
+      higherIsBetter: false,
     },
   ];
 
@@ -552,19 +637,19 @@ export function ComparisonTable({
           const delta = t.b - t.a;
           const pctDelta = t.a !== 0 ? (delta / Math.abs(t.a)) * 100 : 0;
           const isUp = delta > 0;
+          // VROL-679 — direction-aware coloring. For time-in-system, ▼ is good.
+          const betterForB = t.higherIsBetter ? delta > 0 : delta < 0;
+          const colorClass =
+            delta === 0
+              ? "text-muted-foreground"
+              : betterForB
+                ? "text-sim-running-foreground"
+                : "text-sim-down-foreground";
           return (
             <div key={t.label} className="border-border bg-card rounded-md border p-3">
               <div className="text-muted-foreground text-xs tracking-wide uppercase">{t.label}</div>
               <div className="font-mono text-base font-semibold tabular-nums">{t.fmtVal(t.b)}</div>
-              <div
-                className={`mt-0.5 text-xs ${
-                  delta === 0
-                    ? "text-muted-foreground"
-                    : isUp
-                      ? "text-sim-running-foreground"
-                      : "text-sim-down-foreground"
-                }`}
-              >
+              <div className={`mt-0.5 text-xs ${colorClass}`}>
                 {delta === 0
                   ? `= ${t.fmtVal(t.a)}`
                   : `${isUp ? "▲" : "▼"} ${t.fmtVal(Math.abs(delta))}${
@@ -604,6 +689,7 @@ export function ComparisonTable({
                 const delta = row.b - row.a;
                 const pctDelta = row.a !== 0 ? (delta / Math.abs(row.a)) * 100 : 0;
                 const isUp = delta > 0;
+                const betterForB = row.higherIsBetter ? delta > 0 : delta < 0;
                 return (
                   <tr key={row.label} className="border-border/50 border-b last:border-0">
                     <td className="py-2 pr-3">{row.label}</td>
@@ -617,7 +703,7 @@ export function ComparisonTable({
                       className={`py-2 pl-3 text-right font-mono tabular-nums ${
                         delta === 0
                           ? "text-muted-foreground"
-                          : isUp
+                          : betterForB
                             ? "text-sim-running-foreground"
                             : "text-sim-down-foreground"
                       }`}

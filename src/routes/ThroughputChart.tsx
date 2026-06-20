@@ -130,12 +130,15 @@ export function ThroughputChart({
 
   return (
     <div ref={wrapperRef} className="relative w-full">
-      {secondaryLinePath ? (
-        <div className="text-muted-foreground mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
-          <span className="flex items-center gap-1.5">
-            <span className="bg-sim-running inline-block h-0.5 w-4 rounded-full" />
-            <span className="text-foreground">{primaryLabel ?? "A"}</span>
+      {/* VROL-680 — always-on legend: line color + warmup shading. */}
+      <div className="text-muted-foreground mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
+        <span className="flex items-center gap-1.5">
+          <span className="bg-sim-running inline-block h-0.5 w-4 rounded-full" />
+          <span className="text-foreground">
+            {secondaryLinePath ? (primaryLabel ?? "A") : "Completed parts"}
           </span>
+        </span>
+        {secondaryLinePath ? (
           <span className="flex items-center gap-1.5">
             <span
               className="bg-sim-setup inline-block h-[2px] w-4 rounded-full"
@@ -146,8 +149,14 @@ export function ThroughputChart({
             />
             <span className="text-foreground">{secondaryLabel ?? "B"}</span>
           </span>
-        </div>
-      ) : null}
+        ) : null}
+        {warmupMs > 0 ? (
+          <span className="ml-auto flex items-center gap-1.5">
+            <span className="bg-muted inline-block h-2 w-3 rounded-sm opacity-60" />
+            <span>warmup excluded</span>
+          </span>
+        ) : null}
+      </div>
       <svg
         viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
         preserveAspectRatio="none"
@@ -232,6 +241,11 @@ export function ThroughputChart({
           {((warmupMs + (horizonMs - warmupMs) / 2) / 1000).toFixed(1)}s
         </span>
         <span className="font-mono tabular-nums">{(horizonMs / 1000).toFixed(1)}s</span>
+      </div>
+      {/* VROL-680 — explicit axis labels so the reader knows what each axis means. */}
+      <div className="text-muted-foreground mt-0.5 flex items-center justify-between text-[10px]">
+        <span>time (s)</span>
+        <span>parts</span>
       </div>
       <div className="text-muted-foreground flex items-center justify-between text-xs">
         <span className="font-mono tabular-nums">0</span>
