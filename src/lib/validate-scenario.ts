@@ -57,6 +57,25 @@ export interface ValidationResult {
   readonly warnings: readonly ValidationIssue[];
 }
 
+/**
+ * VROL-660 — find all issues bound to a specific node + field. Used by the
+ * Inspector to paint a per-field red/yellow indicator next to controls
+ * with active validation issues. Matches via:
+ *   - issue.nodeId === nodeId
+ *   - issue.path ends with `.${fieldKey}` (so `nodes[3].data.skills`
+ *     matches fieldKey="skills")
+ */
+export function findIssuesForField(
+  issues: readonly ValidationIssue[],
+  nodeId: string,
+  fieldKey: string,
+): readonly ValidationIssue[] {
+  const suffix = `.${fieldKey}`;
+  return issues.filter(
+    (i) => i.nodeId === nodeId && typeof i.path === "string" && i.path.endsWith(suffix),
+  );
+}
+
 export function validateScenario(
   nodes: readonly Node[],
   edges: readonly Edge[],

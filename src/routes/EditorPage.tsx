@@ -113,7 +113,12 @@ import {
 } from "@/lib/run-history";
 import { consumePendingPreset, PRESETS, type Preset } from "@/lib/presets";
 import { runScenario, type ScenarioRunOutcome } from "@/lib/run-scenario";
-import { validateScenario, type ValidationIssue } from "@/lib/validate-scenario";
+import {
+  findIssuesForField,
+  validateScenario,
+  type ValidationIssue,
+} from "@/lib/validate-scenario";
+import { FieldErrorIndicator } from "@/components/editor/field-error-indicator";
 import { ValidationPanel } from "@/components/editor/validation-panel";
 import {
   canRedo,
@@ -1870,26 +1875,50 @@ function EditorCanvas() {
                     updateSelectedNodeData({ maintenanceWindows: next });
                   }}
                 />
-                <SkillsField
-                  value={
-                    Array.isArray((selectedNode.data as { skills?: unknown }).skills)
-                      ? ((selectedNode.data as { skills: string[] }).skills as string[])
-                      : []
-                  }
-                  onChange={(next) => {
-                    updateSelectedNodeData({ skills: next });
-                  }}
-                  label="Required skills"
-                  placeholder="e.g. capping, qc"
-                  id="inspector-skills"
-                  helpText="Empty = any worker on shift can take the station."
-                />
+                <div className="flex flex-col gap-1">
+                  {(() => {
+                    const skillIssues = findIssuesForField(
+                      [...validation.errors, ...validation.warnings],
+                      selectedNode.id,
+                      "skills",
+                    );
+                    return skillIssues.length > 0 ? (
+                      <div className="flex items-center gap-1.5">
+                        <FieldErrorIndicator issues={skillIssues} />
+                        <span className="text-muted-foreground text-[11px]">
+                          {skillIssues[0]?.message}
+                        </span>
+                      </div>
+                    ) : null;
+                  })()}
+                  <SkillsField
+                    value={
+                      Array.isArray((selectedNode.data as { skills?: unknown }).skills)
+                        ? ((selectedNode.data as { skills: string[] }).skills as string[])
+                        : []
+                    }
+                    onChange={(next) => {
+                      updateSelectedNodeData({ skills: next });
+                    }}
+                    label="Required skills"
+                    placeholder="e.g. capping, qc"
+                    id="inspector-skills"
+                    helpText="Empty = any worker on shift can take the station."
+                  />
+                </div>
                 <div className="flex flex-col gap-1">
                   <label
                     htmlFor="inspector-rework"
-                    className="text-muted-foreground text-xs font-medium"
+                    className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium"
                   >
                     Rework target
+                    <FieldErrorIndicator
+                      issues={findIssuesForField(
+                        [...validation.errors, ...validation.warnings],
+                        selectedNode.id,
+                        "reworkTargetNodeId",
+                      )}
+                    />
                   </label>
                   <select
                     id="inspector-rework"

@@ -200,6 +200,24 @@ describe("validateScenario (VROL-86)", () => {
     expect(r.warnings.find((w) => w.code === "RECIPE_RECURRING_ZERO_AMOUNT")).toBeDefined();
   });
 
+  // ─── findIssuesForField (VROL-660) ─────────────────────────────────────────
+  it("findIssuesForField matches issues by nodeId + field key", async () => {
+    const { findIssuesForField } = await import("./validate-scenario");
+    const r = validateScenario(
+      [node("a"), node("b", { reworkTargetNodeId: "ghost" })],
+      [edge("e", "a", "b")],
+      settings(),
+    );
+    const all = [...r.errors, ...r.warnings];
+    const found = findIssuesForField(all, "b", "reworkTargetNodeId");
+    expect(found).toHaveLength(1);
+    expect(found[0]?.code).toBe("REF_REWORK_TARGET_UNKNOWN");
+    // Wrong field key → no match.
+    expect(findIssuesForField(all, "b", "skills")).toEqual([]);
+    // Wrong node id → no match.
+    expect(findIssuesForField(all, "a", "reworkTargetNodeId")).toEqual([]);
+  });
+
   // ─── Fix actions (VROL-658) ────────────────────────────────────────────────
   it("orphan node carries a delete-node fixAction", () => {
     const r = validateScenario(
