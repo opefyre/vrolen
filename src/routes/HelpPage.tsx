@@ -154,6 +154,13 @@ export default function HelpPage() {
         </CardContent>
       </Card>
 
+      {/* VROL-754 — footer link back to the editor. */}
+      <div className="text-muted-foreground flex items-center justify-end text-xs">
+        <a href="/editor" className="hover:text-foreground underline-offset-2 hover:underline">
+          Back to /editor →
+        </a>
+      </div>
+
       <Card id="states">
         <CardHeader>
           <CardTitle className="font-heading flex items-center gap-2 text-lg">

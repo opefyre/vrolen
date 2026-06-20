@@ -145,7 +145,10 @@ export function narrateRun(result: ChainResult): readonly string[] {
   if (rework) out.push(rework);
   if (scrap) out.push(scrap);
   const localiser = qualityLossLocaliser(result);
-  if (localiser) out.push(localiser);
+  // VROL-756 — skip when the localiser names the same station as the bottleneck
+  // sentence — the user already knows the bottleneck label.
+  const topLabel = result.bottlenecks[0]?.label;
+  if (localiser && (!topLabel || !localiser.includes(topLabel))) out.push(localiser);
   const headroom = headroomSentence(result);
   if (headroom) out.push(headroom);
   if (!rework && !scrap && !cap && !src && !headroom) {

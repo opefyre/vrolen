@@ -3781,7 +3781,15 @@ function EditorCanvas() {
                   />
                   Sample throughput over time
                 </label>
-                <p className="text-muted-foreground text-xs">Powers charts + sparklines.</p>
+                <p className="text-muted-foreground text-xs">
+                  Powers charts + sparklines.
+                  {/* VROL-755 — explicit prompt when sampler is off. */}
+                  {settings.samplerIntervalMs === 0 ? (
+                    <span className="text-sim-setup-foreground ml-1">
+                      Sampler is off — buffer + state-over-time charts will be empty.
+                    </span>
+                  ) : null}
+                </p>
                 {settings.samplerIntervalMs > 0 ? (
                   <div className="flex items-center gap-2 text-xs">
                     <label htmlFor="rs-sampler" className="text-muted-foreground font-medium">

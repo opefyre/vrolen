@@ -56,6 +56,16 @@ export function TopologyPreview({ nodes, edges }: TopologyPreviewProps) {
 
   return (
     <svg viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`} className="h-20 w-full" aria-hidden>
+      {/* VROL-757 — node + edge counts in the corner. */}
+      <text
+        x={VIEW_W - 4}
+        y={VIEW_H - 4}
+        textAnchor="end"
+        className="fill-muted-foreground"
+        style={{ fontSize: 9, fontFamily: "ui-monospace, monospace" }}
+      >
+        {nodes.length}n · {edges.length}e
+      </text>
       {edges.map((e) => {
         const a = posById.get(e.source);
         const b = posById.get(e.target);
