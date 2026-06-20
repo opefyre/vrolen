@@ -26,6 +26,7 @@ import {
 import { useEffect, useState } from "react";
 
 import { EmptyState } from "@/components/EmptyState";
+import { cycleStats } from "@/lib/cycle-stats";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -677,6 +678,17 @@ export default function RunPage() {
               hint="per exited part, on average"
             />
           </div>
+          {/* VROL-750 — cycle-time stats line so RunPage matches /editor results. */}
+          {(() => {
+            const cs = cycleStats(result);
+            if (cs.meanMs === 0) return null;
+            return (
+              <p className="text-muted-foreground text-xs">
+                Median cycle {formatNumber(cs.medianMs, 0)} ms · mean {formatNumber(cs.meanMs, 0)}{" "}
+                ms · min {formatNumber(cs.minMs, 0)} ms · max {formatNumber(cs.maxMs, 0)} ms
+              </p>
+            );
+          })()}
 
           <Card>
             <CardHeader>

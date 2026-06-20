@@ -1320,6 +1320,21 @@ function EditorCanvas() {
             setEdges((es) => es.filter((ed) => ed.source !== id && ed.target !== id));
             setSelectedNodeId(null);
           }
+        } else if (
+          // VROL-752 — arrow up/down cycles primary among the multi-selection.
+          (e.key === "ArrowDown" || e.key === "ArrowUp") &&
+          selectedNodeIds.length > 1 &&
+          selectedNodeId
+        ) {
+          e.preventDefault();
+          const idx = selectedNodeIds.indexOf(selectedNodeId);
+          if (idx === -1) return;
+          const next =
+            e.key === "ArrowDown"
+              ? (idx + 1) % selectedNodeIds.length
+              : (idx - 1 + selectedNodeIds.length) % selectedNodeIds.length;
+          const nextId = selectedNodeIds[next];
+          if (nextId) setSelectedNodeId(nextId);
         } else if (e.key === "Escape") {
           // Close open sheets.
           if (scenariosOpen) {
@@ -1393,6 +1408,7 @@ function EditorCanvas() {
     handleUndo,
     handleRedo,
     selectedNodeId,
+    selectedNodeIds,
     nodes,
     edges,
     settings,
@@ -3333,8 +3349,26 @@ function EditorCanvas() {
                                 className="flex items-center gap-2 text-xs"
                               >
                                 <span className="text-muted-foreground">
+                                  {/* VROL-751 — phrase confirm by current dirty state. */}
                                   {confirmAction.kind === "load"
-                                    ? "Load? Unsaved canvas lost."
+                                    ? activeScenarioIsModified
+                                      ? `Discard ${
+                                          activeScenarioDiff
+                                            ? `${String(
+                                                activeScenarioDiff.nodeChanges +
+                                                  activeScenarioDiff.edgeChanges +
+                                                  activeScenarioDiff.settingsChanges,
+                                              )} change${
+                                                activeScenarioDiff.nodeChanges +
+                                                  activeScenarioDiff.edgeChanges +
+                                                  activeScenarioDiff.settingsChanges ===
+                                                1
+                                                  ? ""
+                                                  : "s"
+                                              }`
+                                            : "your changes"
+                                        } and load?`
+                                      : "Load? Unsaved canvas lost."
                                     : confirmAction.kind === "load-run"
                                       ? "Load + Run? Unsaved canvas lost."
                                       : "Delete?"}
@@ -3772,6 +3806,23 @@ function EditorCanvas() {
                     />
                     <span className="text-muted-foreground">ms</span>
                   </div>
+                ) : null}
+                {/* VROL-753 — warn when interval is too fine vs horizon (too many samples). */}
+                {settings.samplerIntervalMs > 0 &&
+                settings.horizonMs / settings.samplerIntervalMs > 5000 ? (
+                  <p className="text-sim-down-foreground text-xs">
+                    ~{String(Math.round(settings.horizonMs / settings.samplerIntervalMs))} samples —
+                    consider raising the interval, the chart will be hard to read and the run will
+                    be slow.
+                  </p>
+                ) : null}
+                {/* VROL-753 — also warn when interval > horizon/10 (you'll get a flat chart). */}
+                {settings.samplerIntervalMs > 0 &&
+                settings.samplerIntervalMs > settings.horizonMs / 10 ? (
+                  <p className="text-sim-setup-foreground text-xs">
+                    Only ~{String(Math.round(settings.horizonMs / settings.samplerIntervalMs))}{" "}
+                    samples — chart will be coarse. Try a smaller interval.
+                  </p>
                 ) : null}
               </div>
             </section>
