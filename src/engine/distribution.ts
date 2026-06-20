@@ -19,7 +19,31 @@ export type Distribution =
       readonly mode: number;
       readonly max: number;
     }
-  | { readonly kind: "exponential"; readonly rate: number };
+  | { readonly kind: "exponential"; readonly rate: number }
+  /**
+   * Lognormal — heavy-tailed positive distribution that matches almost every
+   * real-world cycle-time histogram. Parameterised by the mean and stddev
+   * of log(X), not X itself, to match Arena's convention.
+   */
+  | { readonly kind: "lognormal"; readonly mu: number; readonly sigma: number }
+  /**
+   * Weibull — flexible failure-time / cycle-time distribution. shape > 1
+   * grows monotonically (typical for cycle times); shape < 1 decays.
+   * Reduces to Exponential when shape = 1.
+   */
+  | { readonly kind: "weibull"; readonly shape: number; readonly scale: number }
+  /**
+   * Gamma — also flexible positive-only; arises from sums of exponentials.
+   * Mean = shape × scale.
+   */
+  | { readonly kind: "gamma"; readonly shape: number; readonly scale: number }
+  /**
+   * Empirical — sampled directly from a user-supplied dataset. We store the
+   * sorted values; sampling picks one uniformly at random with linear
+   * interpolation between neighbours (smoother than pure step bootstrap).
+   * Captures any real-world distribution, no parametric assumption.
+   */
+  | { readonly kind: "empirical"; readonly values: readonly number[] };
 
 /** Convenience: build a constant Distribution from a plain number. */
 export const constant = (value: number): Distribution => ({ kind: "constant", value });
@@ -37,5 +61,44 @@ export function meanOf(d: Distribution): number {
       return (d.min + d.mode + d.max) / 3;
     case "exponential":
       return 1 / d.rate;
+    case "lognormal":
+      // E[X] = exp(mu + sigma^2 / 2) for X ~ Lognormal(mu, sigma).
+      return Math.exp(d.mu + (d.sigma * d.sigma) / 2);
+    case "weibull":
+      // E[X] = scale * Gamma(1 + 1/shape). We approximate Gamma via Stirling
+      // / Lanczos so the engine has no extra deps. For typical shape >= 1,
+      // a 4-term Stirling is accurate to <0.1%.
+      return d.scale * gammaFn(1 + 1 / d.shape);
+    case "gamma":
+      // E[X] = shape * scale.
+      return d.shape * d.scale;
+    case "empirical": {
+      if (d.values.length === 0) return 0;
+      let sum = 0;
+      for (const v of d.values) sum += v;
+      return sum / d.values.length;
+    }
   }
+}
+
+/**
+ * Lanczos approximation to the Gamma function. Accurate to ~1e-15 for
+ * positive real arguments. We only need it for the Weibull / Gamma means
+ * here; the samplers don't call it.
+ */
+function gammaFn(z: number): number {
+  const g = 7;
+  const p = [
+    0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313,
+    -176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6,
+    1.5056327351493116e-7,
+  ];
+  if (z < 0.5) {
+    return Math.PI / (Math.sin(Math.PI * z) * gammaFn(1 - z));
+  }
+  z -= 1;
+  let x = p[0]!;
+  for (let i = 1; i < g + 2; i++) x += p[i]! / (z + i);
+  const t = z + g + 0.5;
+  return Math.sqrt(2 * Math.PI) * Math.pow(t, z + 0.5) * Math.exp(-t) * x;
 }

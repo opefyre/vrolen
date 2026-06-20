@@ -78,6 +78,25 @@ export const DistributionSchema = z.discriminatedUnion("kind", [
     kind: z.literal("exponential"),
     rate: z.number().positive(),
   }),
+  z.object({
+    kind: z.literal("lognormal"),
+    mu: z.number().finite(),
+    sigma: z.number().positive(),
+  }),
+  z.object({
+    kind: z.literal("weibull"),
+    shape: z.number().positive(),
+    scale: z.number().positive(),
+  }),
+  z.object({
+    kind: z.literal("gamma"),
+    shape: z.number().positive(),
+    scale: z.number().positive(),
+  }),
+  z.object({
+    kind: z.literal("empirical"),
+    values: z.array(z.number().finite()).min(1),
+  }),
 ]);
 
 // ============ Material ============

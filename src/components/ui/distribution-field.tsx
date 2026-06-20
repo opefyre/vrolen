@@ -111,6 +111,16 @@ function meanGuessOf(d: Distribution): number {
       return (d.min + d.mode + d.max) / 3;
     case "exponential":
       return 1 / d.rate;
+    case "lognormal":
+      return Math.exp(d.mu + (d.sigma * d.sigma) / 2);
+    case "weibull":
+    case "gamma":
+      // Both are positive-skewed; use shape × scale as a usable approximation
+      // for the field's histogram center (true Weibull mean involves Gamma fn).
+      return d.shape * d.scale;
+    case "empirical":
+      if (d.values.length === 0) return 0;
+      return d.values.reduce((a, b) => a + b, 0) / d.values.length;
   }
 }
 

@@ -10,9 +10,10 @@
  * the hovered X.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 import type { TimeseriesSample } from "@/engine";
+import { useChartDimensions } from "@/lib/use-chart-dimensions";
 
 interface ThroughputChartProps {
   readonly samples: readonly TimeseriesSample[];
@@ -28,8 +29,6 @@ interface ThroughputChartProps {
   readonly secondaryLabel?: string;
 }
 
-const VIEW_W = 240;
-const VIEW_H = 80;
 const PAD_X = 4;
 const PAD_Y = 4;
 
@@ -46,7 +45,15 @@ export function ThroughputChart({
   primaryLabel,
   secondaryLabel,
 }: ThroughputChartProps) {
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  // Track real container size so the SVG viewBox matches the rendered
+  // pixels 1:1 — no stretching or letterboxing.
+  const {
+    containerRef: wrapperRef,
+    width: measuredW,
+    height: measuredH,
+  } = useChartDimensions<HTMLDivElement>({ width: 240, height: 80 });
+  const VIEW_W = Math.max(160, measuredW);
+  const VIEW_H = Math.max(120, measuredH);
   const [hover, setHover] = useState<HoverState | null>(null);
 
   const { areaPath, linePath, secondaryLinePath, maxY, plotXFor, plotYFor } = useMemo(() => {
@@ -95,7 +102,7 @@ export function ThroughputChart({
       plotXFor: xOf,
       plotYFor: yOf,
     };
-  }, [samples, secondarySamples, horizonMs, warmupMs]);
+  }, [samples, secondarySamples, horizonMs, warmupMs, VIEW_W, VIEW_H]);
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>): void => {
     if (samples.length === 0 || !wrapperRef.current) return;
@@ -159,8 +166,7 @@ export function ThroughputChart({
       </div>
       <svg
         viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
-        preserveAspectRatio="none"
-        className="text-sim-running h-20 w-full"
+        className="text-sim-running block h-44 w-full"
         onMouseMove={onMove}
         onMouseLeave={onLeave}
       >

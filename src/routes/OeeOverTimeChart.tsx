@@ -6,9 +6,10 @@
  * ThroughputChart (VROL-613) and Sparkline (VROL-614).
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 import type { TimeseriesSample } from "@/engine";
+import { useChartDimensions } from "@/lib/use-chart-dimensions";
 
 interface OeeOverTimeChartProps {
   readonly samples: readonly TimeseriesSample[];
@@ -43,8 +44,6 @@ const STATE_FILL_CLASS: Record<(typeof STATE_ORDER)[number], string> = {
   Down: "fill-sim-down",
 };
 
-const VIEW_W = 240;
-const VIEW_H = 80;
 const PAD_X = 4;
 const PAD_Y = 4;
 
@@ -67,7 +66,13 @@ export function OeeOverTimeChart({
   const safeIdx = Math.min(Math.max(0, stationIdx), Math.max(0, stationLabels.length - 1));
   const stationLabel = stationLabels[safeIdx] ?? `Station ${String(safeIdx + 1)}`;
 
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const {
+    containerRef: wrapperRef,
+    width: measuredW,
+    height: measuredH,
+  } = useChartDimensions<HTMLDivElement>({ width: 240, height: 80 });
+  const VIEW_W = Math.max(160, measuredW);
+  const VIEW_H = Math.max(120, measuredH);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const paths = useMemo<{ state: string; d: string }[]>(() => {
@@ -141,7 +146,7 @@ export function OeeOverTimeChart({
       out.push({ state: s, d });
     }
     return out;
-  }, [samples, safeIdx, horizonMs, warmupMs]);
+  }, [samples, safeIdx, horizonMs, warmupMs, VIEW_W, VIEW_H]);
 
   // VROL-622 — derive the hovered sample's per-state fraction for the tooltip.
   const hoveredFractions = useMemo<{ state: string; pct: number }[]>(() => {
@@ -226,8 +231,7 @@ export function OeeOverTimeChart({
       <div ref={wrapperRef} className="relative w-full" onMouseMove={onMove} onMouseLeave={onLeave}>
         <svg
           viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
-          preserveAspectRatio="none"
-          className="h-20 w-full"
+          className="block h-44 w-full"
           role="img"
           aria-label={`State-mix over time for ${stationLabel}`}
         >

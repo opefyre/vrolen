@@ -55,6 +55,17 @@ function scaleDistribution(d: Distribution, factor: number): Distribution {
     case "exponential":
       // Higher cycle time → lower rate → scale rate by 1/factor.
       return { kind: "exponential", rate: d.rate / factor };
+    case "lognormal":
+      // X ~ Lognormal(mu, sigma) → factor * X ~ Lognormal(mu + ln(factor), sigma).
+      return { kind: "lognormal", mu: d.mu + Math.log(Math.max(factor, 1e-9)), sigma: d.sigma };
+    case "weibull":
+      // X ~ Weibull(shape, scale) → factor * X ~ Weibull(shape, scale * factor).
+      return { kind: "weibull", shape: d.shape, scale: d.scale * factor };
+    case "gamma":
+      // X ~ Gamma(shape, scale) → factor * X ~ Gamma(shape, scale * factor).
+      return { kind: "gamma", shape: d.shape, scale: d.scale * factor };
+    case "empirical":
+      return { kind: "empirical", values: d.values.map((v) => v * factor) };
   }
 }
 

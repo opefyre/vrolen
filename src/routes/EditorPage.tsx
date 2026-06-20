@@ -686,6 +686,7 @@ function StationNode({ data, selected, id }: NodeProps) {
 import { AlignmentGuidesOverlay } from "@/components/canvas/alignment-guides";
 import { useAlignmentGuides } from "@/components/canvas/use-alignment-guides";
 import { CanvasContextMenu, type ContextMenuTarget } from "@/components/canvas/context-menu";
+import { InputAnalyzerModal } from "@/components/editor/input-analyzer-modal";
 import { CommandPalette, type CommandAction } from "@/components/canvas/command-palette";
 import { AlignmentToolbar, type AlignOp } from "@/components/canvas/alignment-toolbar";
 import { QuickAddGhosts, type QuickAddStationType } from "@/components/canvas/quick-add-ghosts";
@@ -1008,6 +1009,8 @@ function EditorCanvas() {
   const lastRightClickRef = useRef<{ clientX: number; clientY: number } | null>(null);
   // Cmd+K command palette.
   const [commandOpen, setCommandOpen] = useState<boolean>(false);
+  // Input Analyzer modal — paste data, fit a distribution.
+  const [inputAnalyzerOpen, setInputAnalyzerOpen] = useState<boolean>(false);
   // Drag-from-handle to create connected node. onConnectStart caches the
   // source handle; onConnectEnd creates the target node + edge when the
   // drag ended on empty canvas (no valid target).
@@ -3392,6 +3395,16 @@ function EditorCanvas() {
             actions={commandActions}
           />
         ) : null}
+        <InputAnalyzerModal
+          open={inputAnalyzerOpen}
+          onClose={() => {
+            setInputAnalyzerOpen(false);
+          }}
+          onApply={(d) => {
+            updateSelectedNodeData({ cycleDistribution: d });
+            toast.success(`Distribution applied: ${d.kind}`);
+          }}
+        />
 
         {selectedNodeIds.length > 1 ? (
           // VROL-663 — bulk panel when 2+ stations are selected.
@@ -3510,6 +3523,18 @@ function EditorCanvas() {
                   updateSelectedNodeData({ cycleDistribution: d });
                 }}
               />
+              <div className="-mt-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInputAnalyzerOpen(true);
+                  }}
+                  className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[11px] underline-offset-2 hover:underline"
+                  title="Open the Input Analyzer to fit a distribution to measured cycle times"
+                >
+                  🧪 Fit from real data…
+                </button>
+              </div>
               {/* VROL-744 — show this station's cycle vs line median when a run exists. */}
               {result && runMeta
                 ? (() => {

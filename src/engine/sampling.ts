@@ -44,6 +44,18 @@ export function sample(d: Distribution, prng: Prng, options?: SampleOptions): nu
     case "exponential":
       v = sampleExponential(d.rate, prng);
       break;
+    case "lognormal":
+      v = Math.exp(sampleNormal(d.mu, d.sigma, prng));
+      break;
+    case "weibull":
+      v = sampleWeibull(d.shape, d.scale, prng);
+      break;
+    case "gamma":
+      v = sampleGamma(d.shape, d.scale, prng);
+      break;
+    case "empirical":
+      v = sampleEmpirical(d.values, prng);
+      break;
   }
   if (options?.min !== undefined && v < options.min) v = options.min;
   if (options?.max !== undefined && v > options.max) v = options.max;
@@ -95,4 +107,60 @@ function sampleExponential(rate: number, prng: Prng): number {
   // so log argument is always positive.
   const u = prng.nextFloat();
   return -Math.log(1 - u) / rate;
+}
+
+/**
+ * Weibull via inverse-CDF: X = scale * (-ln(1-U))^(1/shape).
+ * Reduces to Exponential when shape = 1.
+ */
+function sampleWeibull(shape: number, scale: number, prng: Prng): number {
+  if (shape <= 0 || scale <= 0) return 0;
+  let u = prng.nextFloat();
+  if (u === 1) u = Number.MIN_VALUE;
+  return scale * Math.pow(-Math.log(1 - u), 1 / shape);
+}
+
+/**
+ * Gamma via Marsaglia-Tsang (2000): for shape >= 1 it's a fast 2-PRNG-draw
+ * acceptance-rejection. For shape < 1 we use Gamma(shape+1) * U^(1/shape).
+ * Scale just multiplies the result. No external deps.
+ */
+function sampleGamma(shape: number, scale: number, prng: Prng): number {
+  if (shape <= 0 || scale <= 0) return 0;
+  if (shape < 1) {
+    return sampleGamma(shape + 1, scale, prng) * Math.pow(prng.nextFloat(), 1 / shape);
+  }
+  const d = shape - 1 / 3;
+  const c = 1 / Math.sqrt(9 * d);
+  while (true) {
+    let x: number;
+    let v: number;
+    do {
+      x = sampleNormal(0, 1, prng);
+      v = 1 + c * x;
+    } while (v <= 0);
+    v = v * v * v;
+    const u = prng.nextFloat();
+    if (u < 1 - 0.0331 * x * x * x * x) return d * v * scale;
+    if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v * scale;
+  }
+}
+
+/**
+ * Empirical sampler — pick a position uniformly at random in [0, n-1],
+ * linearly interpolate between adjacent sorted values. This produces a
+ * smoother CDF than a pure index-bootstrap and is closer to Arena's
+ * "empirical continuous" sampler.
+ */
+function sampleEmpirical(values: readonly number[], prng: Prng): number {
+  const n = values.length;
+  if (n === 0) return 0;
+  if (n === 1) return values[0]!;
+  const u = prng.nextFloat() * (n - 1);
+  const lo = Math.floor(u);
+  const hi = Math.min(n - 1, lo + 1);
+  const frac = u - lo;
+  const a = values[lo]!;
+  const b = values[hi]!;
+  return a + (b - a) * frac;
 }

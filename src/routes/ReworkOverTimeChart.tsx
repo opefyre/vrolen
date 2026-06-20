@@ -8,9 +8,10 @@
  * a safety net we also return a muted hint instead of an empty SVG.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 import type { TimeseriesSample } from "@/engine";
+import { useChartDimensions } from "@/lib/use-chart-dimensions";
 
 interface ReworkOverTimeChartProps {
   readonly samples: readonly TimeseriesSample[];
@@ -32,8 +33,6 @@ interface HoverState {
   readonly idx: number;
 }
 
-const VIEW_W = 240;
-const VIEW_H = 80;
 const PAD_X = 4;
 const PAD_Y = 4;
 
@@ -56,7 +55,13 @@ export function ReworkOverTimeChart({
   primaryLabel,
   secondaryLabel,
 }: ReworkOverTimeChartProps) {
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const {
+    containerRef: wrapperRef,
+    width: measuredW,
+    height: measuredH,
+  } = useChartDimensions<HTMLDivElement>({ width: 240, height: 80 });
+  const VIEW_W = Math.max(160, measuredW);
+  const VIEW_H = Math.max(120, measuredH);
   const [hover, setHover] = useState<HoverState | null>(null);
   const { activeStations, paths, secondaryPaths, maxY, plotXFor, plotYFor } = useMemo(() => {
     const empty = {
@@ -110,7 +115,7 @@ export function ReworkOverTimeChart({
       plotXFor: xOf,
       plotYFor: yOf,
     };
-  }, [samples, secondarySamples, horizonMs, warmupMs]);
+  }, [samples, secondarySamples, horizonMs, warmupMs, VIEW_W, VIEW_H]);
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>): void => {
     if (samples.length === 0 || !wrapperRef.current) return;
@@ -175,8 +180,7 @@ export function ReworkOverTimeChart({
       </div>
       <svg
         viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
-        preserveAspectRatio="none"
-        className="h-20 w-full"
+        className="block h-44 w-full"
         onMouseMove={onMove}
         onMouseLeave={onLeave}
       >
