@@ -828,8 +828,21 @@ export function ComparisonTable({
     },
   ];
 
+  // VROL-745 — single-line ratio summary so the headline is the first thing the user reads.
+  const ratioLine = (() => {
+    const tA = aResult.throughputLambda * 3_600_000;
+    const tB = bResult.throughputLambda * 3_600_000;
+    if (tA <= 0) return null;
+    const ratio = tB / tA;
+    const pct = (ratio * 100).toFixed(0);
+    return ratio >= 1
+      ? `B delivers ${pct}% of A's throughput (▲ ${((ratio - 1) * 100).toFixed(0)}% better).`
+      : `B delivers ${pct}% of A's throughput (▼ ${((1 - ratio) * 100).toFixed(0)}% worse).`;
+  })();
+
   return (
     <div className="space-y-4">
+      {ratioLine ? <p className="text-foreground/80 text-sm">{ratioLine}</p> : null}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {kpiTiles.map((t) => {
           const delta = t.b - t.a;

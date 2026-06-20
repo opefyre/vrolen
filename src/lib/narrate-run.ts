@@ -50,6 +50,50 @@ function scrapSentence(result: ChainResult): string | undefined {
   return `~${String(Math.round(result.lineScrapRate * 100))}% of parts were scrapped.`;
 }
 
+/**
+ * VROL-742 — combined quality-losses callout that names the worst station.
+ * Only fires when scrap AND rework BOTH cross threshold — the single-source
+ * sentences already cover the simple cases. Helps the reader localise loss
+ * when multiple quality problems are present.
+ */
+function qualityLossLocaliser(result: ChainResult): string | undefined {
+  if (result.lineScrapRate < SCRAP_THRESHOLD || result.lineReworkRate < REWORK_THRESHOLD) {
+    return undefined;
+  }
+  let worstIdx = -1;
+  let worstLoss = 0;
+  for (let i = 0; i < result.perStationScrapped.length; i++) {
+    const loss = (result.perStationScrapped[i] ?? 0) + (result.perStationReworked[i] ?? 0);
+    if (loss > worstLoss) {
+      worstLoss = loss;
+      worstIdx = i;
+    }
+  }
+  if (worstIdx === -1) return undefined;
+  const label = result.bottlenecks[worstIdx]?.label ?? `Station ${String(worstIdx + 1)}`;
+  return `Quality losses cluster at ${label}.`;
+}
+
+/**
+ * VROL-743 — capacity-headroom sentence. When the bottleneck is running heavy
+ * and another station is idle / starved most of the time, surface the headroom.
+ */
+function headroomSentence(result: ChainResult): string | undefined {
+  const top = result.bottlenecks[0];
+  if (!top || top.primaryReason !== "running") return undefined;
+  // Find a non-bottleneck station with a high Idle / Starved share.
+  const others = result.bottlenecks.filter((b) => b.stationId !== top.stationId);
+  for (const b of others) {
+    if (b.primaryReason === "starvation" || b.primaryReason === "idle") {
+      const pct = Math.round(b.primaryReasonPct * 100);
+      if (pct >= 40) {
+        return `${b.label ?? "another station"} sits ${b.primaryReason} ${String(pct)}% of the time — there's headroom to absorb a faster pace.`;
+      }
+    }
+  }
+  return undefined;
+}
+
 function oeeBandSentence(result: ChainResult): string | undefined {
   const pct = Math.round(result.lineOee * 100);
   if (result.lineOee < LOW_OEE_BAND) {
@@ -100,7 +144,11 @@ export function narrateRun(result: ChainResult): readonly string[] {
   const scrap = scrapSentence(result);
   if (rework) out.push(rework);
   if (scrap) out.push(scrap);
-  if (!rework && !scrap && !cap && !src) {
+  const localiser = qualityLossLocaliser(result);
+  if (localiser) out.push(localiser);
+  const headroom = headroomSentence(result);
+  if (headroom) out.push(headroom);
+  if (!rework && !scrap && !cap && !src && !headroom) {
     const band = oeeBandSentence(result);
     if (band) out.push(band);
   }

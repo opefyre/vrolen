@@ -93,9 +93,11 @@ describe("narrateRun (VROL-640)", () => {
         perStationScrapped: [0, 5],
       }),
     );
-    expect(sentences).toHaveLength(4);
+    // VROL-742 adds a quality-loss localiser sentence when both losses fire.
+    expect(sentences).toHaveLength(5);
     expect(sentences[2]).toContain("reworked");
     expect(sentences[3]).toContain("scrapped");
+    expect(sentences[4]).toContain("Quality losses cluster");
     expect(sentences.some((s) => /OEE/i.test(s))).toBe(false);
   });
 

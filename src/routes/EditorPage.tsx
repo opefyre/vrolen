@@ -149,6 +149,7 @@ import {
   type ScenarioSummary,
 } from "@/lib/scenario-store";
 import { buildBundle, importBundle, isBundle, stringifyBundle } from "@/lib/scenario-bundle";
+import { cycleStats } from "@/lib/cycle-stats";
 import { toast } from "@/lib/toast";
 import {
   DEFAULT_RUN_SETTINGS,
@@ -2387,6 +2388,29 @@ function EditorCanvas() {
                   updateSelectedNodeData({ cycleDistribution: d });
                 }}
               />
+              {/* VROL-744 — show this station's cycle vs line median when a run exists. */}
+              {result && runMeta
+                ? (() => {
+                    const stationIdx = runMeta.chainNodeIds.indexOf(selectedNode.id);
+                    if (stationIdx === -1) return null;
+                    const ownCycle = result.perStationOee[stationIdx]?.idealCycleTimeMs ?? 0;
+                    if (ownCycle === 0) return null;
+                    const cs = cycleStats(result);
+                    const pct = cs.medianMs > 0 ? Math.round((ownCycle / cs.medianMs) * 100) : 100;
+                    const tone =
+                      pct >= 150
+                        ? "text-sim-down-foreground"
+                        : pct >= 110
+                          ? "text-sim-setup-foreground"
+                          : "text-muted-foreground";
+                    return (
+                      <div className={`text-xs ${tone}`}>
+                        Cycle: {Math.round(ownCycle)} ms · {String(pct)}% of line median (
+                        {Math.round(cs.medianMs)} ms)
+                      </div>
+                    );
+                  })()
+                : null}
               <NumberField
                 id="inspector-defect"
                 label="Defect rate"
