@@ -105,6 +105,8 @@ import {
   downloadFile,
   suggestedFilenameStem,
 } from "@/lib/export-run";
+// VROL-683 — line + station summary CSV (separate from per-station-only export-run).
+import { resultToCsv as resultToSummaryCsv } from "@/lib/result-to-csv";
 import { graphToChainOptions } from "@/lib/graph-to-chain";
 import {
   addRun as addRunToHistory,
@@ -601,6 +603,11 @@ function EditorCanvas() {
   const [settings, setSettings] = useState<RunSettings>(() => initial.settings);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [scenariosOpen, setScenariosOpen] = useState<boolean>(false);
+  // VROL-685 — case-insensitive search filter for the scenarios list.
+  const [scenarioSearch, setScenarioSearch] = useState<string>("");
+  // VROL-682 — two slots for picking history runs to compare.
+  const [historyCompareA, setHistoryCompareA] = useState<number | null>(null);
+  const [historyCompareB, setHistoryCompareB] = useState<number | null>(null);
   // VROL-304 — validation panel popover state.
   const [validationOpen, setValidationOpen] = useState<boolean>(false);
   // VROL-309 — undo/redo. The commit is debounced 400ms so rapid changes
@@ -1468,6 +1475,18 @@ function EditorCanvas() {
     toast.success("Downloaded CSV");
     setMoreOpen(false);
   }, [result, runMeta]);
+  // VROL-683 — line + per-station combined summary CSV.
+  const downloadCsvSummary = useCallback(() => {
+    if (!result || !runMeta) return;
+    const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
+    downloadFile(
+      `${stem}-summary.csv`,
+      resultToSummaryCsv(result, runMeta.stationLabels),
+      "text/csv",
+    );
+    toast.success("Downloaded summary CSV");
+    setMoreOpen(false);
+  }, [result, runMeta]);
   const downloadCsvSamples = useCallback(() => {
     if (!result || !runMeta || result.samples.length <= 1) return;
     const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
@@ -1622,6 +1641,15 @@ function EditorCanvas() {
                     >
                       <Download className="h-4 w-4" />
                       CSV (per station)
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="hover:bg-accent flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm"
+                      onClick={downloadCsvSummary}
+                    >
+                      <Download className="h-4 w-4" />
+                      CSV (KPI summary)
                     </button>
                     {result.samples.length > 1 ? (
                       <button
@@ -2476,12 +2504,18 @@ function EditorCanvas() {
                 <ul className="space-y-1">
                   {recentRuns.map((r, i) => {
                     const tPerHr = Math.round(r.throughputLambda * 3_600_000);
+                    const slot = historyCompareA === i ? "A" : historyCompareB === i ? "B" : null;
                     return (
                       <li
                         key={`${r.scenarioName}-${String(r.runAtMs)}-${String(i)}`}
                         className="bg-card border-border flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-xs"
                       >
                         <span className="min-w-0 flex-1 truncate font-medium">
+                          {slot ? (
+                            <span className="bg-sim-running text-sim-running-foreground mr-1 rounded px-1 font-mono">
+                              {slot}
+                            </span>
+                          ) : null}
                           {r.scenarioName}
                         </span>
                         <span
@@ -2490,11 +2524,111 @@ function EditorCanvas() {
                         >
                           {tPerHr.toLocaleString()}/hr
                         </span>
+                        {/* VROL-682 — pick A or B to set up a history-vs-history compare. */}
+                        {r.payload ? (
+                          <div className="flex shrink-0 gap-1">
+                            <button
+                              type="button"
+                              aria-label={historyCompareA === i ? "Unpick A" : "Pick as A"}
+                              onClick={() => {
+                                setHistoryCompareA(historyCompareA === i ? null : i);
+                              }}
+                              className={`rounded border px-1.5 font-mono ${
+                                historyCompareA === i
+                                  ? "bg-sim-running text-sim-running-foreground border-sim-running"
+                                  : "border-border hover:bg-muted"
+                              }`}
+                            >
+                              A
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={historyCompareB === i ? "Unpick B" : "Pick as B"}
+                              onClick={() => {
+                                setHistoryCompareB(historyCompareB === i ? null : i);
+                              }}
+                              className={`rounded border px-1.5 font-mono ${
+                                historyCompareB === i
+                                  ? "bg-sim-running text-sim-running-foreground border-sim-running"
+                                  : "border-border hover:bg-muted"
+                              }`}
+                            >
+                              B
+                            </button>
+                          </div>
+                        ) : null}
                       </li>
                     );
                   })}
                 </ul>
+                {historyCompareA !== null && historyCompareB !== null ? (
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    onClick={() => {
+                      const aEntry = recentRuns[historyCompareA];
+                      const bEntry = recentRuns[historyCompareB];
+                      if (!aEntry?.payload || !bEntry?.payload) {
+                        toast.error("Picked runs lack a replay payload");
+                        return;
+                      }
+                      const aOutcome = runScenario(
+                        aEntry.payload.graph.nodes,
+                        aEntry.payload.graph.edges,
+                        aEntry.payload.settings,
+                        null,
+                      );
+                      const bOutcome = runScenario(
+                        bEntry.payload.graph.nodes,
+                        bEntry.payload.graph.edges,
+                        bEntry.payload.settings,
+                        null,
+                      );
+                      if (!("result" in aOutcome) || !("result" in bOutcome)) {
+                        toast.error("Couldn't run one of the picked entries");
+                        return;
+                      }
+                      const horizonMs = Math.max(
+                        aEntry.payload.settings.horizonMs,
+                        bEntry.payload.settings.horizonMs,
+                      );
+                      const warmupMs = Math.min(
+                        aEntry.payload.settings.warmupMs,
+                        bEntry.payload.settings.warmupMs,
+                        Math.floor(horizonMs / 2),
+                      );
+                      setComparison({
+                        aName: `${aEntry.scenarioName} (history)`,
+                        aResult: aOutcome.result,
+                        aStationLabels: aOutcome.runMeta.stationLabels,
+                        bName: `${bEntry.scenarioName} (history)`,
+                        bResult: bOutcome.result,
+                        bStationLabels: bOutcome.runMeta.stationLabels,
+                        horizonMs,
+                        warmupMs,
+                      });
+                      setScenariosOpen(false);
+                      setHistoryCompareA(null);
+                      setHistoryCompareB(null);
+                    }}
+                  >
+                    Compare A vs B
+                  </Button>
+                ) : null}
               </div>
+            ) : null}
+            {/* VROL-685 — scenario search; hidden when fewer than 3 to save space. */}
+            {scenarios.length >= 3 ? (
+              <Input
+                type="search"
+                value={scenarioSearch}
+                placeholder="Search scenarios…"
+                onChange={(e) => {
+                  setScenarioSearch(e.target.value);
+                }}
+                data-testid="scenario-search"
+                className="text-sm"
+              />
             ) : null}
             {scenarios.length === 0 ? (
               <EmptyState
@@ -2509,248 +2643,255 @@ function EditorCanvas() {
               />
             ) : (
               <ul className="space-y-2">
-                {scenarios.map((s) => {
-                  const history = historyByScenario[s.name] ?? [];
-                  return (
-                    <li
-                      key={s.name}
-                      className="border-border bg-card flex flex-col gap-2 rounded-md border p-3"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-medium">
-                            {s.name}
-                            {activeScenarioName === s.name ? (
-                              <span
-                                className={`ml-2 rounded-full px-2 py-0.5 text-xs font-medium ${
-                                  activeScenarioIsModified
-                                    ? "bg-sim-setup text-sim-setup-foreground"
-                                    : "bg-sim-running text-sim-running-foreground"
-                                }`}
-                              >
-                                {activeScenarioIsModified ? "active · modified" : "active"}
-                              </span>
-                            ) : null}
-                          </div>
-                          <div className="text-muted-foreground text-xs">
-                            {s.nodeCount} node{s.nodeCount === 1 ? "" : "s"} · {s.edgeCount} edge
-                            {s.edgeCount === 1 ? "" : "s"}
-                          </div>
-                        </div>
-                        <div className="flex gap-1">
-                          {confirmAction && confirmAction.scenario === s.name ? (
-                            <div
-                              ref={(el) => {
-                                confirmTargetRef.current = el;
-                              }}
-                              className="flex items-center gap-2 text-xs"
-                            >
-                              <span className="text-muted-foreground">
-                                {confirmAction.kind === "load"
-                                  ? "Load? Unsaved canvas lost."
-                                  : confirmAction.kind === "load-run"
-                                    ? "Load + Run? Unsaved canvas lost."
-                                    : "Delete?"}
-                              </span>
-                              <Button
-                                size="sm"
-                                onClick={() => {
-                                  const action = confirmAction;
-                                  setConfirmAction(null);
-                                  if (action.kind === "delete") {
-                                    deleteScenario(s.name);
-                                    setScenarios(listScenarios());
-                                    setHistoryByScenario((prev) => {
-                                      const next = { ...prev };
-                                      delete next[s.name];
-                                      return next;
-                                    });
-                                    if (activeScenarioName === s.name) setActiveScenarioName(null);
-                                    toast.info(`Deleted "${s.name}"`);
-                                  } else if (action.kind === "load") {
-                                    loadScenarioInto(s.name);
-                                  } else if (action.kind === "load-run") {
-                                    if (loadScenarioInto(s.name)) {
-                                      setTimeout(() => {
-                                        handleRun();
-                                      }, 0);
-                                    }
-                                  }
-                                }}
-                              >
-                                Yes
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setConfirmAction(null);
-                                }}
-                              >
-                                No
-                              </Button>
-                            </div>
-                          ) : (
-                            <>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setConfirmAction({ scenario: s.name, kind: "load" });
-                                }}
-                              >
-                                Load
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setConfirmAction({ scenario: s.name, kind: "load-run" });
-                                }}
-                              >
-                                Load + Run
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  handleCompare(s.name);
-                                }}
-                              >
-                                Compare
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  // VROL-665 — duplicate. Find a unique "name (copy)"
-                                  // name; increment suffix if it already exists.
-                                  const src = loadScenario(s.name);
-                                  if (!src) {
-                                    toast.error(`Couldn't read "${s.name}"`);
-                                    return;
-                                  }
-                                  const existing = new Set(listScenarios().map((q) => q.name));
-                                  let candidate = `${s.name} (copy)`;
-                                  let n = 2;
-                                  while (existing.has(candidate)) {
-                                    candidate = `${s.name} (copy ${String(n)})`;
-                                    n += 1;
-                                  }
-                                  saveScenario(candidate, {
-                                    graph: src.graph,
-                                    settings: src.settings,
-                                  });
-                                  setScenarios(listScenarios());
-                                  toast.success(`Duplicated to "${candidate}"`);
-                                }}
-                                aria-label={`Duplicate ${s.name}`}
-                              >
-                                Duplicate
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label={`Delete ${s.name}`}
-                                onClick={() => {
-                                  setConfirmAction({ scenario: s.name, kind: "delete" });
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      {history.length > 0 ? (
-                        <details className="border-border border-t pt-2 text-xs">
-                          <summary className="text-muted-foreground cursor-pointer">
-                            {history.length} recent run{history.length === 1 ? "" : "s"}
-                          </summary>
-                          <ul className="mt-2 space-y-1">
-                            {history.map((h, idx) => {
-                              const canReplay = !!h.payload;
-                              const isConfirming =
-                                confirmReplay !== null &&
-                                confirmReplay.scenario === s.name &&
-                                confirmReplay.idx === idx;
-                              return (
-                                <li
-                                  key={`${String(h.runAtMs)}-${String(idx)}`}
-                                  className="text-muted-foreground flex items-center justify-between gap-2"
+                {scenarios
+                  .filter((s) =>
+                    scenarioSearch.trim() === ""
+                      ? true
+                      : s.name.toLowerCase().includes(scenarioSearch.trim().toLowerCase()),
+                  )
+                  .map((s) => {
+                    const history = historyByScenario[s.name] ?? [];
+                    return (
+                      <li
+                        key={s.name}
+                        className="border-border bg-card flex flex-col gap-2 rounded-md border p-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium">
+                              {s.name}
+                              {activeScenarioName === s.name ? (
+                                <span
+                                  className={`ml-2 rounded-full px-2 py-0.5 text-xs font-medium ${
+                                    activeScenarioIsModified
+                                      ? "bg-sim-setup text-sim-setup-foreground"
+                                      : "bg-sim-running text-sim-running-foreground"
+                                  }`}
                                 >
-                                  <span className="font-mono tabular-nums">
-                                    {new Date(h.runAtMs).toLocaleString()}
-                                  </span>
-                                  <span className="flex items-center gap-2">
-                                    <span>
-                                      {h.completed.toLocaleString()} parts ·{" "}
-                                      {(h.lineOee * 100).toFixed(1)}% OEE
+                                  {activeScenarioIsModified ? "active · modified" : "active"}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="text-muted-foreground text-xs">
+                              {s.nodeCount} node{s.nodeCount === 1 ? "" : "s"} · {s.edgeCount} edge
+                              {s.edgeCount === 1 ? "" : "s"}
+                            </div>
+                          </div>
+                          <div className="flex gap-1">
+                            {confirmAction && confirmAction.scenario === s.name ? (
+                              <div
+                                ref={(el) => {
+                                  confirmTargetRef.current = el;
+                                }}
+                                className="flex items-center gap-2 text-xs"
+                              >
+                                <span className="text-muted-foreground">
+                                  {confirmAction.kind === "load"
+                                    ? "Load? Unsaved canvas lost."
+                                    : confirmAction.kind === "load-run"
+                                      ? "Load + Run? Unsaved canvas lost."
+                                      : "Delete?"}
+                                </span>
+                                <Button
+                                  size="sm"
+                                  onClick={() => {
+                                    const action = confirmAction;
+                                    setConfirmAction(null);
+                                    if (action.kind === "delete") {
+                                      deleteScenario(s.name);
+                                      setScenarios(listScenarios());
+                                      setHistoryByScenario((prev) => {
+                                        const next = { ...prev };
+                                        delete next[s.name];
+                                        return next;
+                                      });
+                                      if (activeScenarioName === s.name)
+                                        setActiveScenarioName(null);
+                                      toast.info(`Deleted "${s.name}"`);
+                                    } else if (action.kind === "load") {
+                                      loadScenarioInto(s.name);
+                                    } else if (action.kind === "load-run") {
+                                      if (loadScenarioInto(s.name)) {
+                                        setTimeout(() => {
+                                          handleRun();
+                                        }, 0);
+                                      }
+                                    }
+                                  }}
+                                >
+                                  Yes
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setConfirmAction(null);
+                                  }}
+                                >
+                                  No
+                                </Button>
+                              </div>
+                            ) : (
+                              <>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setConfirmAction({ scenario: s.name, kind: "load" });
+                                  }}
+                                >
+                                  Load
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setConfirmAction({ scenario: s.name, kind: "load-run" });
+                                  }}
+                                >
+                                  Load + Run
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    handleCompare(s.name);
+                                  }}
+                                >
+                                  Compare
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    // VROL-665 — duplicate. Find a unique "name (copy)"
+                                    // name; increment suffix if it already exists.
+                                    const src = loadScenario(s.name);
+                                    if (!src) {
+                                      toast.error(`Couldn't read "${s.name}"`);
+                                      return;
+                                    }
+                                    const existing = new Set(listScenarios().map((q) => q.name));
+                                    let candidate = `${s.name} (copy)`;
+                                    let n = 2;
+                                    while (existing.has(candidate)) {
+                                      candidate = `${s.name} (copy ${String(n)})`;
+                                      n += 1;
+                                    }
+                                    saveScenario(candidate, {
+                                      graph: src.graph,
+                                      settings: src.settings,
+                                    });
+                                    setScenarios(listScenarios());
+                                    toast.success(`Duplicated to "${candidate}"`);
+                                  }}
+                                  aria-label={`Duplicate ${s.name}`}
+                                >
+                                  Duplicate
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label={`Delete ${s.name}`}
+                                  onClick={() => {
+                                    setConfirmAction({ scenario: s.name, kind: "delete" });
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        {history.length > 0 ? (
+                          <details className="border-border border-t pt-2 text-xs">
+                            <summary className="text-muted-foreground cursor-pointer">
+                              {history.length} recent run{history.length === 1 ? "" : "s"}
+                            </summary>
+                            <ul className="mt-2 space-y-1">
+                              {history.map((h, idx) => {
+                                const canReplay = !!h.payload;
+                                const isConfirming =
+                                  confirmReplay !== null &&
+                                  confirmReplay.scenario === s.name &&
+                                  confirmReplay.idx === idx;
+                                return (
+                                  <li
+                                    key={`${String(h.runAtMs)}-${String(idx)}`}
+                                    className="text-muted-foreground flex items-center justify-between gap-2"
+                                  >
+                                    <span className="font-mono tabular-nums">
+                                      {new Date(h.runAtMs).toLocaleString()}
                                     </span>
-                                    {isConfirming ? (
-                                      <span
-                                        ref={(el) => {
-                                          confirmTargetRef.current = el;
-                                        }}
-                                        className="flex items-center gap-1"
-                                      >
-                                        <span className="text-muted-foreground">
-                                          Replay? Unsaved canvas lost.
-                                        </span>
-                                        <Button
-                                          size="sm"
-                                          onClick={() => {
-                                            const p = h.payload;
-                                            setConfirmReplay(null);
-                                            if (!p) return;
-                                            setNodes(ensureStationKeys([...p.graph.nodes]));
-                                            setEdges([...p.graph.edges]);
-                                            setSettings(p.settings);
-                                            setSelectedNodeId(null);
-                                            setResult(null);
-                                            setRunMeta(null);
-                                            toast.success("Replayed canvas + settings");
+                                    <span className="flex items-center gap-2">
+                                      <span>
+                                        {h.completed.toLocaleString()} parts ·{" "}
+                                        {(h.lineOee * 100).toFixed(1)}% OEE
+                                      </span>
+                                      {isConfirming ? (
+                                        <span
+                                          ref={(el) => {
+                                            confirmTargetRef.current = el;
                                           }}
+                                          className="flex items-center gap-1"
                                         >
-                                          Yes
-                                        </Button>
+                                          <span className="text-muted-foreground">
+                                            Replay? Unsaved canvas lost.
+                                          </span>
+                                          <Button
+                                            size="sm"
+                                            onClick={() => {
+                                              const p = h.payload;
+                                              setConfirmReplay(null);
+                                              if (!p) return;
+                                              setNodes(ensureStationKeys([...p.graph.nodes]));
+                                              setEdges([...p.graph.edges]);
+                                              setSettings(p.settings);
+                                              setSelectedNodeId(null);
+                                              setResult(null);
+                                              setRunMeta(null);
+                                              toast.success("Replayed canvas + settings");
+                                            }}
+                                          >
+                                            Yes
+                                          </Button>
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => {
+                                              setConfirmReplay(null);
+                                            }}
+                                          >
+                                            No
+                                          </Button>
+                                        </span>
+                                      ) : (
                                         <Button
                                           variant="outline"
                                           size="sm"
+                                          disabled={!canReplay}
+                                          title={
+                                            canReplay
+                                              ? "Restore canvas + settings from this run"
+                                              : "Run too old — no snapshot was captured"
+                                          }
                                           onClick={() => {
-                                            setConfirmReplay(null);
+                                            setConfirmReplay({ scenario: s.name, idx });
                                           }}
                                         >
-                                          No
+                                          Replay
                                         </Button>
-                                      </span>
-                                    ) : (
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        disabled={!canReplay}
-                                        title={
-                                          canReplay
-                                            ? "Restore canvas + settings from this run"
-                                            : "Run too old — no snapshot was captured"
-                                        }
-                                        onClick={() => {
-                                          setConfirmReplay({ scenario: s.name, idx });
-                                        }}
-                                      >
-                                        Replay
-                                      </Button>
-                                    )}
-                                  </span>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </details>
-                      ) : null}
-                    </li>
-                  );
-                })}
+                                      )}
+                                    </span>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </details>
+                        ) : null}
+                      </li>
+                    );
+                  })}
               </ul>
             )}
           </div>

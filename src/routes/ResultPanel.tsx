@@ -141,6 +141,16 @@ function ProductMixBody({ result }: { result: ChainResult }) {
 function InsightsBanner({ result }: { result: ChainResult }) {
   const sentences = narrateRun(result);
   if (sentences.length === 0) return null;
+  // VROL-684 — copy narrative as markdown bullet list.
+  const copyMarkdown = (): void => {
+    const md = sentences.map((s) => `- ${s}`).join("\n");
+    try {
+      void navigator.clipboard?.writeText(md);
+      toast.success("Insights copied as markdown");
+    } catch {
+      toast.error("Copy failed", { description: "Clipboard not available" });
+    }
+  };
   return (
     <Card aria-label="Run insights" className="border-sim-running/40 bg-sim-running/5 border-l-4">
       <CardContent className="flex items-start gap-3 py-3">
@@ -152,6 +162,14 @@ function InsightsBanner({ result }: { result: ChainResult }) {
             </li>
           ))}
         </ul>
+        <button
+          type="button"
+          aria-label="Copy insights as markdown"
+          onClick={copyMarkdown}
+          className="text-muted-foreground hover:text-foreground ml-auto shrink-0 text-xs underline-offset-2 hover:underline"
+        >
+          Copy MD
+        </button>
       </CardContent>
     </Card>
   );
