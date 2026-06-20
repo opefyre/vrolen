@@ -189,4 +189,17 @@
   html {
     @apply font-sans;
   }
+  /* VROL-55 — global keyboard-focus ring. Mouse focus stays subtle (the
+     outline-ring/50 rule above); keyboard focus is bright + offset so
+     tab-traversal is obvious. Applies to buttons, links, inputs, textareas,
+     selects, summary, and anything with role=button/tab/menuitem. */
+  :focus-visible {
+    @apply outline-ring outline-2 outline-offset-2;
+  }
+  /* Skip-link friendly: don't double-up the ring on radio/checkbox where
+     the native control already has a focus indicator. */
+  input[type="checkbox"]:focus-visible,
+  input[type="radio"]:focus-visible {
+    outline-offset: 1px;
+  }
 }
