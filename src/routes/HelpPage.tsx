@@ -104,7 +104,10 @@ export default function HelpPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="font-heading text-lg">KPIs</CardTitle>
+          <CardTitle className="font-heading flex items-center gap-2 text-lg">
+            <span className="bg-sim-running inline-block h-2 w-2 rounded-full" aria-hidden />
+            KPIs
+          </CardTitle>
           <CardDescription>What every number in the results panel means.</CardDescription>
         </CardHeader>
         <CardContent>
@@ -132,7 +135,10 @@ export default function HelpPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="font-heading text-lg">Station states</CardTitle>
+          <CardTitle className="font-heading flex items-center gap-2 text-lg">
+            <span className="bg-sim-setup inline-block h-2 w-2 rounded-full" aria-hidden />
+            Station states
+          </CardTitle>
           <CardDescription>What each colored band in the state Pareto means.</CardDescription>
         </CardHeader>
         <CardContent>

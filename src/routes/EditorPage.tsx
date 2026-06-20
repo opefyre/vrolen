@@ -148,6 +148,7 @@ import {
   setScenarioNotes,
   type ScenarioSummary,
 } from "@/lib/scenario-store";
+import { buildBundle, importBundle, isBundle } from "@/lib/scenario-bundle";
 import { toast } from "@/lib/toast";
 import {
   DEFAULT_RUN_SETTINGS,
@@ -2480,12 +2481,75 @@ function EditorCanvas() {
 
       <Sheet open={scenariosOpen} onOpenChange={setScenariosOpen}>
         <SheetContent side="right" className="w-[24rem] sm:max-w-md">
-          <SheetHeader>
-            <SheetTitle>Scenarios</SheetTitle>
-            <SheetDescription>
-              Save and restore named scenarios. Persisted locally in your browser; cloud sync lands
-              later (E10).
-            </SheetDescription>
+          <SheetHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
+            <div className="space-y-1">
+              <SheetTitle>Scenarios</SheetTitle>
+              <SheetDescription>
+                Save and restore named scenarios. Persisted locally in your browser; cloud sync
+                lands later (E10).
+              </SheetDescription>
+            </div>
+            {/* VROL-698 / VROL-699 — JSON bundle export + import. */}
+            <div className="flex shrink-0 gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                aria-label="Export scenarios as JSON bundle"
+                onClick={() => {
+                  const bundle = buildBundle(Date.now());
+                  downloadFile(
+                    `vrolen-scenarios-${String(Date.now())}.json`,
+                    JSON.stringify(bundle, null, 2),
+                    "application/json",
+                  );
+                  toast.success("Exported scenarios", {
+                    description: `${String(bundle.scenarios.length)} bundled`,
+                  });
+                }}
+              >
+                <Download className="h-3 w-3" /> Export
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                aria-label="Import scenarios from JSON bundle"
+                onClick={() => {
+                  const input = document.createElement("input");
+                  input.type = "file";
+                  input.accept = "application/json,.json";
+                  input.onchange = () => {
+                    const file = input.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      try {
+                        const text = String(reader.result);
+                        const parsed = JSON.parse(text) as unknown;
+                        if (!isBundle(parsed)) {
+                          toast.error("Not a vrolen scenario bundle");
+                          return;
+                        }
+                        const names = new Set(parsed.scenarios.map((s) => s.name));
+                        const summary = importBundle(parsed, names, "overwrite");
+                        setScenarios(listScenarios());
+                        toast.success("Imported scenarios", {
+                          description: `${String(summary.imported)} imported · ${String(summary.skipped)} skipped`,
+                        });
+                      } catch (err) {
+                        const m = err instanceof Error ? err.message : String(err);
+                        toast.error("Couldn't import bundle", { description: m });
+                      }
+                    };
+                    reader.readAsText(file);
+                  };
+                  input.click();
+                }}
+              >
+                Import
+              </Button>
+            </div>
           </SheetHeader>
           {savedComparisons.length > 0 ? (
             <div className="space-y-2 px-4 pt-2">
@@ -2816,6 +2880,19 @@ function EditorCanvas() {
                             <div className="text-muted-foreground text-xs">
                               {s.nodeCount} node{s.nodeCount === 1 ? "" : "s"} · {s.edgeCount} edge
                               {s.edgeCount === 1 ? "" : "s"}
+                              {/* VROL-700 — last-run throughput chip for at-a-glance comparison. */}
+                              {history[0] ? (
+                                <span
+                                  className="text-foreground/80 ml-2 font-mono tabular-nums"
+                                  title={`Last run: ${history[0].completed.toLocaleString()} parts · OEE ${(history[0].lineOee * 100).toFixed(0)}%`}
+                                >
+                                  ·{" "}
+                                  {Math.round(
+                                    history[0].throughputLambda * 3_600_000,
+                                  ).toLocaleString()}
+                                  /h
+                                </span>
+                              ) : null}
                             </div>
                             {/* VROL-691 — scenario notes inline editor. */}
                             <textarea
