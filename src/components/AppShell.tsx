@@ -26,8 +26,8 @@ interface NavItem {
 
 const NAV_ITEMS: readonly NavItem[] = [
   { href: "/", label: "Home", icon: LayoutGrid },
-  { href: "/run", label: "Run", icon: Play },
   { href: "/editor", label: "Editor", icon: Network },
+  { href: "/run", label: "Run demo", icon: Play },
   // VROL-442 — /templates entry in the primary nav.
   { href: "/templates", label: "Templates", icon: Layers },
   { href: "/help", label: "Glossary", icon: BookOpen },

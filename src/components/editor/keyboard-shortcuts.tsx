@@ -13,20 +13,46 @@ interface Shortcut {
 
 const SHORTCUTS: readonly { readonly group: string; readonly items: readonly Shortcut[] }[] = [
   {
-    group: "Editor",
+    group: "General",
     items: [
-      { keys: "⌘Z / Ctrl+Z", action: "Undo last edit" },
+      { keys: "⌘K / Ctrl+K", action: "Open command palette" },
+      { keys: "⌘Z / Ctrl+Z", action: "Undo" },
       { keys: "⇧⌘Z / Ctrl+Shift+Z", action: "Redo" },
-      { keys: "?", action: "Open this shortcuts panel" },
+      { keys: "⌘↵ / Ctrl+Enter", action: "Run simulation" },
+      { keys: "⌘S / Ctrl+S", action: "Save active scenario" },
+      { keys: "?", action: "Open / close this panel" },
+      { keys: "Esc", action: "Close panels / sheets / palette" },
     ],
   },
   {
-    group: "Canvas",
+    group: "Selection & edit",
     items: [
       { keys: "Click", action: "Select a station" },
-      { keys: "Shift + Click", action: "Multi-select for bulk edit" },
-      { keys: "Drag", action: "Pan the canvas" },
-      { keys: "Scroll", action: "Zoom" },
+      { keys: "⌘ / Ctrl + Click", action: "Multi-select" },
+      { keys: "⌘A / Ctrl+A", action: "Select all nodes" },
+      { keys: "⌘C / Ctrl+C", action: "Copy selection" },
+      { keys: "⌘V / Ctrl+V", action: "Paste from clipboard" },
+      { keys: "⌘D / Ctrl+D", action: "Duplicate selection" },
+      { keys: "Delete / Backspace", action: "Delete selection" },
+      { keys: "Right-click", action: "Open context menu" },
+    ],
+  },
+  {
+    group: "Canvas navigation",
+    items: [
+      { keys: "Drag (left)", action: "Marquee-select" },
+      { keys: "Space + Drag", action: "Pan the canvas" },
+      { keys: "Right / middle drag", action: "Pan the canvas" },
+      { keys: "Scroll", action: "Zoom in / out" },
+      { keys: "Shift (drag)", action: "Lock node to nearest axis" },
+    ],
+  },
+  {
+    group: "Connections",
+    items: [
+      { keys: "Drag handle → empty canvas", action: "Spawn a new connected station" },
+      { keys: "Drag edge endpoint", action: "Retarget connection (drop on empty to delete)" },
+      { keys: "Hover edge", action: "Reveal mid-edge × delete button" },
     ],
   },
 ];

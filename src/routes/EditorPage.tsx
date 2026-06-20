@@ -647,11 +647,12 @@ import { CanvasContextMenu, type ContextMenuTarget } from "@/components/canvas/c
 import { CommandPalette, type CommandAction } from "@/components/canvas/command-palette";
 import { AlignmentToolbar, type AlignOp } from "@/components/canvas/alignment-toolbar";
 import { applyAlignment } from "@/lib/align-nodes";
+import { FrameNode } from "@/components/canvas/frame-node";
 import { StickyNoteNode } from "@/components/canvas/sticky-note-node";
 import { summarizeReplications, type ReplicationSummary } from "@/lib/replications";
 import { summarizeCosts } from "@/lib/cost-economics";
 
-const NODE_TYPES = { station: StationNode, sticky: StickyNoteNode };
+const NODE_TYPES = { station: StationNode, sticky: StickyNoteNode, frame: FrameNode };
 
 // Lazy-import AnimatedEdge so its react-flow getBezierPath dependency doesn't
 // bloat the first non-editor route. It's used inside this lazy-loaded file,
@@ -1376,6 +1377,23 @@ function EditorCanvas() {
           type: "sticky",
           position,
           data: { text: "", color: "yellow" },
+        };
+        setNodes((nds) => nds.concat(newNode));
+        return;
+      }
+
+      // Section frame drop branch — spawns a labeled container behind
+      // other nodes (zIndex: -1) so existing stations remain selectable.
+      const frame = event.dataTransfer.getData("application/vrolen-frame");
+      if (frame) {
+        const id = `n${String(nodeIdRef.current++)}`;
+        const newNode: Node = {
+          id,
+          type: "frame",
+          position,
+          zIndex: -1,
+          selectable: true,
+          data: { label: "Section", color: "blue", width: 320, height: 200 },
         };
         setNodes((nds) => nds.concat(newNode));
         return;
@@ -2957,6 +2975,24 @@ function EditorCanvas() {
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium">Sticky note</div>
                 <div className="truncate text-xs opacity-70">Annotation / comment</div>
+              </div>
+            </div>
+            {/* Section frame — labeled, resizable container behind nodes. */}
+            <div
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData("application/vrolen-frame", "1");
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              className="border-sim-running/30 bg-sim-running/10 text-sim-running hover:border-sim-running/60 flex cursor-grab items-center gap-2 rounded-md border-2 border-dashed p-2 active:cursor-grabbing"
+              title="Labeled box that groups stations visually. Double-click the label to rename."
+            >
+              <span className="text-base" aria-hidden>
+                ▢
+              </span>
+              <div className="min-w-0">
+                <div className="text-foreground truncate text-sm font-medium">Section frame</div>
+                <div className="text-muted-foreground truncate text-xs">Group stations</div>
               </div>
             </div>
             {PALETTE.filter(

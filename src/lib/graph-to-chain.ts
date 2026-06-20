@@ -184,7 +184,7 @@ function stationKeyOf(node: Node): string {
 }
 
 export function graphToChainOptions(
-  nodes: ReadonlyArray<Node>,
+  nodesIn: ReadonlyArray<Node>,
   edges: ReadonlyArray<Edge>,
 ): GraphToChainResult {
   const empty: GraphToChainResult = {
@@ -198,6 +198,9 @@ export function graphToChainOptions(
     maintenanceWindows: [],
     error: null,
   };
+  // Decorative nodes (sticky notes, section frames) never participate
+  // in the simulation graph — strip them before any topology work.
+  const nodes = nodesIn.filter((n) => n.type !== "sticky" && n.type !== "frame");
   if (nodes.length === 0) {
     return { ...empty, error: "Empty graph — add at least one station" };
   }
