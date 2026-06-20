@@ -1912,6 +1912,46 @@ function EditorCanvas() {
                   updateSelectedNodeData({ capacity: v === 1 ? undefined : v });
                 }}
               />
+              {/* VROL-293 — Recipe editor section. Visible when materials
+                  are enabled. The recipe applies to the station that's
+                  selected when Run fires. */}
+              {settings.materials.enabled ? (
+                <div className="flex flex-col gap-1.5">
+                  <div className="text-muted-foreground text-xs font-medium">Recipe</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <NumberField
+                      id="inspector-recipe-bottles"
+                      label="Bottles / part"
+                      value={settings.materials.bottlesPerPart}
+                      min={0}
+                      step={1}
+                      onChange={(n) => {
+                        setSettings((s) => ({
+                          ...s,
+                          materials: { ...s.materials, bottlesPerPart: Math.max(0, n) },
+                        }));
+                      }}
+                    />
+                    <NumberField
+                      id="inspector-recipe-caps"
+                      label="Caps / part"
+                      value={settings.materials.capsPerPart}
+                      min={0}
+                      step={1}
+                      onChange={(n) => {
+                        setSettings((s) => ({
+                          ...s,
+                          materials: { ...s.materials, capsPerPart: Math.max(0, n) },
+                        }));
+                      }}
+                    />
+                  </div>
+                  <p className="text-muted-foreground text-[11px]">
+                    Applied to whichever station is selected when Run fires. Set a qty to 0 to drop
+                    that material from the recipe.
+                  </p>
+                </div>
+              ) : null}
               {/* VROL-662 — CustomStation description. Only shown when the
                   station is a "custom" type. */}
               {(selectedNode.data as { stationType?: string }).stationType === "custom" ? (

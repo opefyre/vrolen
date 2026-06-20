@@ -33,9 +33,15 @@ export function settingsToMaterialsCfg(
     stationRecipes: [
       {
         stationIndex,
+        // VROL-293 — qty per part is now user-controlled. Setting 0 drops
+        // the requirement so a recipe of "bottle only" is a valid scenario.
         requirements: [
-          { materialId: BOTTLES_ID, qtyPerPart: 1 },
-          { materialId: CAPS_ID, qtyPerPart: 1 },
+          ...(materials.bottlesPerPart > 0
+            ? [{ materialId: BOTTLES_ID, qtyPerPart: materials.bottlesPerPart }]
+            : []),
+          ...(materials.capsPerPart > 0
+            ? [{ materialId: CAPS_ID, qtyPerPart: materials.capsPerPart }]
+            : []),
         ],
       },
     ],

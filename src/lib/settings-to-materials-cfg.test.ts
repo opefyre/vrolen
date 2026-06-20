@@ -26,6 +26,21 @@ describe("settingsToMaterialsCfg (VROL-647)", () => {
     expect(cfg!.recurringReplenishments).toBeUndefined();
   });
 
+  it("recipe qty per part comes from settings (VROL-293)", () => {
+    const cfg = settingsToMaterialsCfg(base({ bottlesPerPart: 2, capsPerPart: 3 }), 1);
+    expect(cfg!.stationRecipes[0]?.requirements).toEqual([
+      { materialId: "bottles", qtyPerPart: 2 },
+      { materialId: "caps", qtyPerPart: 3 },
+    ]);
+  });
+
+  it("recipe drops a material when its qty per part is 0 (VROL-293)", () => {
+    const cfg = settingsToMaterialsCfg(base({ bottlesPerPart: 1, capsPerPart: 0 }), 1);
+    expect(cfg!.stationRecipes[0]?.requirements).toEqual([
+      { materialId: "bottles", qtyPerPart: 1 },
+    ]);
+  });
+
   it("forwards one-shot + recurring replenishments + maxInventory cap", () => {
     const cfg = settingsToMaterialsCfg(
       base({

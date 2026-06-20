@@ -16,6 +16,9 @@ export interface MaterialsSettings {
   enabled: boolean;
   bottles: number;
   caps: number;
+  /** VROL-293 — qty per part consumed by the recipe-anchor station. */
+  bottlesPerPart: number;
+  capsPerPart: number;
   replenishment: {
     enabled: boolean;
     atMs: number;
@@ -121,6 +124,8 @@ export const DEFAULT_RUN_SETTINGS: RunSettings = {
     enabled: false,
     bottles: 1000,
     caps: 1000,
+    bottlesPerPart: 1,
+    capsPerPart: 1,
     replenishment: {
       enabled: false,
       atMs: 10_000,
@@ -189,6 +194,16 @@ export function mergeWithDefaults(parsed: Partial<RunSettings>): RunSettings {
       enabled: m.enabled ?? DEFAULT_RUN_SETTINGS.materials.enabled,
       bottles: m.bottles ?? DEFAULT_RUN_SETTINGS.materials.bottles,
       caps: m.caps ?? DEFAULT_RUN_SETTINGS.materials.caps,
+      // VROL-293 — qty per part. Default to 1 for back-compat with saved
+      // scenarios that predate this field.
+      bottlesPerPart:
+        typeof m.bottlesPerPart === "number" && m.bottlesPerPart >= 0
+          ? m.bottlesPerPart
+          : DEFAULT_RUN_SETTINGS.materials.bottlesPerPart,
+      capsPerPart:
+        typeof m.capsPerPart === "number" && m.capsPerPart >= 0
+          ? m.capsPerPart
+          : DEFAULT_RUN_SETTINGS.materials.capsPerPart,
       replenishment: {
         enabled: r.enabled ?? DEFAULT_RUN_SETTINGS.materials.replenishment.enabled,
         atMs: r.atMs ?? DEFAULT_RUN_SETTINGS.materials.replenishment.atMs,

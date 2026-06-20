@@ -20,6 +20,8 @@ describe("editor-run-settings — mergeWithDefaults", () => {
         enabled: true,
         bottles: 50,
         caps: 50,
+        bottlesPerPart: 1,
+        capsPerPart: 1,
         replenishment: { enabled: false, atMs: 0, amount: 0 },
         recurring: [],
       },
@@ -35,6 +37,8 @@ describe("editor-run-settings — mergeWithDefaults", () => {
         enabled: true,
         bottles: 0,
         caps: 0,
+        bottlesPerPart: 1,
+        capsPerPart: 1,
         replenishment: { enabled: false, atMs: 0, amount: 0 },
         recurring: [
           { material: "bottles", amount: 50, intervalMs: 60_000 },
