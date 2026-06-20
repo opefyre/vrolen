@@ -98,6 +98,25 @@ export interface SourceSettings {
   batchSize: number;
 }
 
+/**
+ * VROL-297 — line-wide schedule. Distinct from per-station maintenance
+ * windows (which live on each station's data). These are global breaks +
+ * planned downtime that apply to the whole line.
+ */
+export interface ScheduleSettings {
+  enabled: boolean;
+  breaks: {
+    atMs: number;
+    durationMs: number;
+    label: string;
+  }[];
+  maintenanceWindows: {
+    atMs: number;
+    durationMs: number;
+    label: string;
+  }[];
+}
+
 export interface RunSettings {
   horizonMs: number;
   warmupMs: number;
@@ -108,6 +127,8 @@ export interface RunSettings {
   workers: WorkersSettings;
   products: ProductsSettings;
   source: SourceSettings;
+  /** VROL-297 — line-wide breaks + maintenance editor. */
+  schedule?: ScheduleSettings;
   /**
    * Persist the canvas's "Animate flow on edges" toggle across reloads
    * (VROL-607). UI-only — engine ignores this.
@@ -161,6 +182,13 @@ export const DEFAULT_RUN_SETTINGS: RunSettings = {
     enabled: false,
     intervalMs: 60_000,
     batchSize: 1,
+  },
+  // VROL-297 — line-wide schedule defaults to off; breaks/maintenance are
+  // empty arrays so the UI can splat them safely.
+  schedule: {
+    enabled: false,
+    breaks: [],
+    maintenanceWindows: [],
   },
 };
 
@@ -266,6 +294,9 @@ export function mergeWithDefaults(parsed: Partial<RunSettings>): RunSettings {
         ? Math.floor(parsed.samplerIntervalMs)
         : DEFAULT_RUN_SETTINGS.samplerIntervalMs,
     source: sanitizeSource(parsed.source),
+    // VROL-297 — preserve schedule when present; otherwise fall back to the
+    // default (which is the off-state empty arrays).
+    schedule: parsed.schedule ?? DEFAULT_RUN_SETTINGS.schedule,
   };
 }
 

@@ -489,7 +489,11 @@ function StationNode({ data, selected, id }: NodeProps) {
           Bottleneck
         </span>
       ) : null}
-      <Handle type="target" position={Position.Left} className="!h-3 !w-3" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="!bg-sim-running hover:!ring-sim-running/40 !h-3 !w-3 hover:!h-4 hover:!w-4 hover:!ring-2"
+      />
       <div className="flex items-center gap-2">
         <span
           className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${accent.pill}`}
@@ -561,7 +565,11 @@ function StationNode({ data, selected, id }: NodeProps) {
           <Sparkline series={d.sparklineSeries} />
         </div>
       ) : null}
-      <Handle type="source" position={Position.Right} className="!h-3 !w-3" />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="!bg-sim-running hover:!ring-sim-running/40 !h-3 !w-3 hover:!h-4 hover:!w-4 hover:!ring-2"
+      />
     </div>
   );
 }
@@ -732,14 +740,23 @@ function EditorCanvas() {
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
   /** VROL-633 — Inspector advanced section collapsed by default. */
   const [inspectorAdvancedOpen, setInspectorAdvancedOpen] = useState<boolean>(false);
-  /** VROL-635 — Drawer optional-sections expanded state (closed by default). */
+  /** VROL-635 — Drawer optional-sections expanded state (closed by default).
+   *  VROL-297 — schedule added. */
   const [drawerSections, setDrawerSections] = useState<{
     materials: boolean;
     products: boolean;
     workers: boolean;
     breakdowns: boolean;
     source: boolean;
-  }>({ materials: false, products: false, workers: false, breakdowns: false, source: false });
+    schedule: boolean;
+  }>({
+    materials: false,
+    products: false,
+    workers: false,
+    breakdowns: false,
+    source: false,
+    schedule: false,
+  });
   const toggleDrawerSection = useCallback((key: keyof typeof drawerSections) => {
     setDrawerSections((s) => ({ ...s, [key]: !s[key] }));
   }, []);
@@ -2281,6 +2298,11 @@ function EditorCanvas() {
             }}
             fitView
             proOptions={{ hideAttribution: true }}
+            // VROL-277 — generous snap radius so a drag landing within 30px of
+            // a port auto-connects; ports highlight on hover via the station
+            // node's Handle styles.
+            connectionRadius={30}
+            connectionLineStyle={{ strokeWidth: 2 }}
           >
             <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
             <Controls />
@@ -2486,6 +2508,55 @@ function EditorCanvas() {
                   updateSelectedNodeData({ capacity: v === 1 ? undefined : v });
                 }}
               />
+              {/* VROL-281 — Description + Tags fill out the "all standard
+                  fields" set for the station property panel. Description is a
+                  textarea; tags are a comma-separated string stored as an array
+                  on data.tags. */}
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="inspector-description"
+                  className="text-muted-foreground text-xs font-medium"
+                >
+                  Description
+                </label>
+                <textarea
+                  id="inspector-description"
+                  rows={2}
+                  placeholder="Notes for this station…"
+                  className="border-border bg-background focus-visible:ring-ring/40 block w-full resize-y rounded-md border px-2 py-1 text-xs focus-visible:ring-2 focus-visible:outline-none"
+                  value={String((selectedNode.data as { description?: unknown }).description ?? "")}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    updateSelectedNodeData({
+                      description: value.trim() === "" ? undefined : value,
+                    });
+                  }}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="inspector-tags"
+                  className="text-muted-foreground text-xs font-medium"
+                >
+                  Tags
+                </label>
+                <Input
+                  id="inspector-tags"
+                  type="text"
+                  placeholder="comma,separated,tags"
+                  value={(() => {
+                    const t = (selectedNode.data as { tags?: unknown }).tags;
+                    return Array.isArray(t) ? t.join(", ") : "";
+                  })()}
+                  onChange={(e) => {
+                    const next = e.target.value
+                      .split(",")
+                      .map((s) => s.trim())
+                      .filter((s) => s.length > 0);
+                    updateSelectedNodeData({ tags: next.length === 0 ? undefined : next });
+                  }}
+                />
+              </div>
               {/* VROL-293 — Recipe editor section. Visible when materials
                   are enabled. The recipe applies to the station that's
                   selected when Run fires. */}
@@ -4735,6 +4806,222 @@ function EditorCanvas() {
                       </div>
                     );
                   })()}
+                </div>
+              ) : null}
+            </Accordion>
+
+            {/* VROL-297 — Line-wide schedule editor. */}
+            <Accordion
+              title="Schedule"
+              icon={<Hourglass className="h-4 w-4" />}
+              status={
+                <AccordionStatus tone={settings.schedule?.enabled ? "on" : "off"}>
+                  {settings.schedule?.enabled
+                    ? `${String((settings.schedule.breaks?.length ?? 0) + (settings.schedule.maintenanceWindows?.length ?? 0))} entries`
+                    : "Off"}
+                </AccordionStatus>
+              }
+              expanded={drawerSections.schedule}
+              onToggle={() => {
+                toggleDrawerSection("schedule");
+              }}
+            >
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={settings.schedule?.enabled ?? false}
+                  onChange={(e) => {
+                    setSettings((s) => ({
+                      ...s,
+                      schedule: {
+                        enabled: e.target.checked,
+                        breaks: s.schedule?.breaks ?? [],
+                        maintenanceWindows: s.schedule?.maintenanceWindows ?? [],
+                      },
+                    }));
+                  }}
+                  className="accent-sim-running h-4 w-4"
+                />
+                Enable line-wide schedule
+              </label>
+              <p className="text-muted-foreground text-xs">
+                Global breaks + maintenance windows for the whole line. Per-station maintenance
+                lives on each station's inspector.
+              </p>
+              {settings.schedule?.enabled ? (
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-muted-foreground mb-1 flex items-center justify-between text-xs font-medium">
+                      <span>Breaks ({String(settings.schedule.breaks.length)})</span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-xs"
+                        onClick={() => {
+                          setSettings((s) => ({
+                            ...s,
+                            schedule: {
+                              ...(s.schedule ?? {
+                                enabled: true,
+                                breaks: [],
+                                maintenanceWindows: [],
+                              }),
+                              breaks: [
+                                ...(s.schedule?.breaks ?? []),
+                                { atMs: 30 * 60_000, durationMs: 15 * 60_000, label: "Break" },
+                              ],
+                            },
+                          }));
+                        }}
+                      >
+                        + Break
+                      </Button>
+                    </div>
+                    <ul className="space-y-1 text-xs">
+                      {settings.schedule.breaks.map((b, idx) => (
+                        <li
+                          key={`brk-${String(idx)}`}
+                          className="bg-card border-border flex items-center gap-2 rounded-md border p-2"
+                        >
+                          <Input
+                            type="text"
+                            value={b.label}
+                            onChange={(e) => {
+                              const label = e.target.value;
+                              setSettings((s) => ({
+                                ...s,
+                                schedule: {
+                                  ...(s.schedule ?? {
+                                    enabled: true,
+                                    breaks: [],
+                                    maintenanceWindows: [],
+                                  }),
+                                  breaks: (s.schedule?.breaks ?? []).map((x, i) =>
+                                    i === idx ? { ...x, label } : x,
+                                  ),
+                                },
+                              }));
+                            }}
+                            className="h-7 flex-1 text-xs"
+                          />
+                          <span className="text-muted-foreground font-mono tabular-nums">
+                            @{(b.atMs / 60_000).toFixed(0)}m · {(b.durationMs / 60_000).toFixed(0)}m
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            aria-label="Remove break"
+                            onClick={() => {
+                              setSettings((s) => ({
+                                ...s,
+                                schedule: {
+                                  ...(s.schedule ?? {
+                                    enabled: true,
+                                    breaks: [],
+                                    maintenanceWindows: [],
+                                  }),
+                                  breaks: (s.schedule?.breaks ?? []).filter((_, i) => i !== idx),
+                                },
+                              }));
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground mb-1 flex items-center justify-between text-xs font-medium">
+                      <span>
+                        Maintenance ({String(settings.schedule.maintenanceWindows.length)})
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-xs"
+                        onClick={() => {
+                          setSettings((s) => ({
+                            ...s,
+                            schedule: {
+                              ...(s.schedule ?? {
+                                enabled: true,
+                                breaks: [],
+                                maintenanceWindows: [],
+                              }),
+                              maintenanceWindows: [
+                                ...(s.schedule?.maintenanceWindows ?? []),
+                                {
+                                  atMs: 60 * 60_000,
+                                  durationMs: 30 * 60_000,
+                                  label: "Planned maintenance",
+                                },
+                              ],
+                            },
+                          }));
+                        }}
+                      >
+                        + Window
+                      </Button>
+                    </div>
+                    <ul className="space-y-1 text-xs">
+                      {settings.schedule.maintenanceWindows.map((m, idx) => (
+                        <li
+                          key={`mnt-${String(idx)}`}
+                          className="bg-card border-border flex items-center gap-2 rounded-md border p-2"
+                        >
+                          <Input
+                            type="text"
+                            value={m.label}
+                            onChange={(e) => {
+                              const label = e.target.value;
+                              setSettings((s) => ({
+                                ...s,
+                                schedule: {
+                                  ...(s.schedule ?? {
+                                    enabled: true,
+                                    breaks: [],
+                                    maintenanceWindows: [],
+                                  }),
+                                  maintenanceWindows: (s.schedule?.maintenanceWindows ?? []).map(
+                                    (x, i) => (i === idx ? { ...x, label } : x),
+                                  ),
+                                },
+                              }));
+                            }}
+                            className="h-7 flex-1 text-xs"
+                          />
+                          <span className="text-muted-foreground font-mono tabular-nums">
+                            @{(m.atMs / 60_000).toFixed(0)}m · {(m.durationMs / 60_000).toFixed(0)}m
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            aria-label="Remove maintenance window"
+                            onClick={() => {
+                              setSettings((s) => ({
+                                ...s,
+                                schedule: {
+                                  ...(s.schedule ?? {
+                                    enabled: true,
+                                    breaks: [],
+                                    maintenanceWindows: [],
+                                  }),
+                                  maintenanceWindows: (s.schedule?.maintenanceWindows ?? []).filter(
+                                    (_, i) => i !== idx,
+                                  ),
+                                },
+                              }));
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               ) : null}
             </Accordion>
