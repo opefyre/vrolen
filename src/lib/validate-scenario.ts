@@ -23,6 +23,16 @@ export type ValidationCategory =
   | "schedule"
   | "recipe";
 
+/**
+ * VROL-658 — discriminated union for one-click fix actions. When a
+ * ValidationIssue carries a fixAction, ValidationPanel renders a "Fix it"
+ * button that dispatches into EditorPage's onFixAction handler.
+ */
+export type FixAction =
+  | { readonly kind: "delete-node"; readonly nodeId: string }
+  | { readonly kind: "delete-edge"; readonly edgeId: string }
+  | { readonly kind: "clear-rework-target"; readonly nodeId: string };
+
 export interface ValidationIssue {
   readonly code: string;
   readonly severity: ValidationSeverity;
@@ -38,6 +48,8 @@ export interface ValidationIssue {
    * renderer can paint a red/yellow indicator on it.
    */
   readonly nodeId?: string;
+  /** VROL-658 — programmatic fix; the UI surfaces a "Fix it" button. */
+  readonly fixAction?: FixAction;
 }
 
 export interface ValidationResult {
@@ -114,6 +126,9 @@ function checkReferenceIntegrity(
         path: `edges[${String(i)}].source`,
         fix: `Delete this edge or add a node with id "${e.source}"`,
         // No nodeId — the offending node doesn't exist; the issue is on the edge.
+        ...(typeof e.id === "string"
+          ? { fixAction: { kind: "delete-edge", edgeId: e.id } as FixAction }
+          : {}),
       });
     }
     if (!ids.has(e.target)) {
@@ -124,6 +139,9 @@ function checkReferenceIntegrity(
         message: `Edge ${String(e.id ?? i)} targets unknown node "${e.target}"`,
         path: `edges[${String(i)}].target`,
         fix: `Delete this edge or add a node with id "${e.target}"`,
+        ...(typeof e.id === "string"
+          ? { fixAction: { kind: "delete-edge", edgeId: e.id } as FixAction }
+          : {}),
       });
     }
   });
@@ -139,6 +157,7 @@ function checkReferenceIntegrity(
         path: `nodes[${String(i)}].data.reworkTargetNodeId`,
         fix: `Pick a different rework target or remove the setting`,
         nodeId: n.id,
+        fixAction: { kind: "clear-rework-target", nodeId: n.id },
       });
     }
   });
@@ -185,6 +204,7 @@ function checkTopology(
           path: `nodes[${String(i)}]`,
           fix: `Connect it to the chain or delete it`,
           nodeId: n.id,
+          fixAction: { kind: "delete-node", nodeId: n.id },
         });
       }
     });

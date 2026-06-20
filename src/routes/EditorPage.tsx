@@ -1078,6 +1078,37 @@ function EditorCanvas() {
     [flow, nodes],
   );
 
+  // VROL-658 — apply a fix action from the validation panel.
+  const applyValidationFix = useCallback(
+    (iss: ValidationIssue) => {
+      const action = iss.fixAction;
+      if (!action) return;
+      switch (action.kind) {
+        case "delete-node":
+          setNodes((ns) => ns.filter((n) => n.id !== action.nodeId));
+          setEdges((es) =>
+            es.filter((e) => e.source !== action.nodeId && e.target !== action.nodeId),
+          );
+          if (selectedNodeId === action.nodeId) setSelectedNodeId(null);
+          break;
+        case "delete-edge":
+          setEdges((es) => es.filter((e) => e.id !== action.edgeId));
+          break;
+        case "clear-rework-target":
+          setNodes((ns) =>
+            ns.map((n) => {
+              if (n.id !== action.nodeId) return n;
+              const data = { ...(n.data as Record<string, unknown>) };
+              delete data.reworkTargetNodeId;
+              return { ...n, data };
+            }),
+          );
+          break;
+      }
+    },
+    [setNodes, setEdges, selectedNodeId],
+  );
+
   // VROL-654 — load a saved comparison back into the sheet.
   const restoreComparison = useCallback((entry: ComparisonEntry) => {
     setComparison({
@@ -1595,7 +1626,11 @@ function EditorCanvas() {
               </button>
               {validationOpen ? (
                 <div className="border-border bg-card absolute right-0 z-40 mt-1 w-96 rounded-md border shadow-lg">
-                  <ValidationPanel result={validation} onIssueFocus={focusValidationIssue} />
+                  <ValidationPanel
+                    result={validation}
+                    onIssueFocus={focusValidationIssue}
+                    onIssueFix={applyValidationFix}
+                  />
                 </div>
               ) : null}
             </div>

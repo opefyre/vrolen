@@ -69,4 +69,30 @@ describe("ValidationPanel (VROL-304)", () => {
     render(<ValidationPanel result={result} onIssueFocus={() => {}} />);
     expect(screen.getByText(/Reconnect the broken edge/i)).toBeInTheDocument();
   });
+
+  it("renders a Fix button + fires onIssueFix when fixAction is present (VROL-658)", () => {
+    const fixSpy = vi.fn();
+    const result: ValidationResult = {
+      errors: [
+        errIssue({
+          message: "Bad edge",
+          fixAction: { kind: "delete-edge", edgeId: "e1" },
+        }),
+      ],
+      warnings: [],
+    };
+    render(<ValidationPanel result={result} onIssueFocus={() => {}} onIssueFix={fixSpy} />);
+    fireEvent.click(screen.getByTestId("fix-button"));
+    expect(fixSpy).toHaveBeenCalledTimes(1);
+    expect(fixSpy.mock.calls[0]?.[0]?.fixAction?.kind).toBe("delete-edge");
+  });
+
+  it("does NOT render a Fix button when issue has no fixAction", () => {
+    const result: ValidationResult = {
+      errors: [errIssue({ message: "Hopeless" })],
+      warnings: [],
+    };
+    render(<ValidationPanel result={result} onIssueFocus={() => {}} onIssueFix={() => {}} />);
+    expect(screen.queryByTestId("fix-button")).toBeNull();
+  });
 });

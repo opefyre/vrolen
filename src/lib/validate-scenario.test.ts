@@ -200,6 +200,33 @@ describe("validateScenario (VROL-86)", () => {
     expect(r.warnings.find((w) => w.code === "RECIPE_RECURRING_ZERO_AMOUNT")).toBeDefined();
   });
 
+  // ─── Fix actions (VROL-658) ────────────────────────────────────────────────
+  it("orphan node carries a delete-node fixAction", () => {
+    const r = validateScenario(
+      [node("a"), node("b"), node("orphan")],
+      [edge("e", "a", "b")],
+      settings(),
+    );
+    const warn = r.warnings.find((w) => w.code === "TOPO_ORPHAN_NODE");
+    expect(warn?.fixAction).toEqual({ kind: "delete-node", nodeId: "orphan" });
+  });
+
+  it("rework-target-unknown carries a clear-rework-target fixAction", () => {
+    const r = validateScenario(
+      [node("a"), node("b", { reworkTargetNodeId: "ghost" })],
+      [edge("e", "a", "b")],
+      settings(),
+    );
+    const err = r.errors.find((e) => e.code === "REF_REWORK_TARGET_UNKNOWN");
+    expect(err?.fixAction).toEqual({ kind: "clear-rework-target", nodeId: "b" });
+  });
+
+  it("edge with unknown source carries a delete-edge fixAction", () => {
+    const r = validateScenario([node("a"), node("b")], [edge("e1", "ghost", "b")], settings());
+    const err = r.errors.find((e) => e.code === "REF_EDGE_SOURCE_UNKNOWN");
+    expect(err?.fixAction).toEqual({ kind: "delete-edge", edgeId: "e1" });
+  });
+
   // ─── Result shape sanity ───────────────────────────────────────────────────
   it("returns empty errors + empty warnings for a clean linear scenario", () => {
     const r = validateScenario(
