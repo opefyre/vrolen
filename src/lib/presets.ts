@@ -448,6 +448,63 @@ const ELECTRONICS: Preset = {
   settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 90_000 },
 };
 
+// ─── 12. Beverage canning line (VROL-736) ──────────────────────────────────
+const BEVERAGE_CANNING: Preset = {
+  id: "beverage-canning",
+  title: "Beverage canning line",
+  blurb:
+    "Filler → seamer → labeller → tray packer with breakdowns on the seamer. Demonstrates how a moderately-failing station drags the entire line.",
+  highlight: "breakdowns on a critical station",
+  graph: {
+    nodes: [
+      station("src", "Source", "input", 60, 200, { cycleDistribution: constant(60) }),
+      station("fill", "Filler", "machine", 220, 200, { cycleDistribution: constant(90) }),
+      station("seam", "Seamer", "machine", 380, 200, {
+        cycleDistribution: constant(110),
+        mtbfMs: 120_000,
+        mttrMs: 20_000,
+      }),
+      station("label", "Labeller", "machine", 540, 200, { cycleDistribution: constant(80) }),
+      station("pack", "Tray pack", "output", 700, 200, { cycleDistribution: constant(120) }),
+    ],
+    edges: [
+      edge("e1", "src", "fill"),
+      edge("e2", "fill", "seam"),
+      edge("e3", "seam", "label"),
+      edge("e4", "label", "pack"),
+    ],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 120_000 },
+};
+
+// ─── 13. Assembly cell (VROL-737) ──────────────────────────────────────────
+const ASSEMBLY_CELL: Preset = {
+  id: "assembly-cell",
+  title: "Assembly cell",
+  blurb:
+    "Manual sub-assembly → automated press → manual final assembly. The two manual cells starve the press; shows how worker pacing shapes throughput.",
+  highlight: "manual + automated mix",
+  graph: {
+    nodes: [
+      station("src", "Source", "input", 60, 200, { cycleDistribution: constant(120) }),
+      station("sub", "Manual sub-asm", "manual", 220, 200, { cycleDistribution: constant(240) }),
+      station("press", "Press", "machine", 400, 200, {
+        cycleDistribution: constant(60),
+        capacity: 1,
+      }),
+      station("final", "Manual final", "manual", 580, 200, { cycleDistribution: constant(220) }),
+      station("out", "Done", "output", 760, 200, { cycleDistribution: constant(30) }),
+    ],
+    edges: [
+      edge("e1", "src", "sub"),
+      edge("e2", "sub", "press"),
+      edge("e3", "press", "final"),
+      edge("e4", "final", "out"),
+    ],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 120_000 },
+};
+
 export const PRESETS: readonly Preset[] = [
   BOTTLING_LINE,
   MULTI_PRODUCT_CHANGEOVER,
@@ -460,6 +517,8 @@ export const PRESETS: readonly Preset[] = [
   PHARMA_PACKAGING,
   BAKERY,
   ELECTRONICS,
+  BEVERAGE_CANNING,
+  ASSEMBLY_CELL,
 ];
 
 export function getPreset(id: string): Preset | undefined {

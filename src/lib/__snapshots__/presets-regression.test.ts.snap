@@ -1,5 +1,16 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`preset regression (VROL-472) > preset "assembly-cell" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 3309,
+  "bottleneckLabel": "Manual sub-asm",
+  "bottleneckReason": "starvation",
+  "completed": 479,
+  "lineOee": 0.999652,
+  "throughputPartsPerHour": 14995,
+}
+`;
+
 exports[`preset regression (VROL-472) > preset "bakery" KPI summary matches snapshot 1`] = `
 {
   "avgTimeInSystemMs": 25069,
@@ -8,6 +19,17 @@ exports[`preset regression (VROL-472) > preset "bakery" KPI summary matches snap
   "completed": 144,
   "lineOee": 1,
   "throughputPartsPerHour": 4508,
+}
+`;
+
+exports[`preset regression (VROL-472) > preset "beverage-canning" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 5092,
+  "bottleneckLabel": "Tray pack",
+  "bottleneckReason": "starvation",
+  "completed": 959,
+  "lineOee": 1,
+  "throughputPartsPerHour": 30021,
 }
 `;
 
