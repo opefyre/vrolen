@@ -12,6 +12,7 @@ import { ArrowRight, Activity, GitBranch, Settings2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { PRESETS, setPendingPreset } from "@/lib/presets";
+import { TopologyPreview } from "@/components/landing/topology-preview";
 
 function HeroFlow() {
   // Three-station mini chain with two animated dots flowing along the bezier.
@@ -171,7 +172,7 @@ export default function LandingPage() {
             One click → editor, fully configured.
           </span>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {PRESETS.map((preset) => (
             <button
               key={preset.id}
@@ -179,17 +180,21 @@ export default function LandingPage() {
               onClick={() => {
                 goToEditor(preset.id);
               }}
-              className="border-border bg-card hover:border-foreground/30 group flex flex-col gap-1 rounded-lg border p-4 text-left transition-colors"
+              className="border-border bg-card hover:border-foreground/30 group flex flex-col gap-2 rounded-lg border p-4 text-left transition-colors"
               aria-label={`Load preset ${preset.title}`}
             >
+              {/* VROL-666 — topology preview */}
+              <div className="bg-background/40 border-border rounded-md border">
+                <TopologyPreview nodes={preset.graph.nodes} edges={preset.graph.edges} />
+              </div>
               <div className="flex items-center justify-between gap-2">
                 <span className="font-heading text-sm font-semibold">{preset.title}</span>
                 <ArrowRight className="text-muted-foreground group-hover:text-foreground h-4 w-4 transition-colors" />
               </div>
-              <span className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+              <span className="bg-sim-running/15 text-sim-running self-start rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide uppercase">
                 {preset.highlight}
               </span>
-              <span className="text-muted-foreground text-sm leading-relaxed">{preset.blurb}</span>
+              <span className="text-muted-foreground text-xs leading-relaxed">{preset.blurb}</span>
             </button>
           ))}
         </div>

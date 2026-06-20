@@ -957,6 +957,10 @@ function EditorCanvas() {
               id: p.id || p.name || "default",
               weight: Math.max(0, p.weight),
             })),
+            // VROL-664 — production plan when authored.
+            ...(settings.products.productionPlan && settings.products.productionPlan.length > 0
+              ? { productionPlan: settings.products.productionPlan }
+              : {}),
           }
         : undefined;
 
@@ -2467,6 +2471,35 @@ function EditorCanvas() {
                                 Compare
                               </Button>
                               <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  // VROL-665 — duplicate. Find a unique "name (copy)"
+                                  // name; increment suffix if it already exists.
+                                  const src = loadScenario(s.name);
+                                  if (!src) {
+                                    toast.error(`Couldn't read "${s.name}"`);
+                                    return;
+                                  }
+                                  const existing = new Set(listScenarios().map((q) => q.name));
+                                  let candidate = `${s.name} (copy)`;
+                                  let n = 2;
+                                  while (existing.has(candidate)) {
+                                    candidate = `${s.name} (copy ${String(n)})`;
+                                    n += 1;
+                                  }
+                                  saveScenario(candidate, {
+                                    graph: src.graph,
+                                    settings: src.settings,
+                                  });
+                                  setScenarios(listScenarios());
+                                  toast.success(`Duplicated to "${candidate}"`);
+                                }}
+                                aria-label={`Duplicate ${s.name}`}
+                              >
+                                Duplicate
+                              </Button>
+                              <Button
                                 variant="ghost"
                                 size="icon"
                                 aria-label={`Delete ${s.name}`}
@@ -3304,6 +3337,112 @@ function EditorCanvas() {
                   >
                     Add product
                   </Button>
+
+                  {/* VROL-664 — production plan editor */}
+                  <div className="border-border space-y-2 rounded-md border border-dashed p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Production plan (FIFO)</span>
+                      <button
+                        type="button"
+                        className="border-input bg-background hover:bg-muted rounded-md border px-2 py-1 text-xs"
+                        onClick={() => {
+                          const firstId = settings.products.list[0]?.id ?? "A";
+                          setSettings((s) => ({
+                            ...s,
+                            products: {
+                              ...s.products,
+                              productionPlan: [
+                                ...(s.products.productionPlan ?? []),
+                                { productId: firstId, quantity: 10 },
+                              ],
+                            },
+                          }));
+                        }}
+                      >
+                        + Add row
+                      </button>
+                    </div>
+                    {(settings.products.productionPlan ?? []).length === 0 ? (
+                      <p className="text-muted-foreground text-xs">
+                        Optional. When set, the engine emits parts in this exact order then drains.
+                        Overrides the weighted mix above.
+                      </p>
+                    ) : (
+                      <ul className="space-y-1.5">
+                        {(settings.products.productionPlan ?? []).map((row, idx) => (
+                          <li
+                            key={`plan-${String(idx)}`}
+                            className="border-border bg-card flex items-center gap-1.5 rounded-md border p-1.5"
+                          >
+                            <span className="text-muted-foreground w-5 font-mono text-[10px]">
+                              {String(idx + 1)}.
+                            </span>
+                            <select
+                              value={row.productId}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setSettings((s) => ({
+                                  ...s,
+                                  products: {
+                                    ...s.products,
+                                    productionPlan: (s.products.productionPlan ?? []).map((p, i) =>
+                                      i === idx ? { ...p, productId: v } : p,
+                                    ),
+                                  },
+                                }));
+                              }}
+                              className="border-input bg-background h-7 flex-1 rounded-md border px-2 text-xs"
+                              aria-label={`Product for plan row ${String(idx + 1)}`}
+                            >
+                              {settings.products.list.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.name} ({p.id})
+                                </option>
+                              ))}
+                            </select>
+                            <Input
+                              type="number"
+                              min={1}
+                              value={row.quantity}
+                              onChange={(e) => {
+                                const n = Number(e.target.value);
+                                if (!Number.isFinite(n) || n < 1) return;
+                                setSettings((s) => ({
+                                  ...s,
+                                  products: {
+                                    ...s.products,
+                                    productionPlan: (s.products.productionPlan ?? []).map((p, i) =>
+                                      i === idx ? { ...p, quantity: Math.floor(n) } : p,
+                                    ),
+                                  },
+                                }));
+                              }}
+                              aria-label={`Qty for plan row ${String(idx + 1)}`}
+                              className="h-7 w-20 font-mono text-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSettings((s) => ({
+                                  ...s,
+                                  products: {
+                                    ...s.products,
+                                    productionPlan: (s.products.productionPlan ?? []).filter(
+                                      (_, i) => i !== idx,
+                                    ),
+                                  },
+                                }));
+                              }}
+                              className="text-muted-foreground hover:text-destructive p-0.5"
+                              aria-label={`Remove plan row ${String(idx + 1)}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 </div>
               ) : null}
             </Accordion>

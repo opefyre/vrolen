@@ -376,6 +376,78 @@ const PHARMA_PACKAGING: Preset = {
   },
 };
 
+// ─── 10. Bakery / food processing (VROL-458) ────────────────────────────────
+const BAKERY: Preset = {
+  id: "bakery",
+  title: "Bakery line",
+  blurb:
+    "Mixer → Shape → Proof → Oven (capacity 4, slow cycle) → Cool → Pack. The oven runs four trays in parallel — shifts the bottleneck from cycle to dough handling.",
+  highlight: "batch oven via capacity > 1",
+  graph: {
+    nodes: [
+      station("mix", "Mixer", "input", 60, 160, { cycleDistribution: constant(120) }),
+      station("shape", "Shape", "manual", 240, 160, { cycleDistribution: constant(60) }),
+      station("proof", "Proof", "machine", 420, 160, { cycleDistribution: constant(180) }),
+      // The oven: long cycle but bakes 4 trays in parallel.
+      station("oven", "Oven", "machine", 600, 160, {
+        cycleDistribution: constant(800),
+        capacity: 4,
+      }),
+      station("cool", "Cool", "machine", 780, 160, { cycleDistribution: constant(150) }),
+      station("pack", "Pack", "output", 960, 160, { cycleDistribution: constant(50) }),
+    ],
+    edges: [
+      edge("e1", "mix", "shape"),
+      edge("e2", "shape", "proof"),
+      edge("e3", "proof", "oven"),
+      edge("e4", "oven", "cool"),
+      edge("e5", "cool", "pack"),
+    ],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 120_000 },
+};
+
+// ─── 11. Electronics SMT line (VROL-461) ────────────────────────────────────
+const ELECTRONICS: Preset = {
+  id: "electronics-smt",
+  title: "Electronics SMT line",
+  blurb:
+    "Pick-and-place → reflow oven (cap 3, 400ms) → AOI inspection (15% defects route back to rework) → functional test → pack. Watch the rework loop bunch up at the inspector.",
+  highlight: "rework loop + parallel reflow",
+  graph: {
+    nodes: [
+      station("src", "Source", "input", 60, 160, { cycleDistribution: constant(40) }),
+      station("pnp", "Pick & place", "machine", 240, 160, { cycleDistribution: constant(90) }),
+      station("reflow", "Reflow", "machine", 420, 160, {
+        cycleDistribution: constant(400),
+        capacity: 3,
+      }),
+      // AOI flags defects; failed boards route to manual rework.
+      station("aoi", "AOI", "qc", 600, 160, {
+        cycleDistribution: constant(80),
+        defectRate: 0.15,
+        reworkTargetNodeId: "rework",
+      }),
+      station("rework", "Rework", "manual", 420, 320, { cycleDistribution: constant(180) }),
+      station("test", "Functional test", "qc", 780, 160, {
+        cycleDistribution: constant(120),
+        defectRate: 0.03,
+      }),
+      station("pack", "Pack", "output", 960, 160, { cycleDistribution: constant(40) }),
+    ],
+    edges: [
+      edge("e1", "src", "pnp"),
+      edge("e2", "pnp", "reflow"),
+      edge("e3", "reflow", "aoi"),
+      edge("e4", "aoi", "test"),
+      edge("e5", "test", "pack"),
+      // Rework loops back to AOI so reworked boards get re-inspected.
+      edge("e6", "rework", "aoi"),
+    ],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 90_000 },
+};
+
 export const PRESETS: readonly Preset[] = [
   BOTTLING_LINE,
   MULTI_PRODUCT_CHANGEOVER,
@@ -386,6 +458,8 @@ export const PRESETS: readonly Preset[] = [
   TWO_LINE_PACKING,
   MIXED_MODEL_JOB_SHOP,
   PHARMA_PACKAGING,
+  BAKERY,
+  ELECTRONICS,
 ];
 
 export function getPreset(id: string): Preset | undefined {

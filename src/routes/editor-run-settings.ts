@@ -68,6 +68,12 @@ export interface WorkerEntry {
 export interface ProductsSettings {
   enabled: boolean;
   list: { id: string; name: string; weight: number }[];
+  /**
+   * VROL-664 — optional FIFO production plan. When non-empty, overrides
+   * weighted sampling in the engine. Source emits in plan order then
+   * drains.
+   */
+  productionPlan?: { productId: string; quantity: number }[];
 }
 
 export interface WorkersSettings {
@@ -235,6 +241,21 @@ export function mergeWithDefaults(parsed: Partial<RunSettings>): RunSettings {
                 weight: typeof p.weight === "number" && p.weight > 0 ? p.weight : 1,
               }))
           : DEFAULT_RUN_SETTINGS.products.list.slice(),
+      // VROL-664 — production plan migration.
+      ...(Array.isArray(parsed.products?.productionPlan)
+        ? {
+            productionPlan: parsed.products.productionPlan
+              .filter(
+                (e): e is { productId: string; quantity: number } =>
+                  !!e &&
+                  typeof e === "object" &&
+                  typeof (e as { productId?: unknown }).productId === "string" &&
+                  typeof (e as { quantity?: unknown }).quantity === "number" &&
+                  (e as { quantity: number }).quantity > 0,
+              )
+              .map((e) => ({ productId: e.productId, quantity: Math.floor(e.quantity) })),
+          }
+        : {}),
     },
     animateFlow:
       typeof parsed.animateFlow === "boolean"

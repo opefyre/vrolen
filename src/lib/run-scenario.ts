@@ -98,6 +98,10 @@ export function runScenario(
             id: p.id || p.name || "default",
             weight: Math.max(0, p.weight),
           })),
+          // VROL-664 — production plan if set.
+          ...(settings.products.productionPlan && settings.products.productionPlan.length > 0
+            ? { productionPlan: settings.products.productionPlan }
+            : {}),
         }
       : undefined;
 
