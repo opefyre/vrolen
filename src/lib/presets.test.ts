@@ -49,6 +49,24 @@ describe("presets (VROL-630)", () => {
     expect(p!.settings.source.intervalMs).toBeGreaterThan(0);
   });
 
+  it("Mixed-Model Job Shop preset has 3 products + changeover matrix (VROL-452)", () => {
+    const p = getPreset("mixed-model-job-shop");
+    expect(p).toBeDefined();
+    expect(p!.settings.products.list).toHaveLength(3);
+    const lathe = p!.graph.nodes.find((n) => (n.data as { label?: string }).label === "Lathe");
+    expect((lathe!.data as { changeoverMatrix?: unknown }).changeoverMatrix).toBeDefined();
+  });
+
+  it("Pharma Packaging preset gates QC behind a certified skill (VROL-455)", () => {
+    const p = getPreset("pharma-packaging");
+    expect(p).toBeDefined();
+    const qc1 = p!.graph.nodes.find((n) => n.id === "qc1");
+    expect((qc1!.data as { skills?: string[] }).skills).toContain("qc-cert");
+    // Only one of the two workers has the cert.
+    const certCount = p!.settings.workers.list.filter((w) => w.skills.includes("qc-cert")).length;
+    expect(certCount).toBe(1);
+  });
+
   it("Two-line packing preset runs + Packer is the bottleneck (VROL-449)", () => {
     const p = getPreset("two-line-packing");
     expect(p).toBeDefined();

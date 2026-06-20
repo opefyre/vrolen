@@ -265,6 +265,117 @@ const TWO_LINE_PACKING: Preset = {
   settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000 },
 };
 
+// ─── 8. Mixed-model job shop (VROL-452) ─────────────────────────────────────
+const MIXED_MODEL_JOB_SHOP: Preset = {
+  id: "mixed-model-job-shop",
+  title: "Mixed-model job shop",
+  blurb:
+    "Three SKUs sharing one line. Cycle times + defect rates vary by product; changeovers between SKUs cost real time. Demonstrates per-product KPIs and the cost of variety.",
+  highlight: "per-product cycles + asymmetric changeovers",
+  graph: {
+    nodes: [
+      station("src", "Source", "input", 60, 160, { cycleDistribution: constant(40) }),
+      station("op1", "Lathe", "machine", 260, 160, {
+        cycleDistribution: constant(150),
+        // Per-product cycle times — B is the hard one (heavier feature set).
+        cycleByProduct: {
+          A: constant(120),
+          B: constant(220),
+          C: constant(150),
+        },
+        // Changeover matrix: A↔B share toolpaths cheaply; C needs different fixture.
+        changeoverMatrix: {
+          A: { B: constant(300), C: constant(900) },
+          B: { A: constant(300), C: constant(900) },
+          C: { A: constant(900), B: constant(900) },
+        },
+      }),
+      station("op2", "Mill", "machine", 460, 160, {
+        cycleDistribution: constant(180),
+        cycleByProduct: {
+          A: constant(150),
+          B: constant(200),
+          C: constant(190),
+        },
+      }),
+      station("qc", "QC", "qc", 660, 160, {
+        cycleDistribution: constant(80),
+        defectRate: 0.05,
+      }),
+      station("out", "Output", "output", 860, 160, { cycleDistribution: constant(30) }),
+    ],
+    edges: [
+      edge("e1", "src", "op1"),
+      edge("e2", "op1", "op2"),
+      edge("e3", "op2", "qc"),
+      edge("e4", "qc", "out"),
+    ],
+  },
+  settings: {
+    ...DEFAULT_RUN_SETTINGS,
+    samplerIntervalMs: 1_000,
+    horizonMs: 120_000,
+    products: {
+      enabled: true,
+      list: [
+        { id: "A", name: "Widget A", weight: 50 },
+        { id: "B", name: "Widget B", weight: 30 },
+        { id: "C", name: "Widget C", weight: 20 },
+      ],
+    },
+  },
+};
+
+// ─── 9. Pharma packaging (VROL-455) ─────────────────────────────────────────
+const PHARMA_PACKAGING: Preset = {
+  id: "pharma-packaging",
+  title: "Pharmaceutical packaging",
+  blurb:
+    "Validation-required workers on the QC stations; only certified staff can sign off batches. Shows how skill restrictions become the constraint when staffing is tight.",
+  highlight: "skill-restricted assignment + double QC",
+  graph: {
+    nodes: [
+      station("src", "Source", "input", 60, 160, { cycleDistribution: constant(30) }),
+      station("fill", "Filler", "machine", 240, 160, { cycleDistribution: constant(100) }),
+      station("cap", "Capper", "machine", 420, 160, { cycleDistribution: constant(100) }),
+      // QC steps require certified skills.
+      station("qc1", "QC visual", "qc", 600, 80, {
+        cycleDistribution: constant(140),
+        defectRate: 0.03,
+        skills: ["qc-cert"],
+      }),
+      station("qc2", "QC seal", "qc", 600, 240, {
+        cycleDistribution: constant(140),
+        defectRate: 0.02,
+        skills: ["qc-cert"],
+      }),
+      station("label", "Labeler", "machine", 800, 160, { cycleDistribution: constant(80) }),
+      station("out", "Output", "output", 980, 160, { cycleDistribution: constant(30) }),
+    ],
+    edges: [
+      edge("e1", "src", "fill"),
+      edge("e2", "fill", "cap"),
+      edge("e3", "cap", "qc1"),
+      edge("e4", "cap", "qc2"),
+      edge("e5", "qc1", "label"),
+      edge("e6", "qc2", "label"),
+      edge("e7", "label", "out"),
+    ],
+  },
+  settings: {
+    ...DEFAULT_RUN_SETTINGS,
+    samplerIntervalMs: 1_000,
+    workers: {
+      enabled: true,
+      list: [
+        // Only ONE worker has the QC cert — both QC stations compete for them.
+        { name: "Marcia (cert)", skills: ["qc-cert", "any"], shiftEndMs: 60_000 },
+        { name: "James", skills: ["any"], shiftEndMs: 60_000 },
+      ],
+    },
+  },
+};
+
 export const PRESETS: readonly Preset[] = [
   BOTTLING_LINE,
   MULTI_PRODUCT_CHANGEOVER,
@@ -273,6 +384,8 @@ export const PRESETS: readonly Preset[] = [
   PARALLEL_FILLERS,
   SOURCE_RATE,
   TWO_LINE_PACKING,
+  MIXED_MODEL_JOB_SHOP,
+  PHARMA_PACKAGING,
 ];
 
 export function getPreset(id: string): Preset | undefined {

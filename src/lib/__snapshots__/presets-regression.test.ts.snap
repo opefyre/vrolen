@@ -22,6 +22,17 @@ exports[`preset regression (VROL-472) > preset "maintenance-bound" KPI summary m
 }
 `;
 
+exports[`preset regression (VROL-472) > preset "mixed-model-job-shop" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 4281,
+  "bottleneckLabel": "Mill",
+  "bottleneckReason": "starvation",
+  "completed": 639,
+  "lineOee": 1,
+  "throughputPartsPerHour": 20003,
+}
+`;
+
 exports[`preset regression (VROL-472) > preset "multi-product-changeover" KPI summary matches snapshot 1`] = `
 {
   "avgTimeInSystemMs": 2837,
@@ -41,6 +52,17 @@ exports[`preset regression (VROL-472) > preset "parallel-fillers" KPI summary ma
   "completed": 183,
   "lineOee": 0.998182,
   "throughputPartsPerHour": 11978,
+}
+`;
+
+exports[`preset regression (VROL-472) > preset "pharma-packaging" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 7935,
+  "bottleneckLabel": "QC visual",
+  "bottleneckReason": "starvation",
+  "completed": 209,
+  "lineOee": 0.532,
+  "throughputPartsPerHour": 13680,
 }
 `;
 
