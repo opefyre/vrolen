@@ -383,12 +383,24 @@ export default function RunPage() {
           parts/hour with station #{bottleneckIdx + 1} as the bottleneck.
         </p>
       </header>
+      <div
+        role="status"
+        className="border-sim-setup/40 bg-sim-setup/10 text-sim-setup-foreground rounded-md border px-3 py-2 text-xs"
+      >
+        <strong>Engine demo fixture.</strong> This page tweaks a hard-coded 3-station chain for
+        engine-validation purposes. For real scenario authoring with a full DAG, the canvas,
+        replications, cost layer, and verification panel, head to the{" "}
+        <a href="/editor" className="font-medium underline">
+          Editor
+        </a>
+        .
+      </div>
 
       <Card>
         <CardHeader>
           <CardTitle className="font-heading text-lg">Fixture</CardTitle>
           <CardDescription>
-            Persisted to localStorage. Real scenario authoring lands with the editor (E08).
+            Persisted to localStorage. Use the Editor for real scenario authoring.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

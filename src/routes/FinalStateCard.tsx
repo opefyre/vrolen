@@ -54,7 +54,7 @@ export function FinalStateCard({ result, stationLabels }: FinalStateCardProps) {
           <li key={`${label}-${String(idx)}`} className="flex items-center justify-between text-xs">
             <span className="truncate font-medium">{label}</span>
             <span className={`rounded-full px-2 py-0.5 font-mono text-[10px] ${colorClass}`}>
-              {state ?? "—"}
+              {state === "BlockedOut" ? "Blocked" : (state ?? "—")}
             </span>
           </li>
         );

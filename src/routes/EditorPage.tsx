@@ -95,6 +95,7 @@ import {
   type ChainBreakdownConfig,
   type ChainMaintenanceConfig,
   type ChainMaterialConfig,
+  type ChainOptions,
   type ChainProductsConfig,
   type ChainResult,
   type ChainWorkerConfig,
@@ -651,6 +652,7 @@ import { FrameNode } from "@/components/canvas/frame-node";
 import { StickyNoteNode } from "@/components/canvas/sticky-note-node";
 import { summarizeReplications, type ReplicationSummary } from "@/lib/replications";
 import { summarizeCosts } from "@/lib/cost-economics";
+import { runSensitivitySweep, type SensitivitySummary } from "@/lib/sensitivity-sweep";
 
 const NODE_TYPES = { station: StationNode, sticky: StickyNoteNode, frame: FrameNode };
 
@@ -735,6 +737,9 @@ function EditorCanvas() {
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
   // Cross-replication summary — populated only when settings.replications > 1.
   const [replicationSummary, setReplicationSummary] = useState<ReplicationSummary | null>(null);
+  // Sensitivity sweep — fires on demand from the Results panel.
+  const [sensitivitySummary, setSensitivitySummary] = useState<SensitivitySummary | null>(null);
+  const [sensitivityRunning, setSensitivityRunning] = useState<boolean>(false);
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [settings, setSettings] = useState<RunSettings>(() => initial.settings);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
@@ -1061,23 +1066,21 @@ function EditorCanvas() {
     [selectedNodeId, setNodes],
   );
 
-  // VROL-703 — double-click on a station label fires NODE_LABEL_EDIT_EVENT.
-  // Catch it, prompt() the user (good enough for v0), and patch the node label.
+  // Double-click on a station label fires NODE_LABEL_EDIT_EVENT. Instead of
+  // a disruptive window.prompt, select the node so the Inspector opens, then
+  // focus + select the Label field in the next frame.
   useEffect(() => {
     const onEdit = (e: Event): void => {
       const detail = (e as CustomEvent<{ nodeId: string; current: string }>).detail;
       if (!detail) return;
-      const next = window.prompt("Rename station", detail.current);
-      if (next === null) return;
-      const trimmed = next.trim();
-      if (trimmed === "") return;
-      setNodes((nds) =>
-        nds.map((n) =>
-          n.id === detail.nodeId
-            ? { ...n, data: { ...(n.data as Record<string, unknown>), label: trimmed } }
-            : n,
-        ),
-      );
+      setSelectedNodeId(detail.nodeId);
+      requestAnimationFrame(() => {
+        const el = document.getElementById("inspector-label");
+        if (el instanceof HTMLInputElement) {
+          el.focus();
+          el.select();
+        }
+      });
     };
     window.addEventListener(NODE_LABEL_EDIT_EVENT, onEdit);
     return () => {
@@ -1685,6 +1688,55 @@ function EditorCanvas() {
       }
     }, 0);
   }, [nodes, edges, selectedNodeId, settings, activeScenarioName]);
+
+  // Sensitivity sweep — fires 2N engine runs perturbing each station's
+  // cycle time ±20%. Defers to a setTimeout so the UI updates the
+  // 'Sweeping…' label before the loop blocks the thread.
+  const handleSensitivitySweep = useCallback((): void => {
+    const translation = graphToChainOptions(nodes, edges);
+    if (translation.error) {
+      toast.error("Can't sweep", { description: translation.error });
+      return;
+    }
+    if (translation.cycleDistributions.length === 0) {
+      toast.warning("Nothing to sweep", { description: "Add at least one timed station." });
+      return;
+    }
+    setSensitivityRunning(true);
+    setTimeout(() => {
+      try {
+        const horizonMs = settings.horizonMs;
+        const warmupMs = Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2));
+        const buildBaseOptions = () =>
+          ({
+            ...(translation.topology
+              ? { topology: translation.topology }
+              : {
+                  stationCycleTimes: [...translation.cycleDistributions],
+                  stationLabels: [...translation.stationLabels],
+                }),
+            interStationBufferCapacity: settings.interStationBufferCapacity,
+          }) as ChainOptions;
+        const summary = runSensitivitySweep({
+          horizonMs,
+          warmupMs,
+          seed: settings.seed,
+          buildBaseOptions,
+          stationCycleDistributions: translation.cycleDistributions,
+          stationLabels: translation.stationLabels,
+        });
+        setSensitivitySummary(summary);
+        toast.success(
+          `Sensitivity sweep · ${String(summary.rows.length)} stations · ${summary.elapsedMs.toFixed(0)}ms`,
+        );
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        toast.error("Sweep failed", { description: message });
+      } finally {
+        setSensitivityRunning(false);
+      }
+    }, 0);
+  }, [nodes, edges, settings]);
 
   const handleCompare = useCallback(
     (savedName: string): void => {
@@ -3744,6 +3796,9 @@ function EditorCanvas() {
               }, 0);
             }}
             replicationSummary={replicationSummary}
+            sensitivitySummary={sensitivitySummary}
+            sensitivityRunning={sensitivityRunning}
+            onRunSensitivity={handleSensitivitySweep}
             costSummary={
               runMeta
                 ? summarizeCosts(

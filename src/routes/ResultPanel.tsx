@@ -39,6 +39,7 @@ import { StatePareto } from "./StatePareto";
 import { ThroughputChart } from "./ThroughputChart";
 import { CostCard } from "./CostCard";
 import { ReplicationsCard } from "./ReplicationsCard";
+import { SensitivityCard } from "./SensitivityCard";
 import { VerificationCard } from "./VerificationCard";
 
 const BOTTLES_ID = asMaterialId("bottles");
@@ -73,6 +74,12 @@ interface ResultPanelProps {
   readonly replicationSummary?: import("@/lib/replications").ReplicationSummary | null;
   /** Cost summary; rendered as the Cost & revenue card when present. */
   readonly costSummary?: import("@/lib/cost-economics").CostSummary | null;
+  /** Sensitivity sweep summary. */
+  readonly sensitivitySummary?: import("@/lib/sensitivity-sweep").SensitivitySummary | null;
+  /** True while the sweep is running. */
+  readonly sensitivityRunning?: boolean;
+  /** Fires the sensitivity sweep on click. Card hidden if not provided. */
+  readonly onRunSensitivity?: () => void;
 }
 
 /**
@@ -193,7 +200,7 @@ function InsightsBanner({ result }: { result: ChainResult }) {
           onClick={copyMarkdown}
           className="text-muted-foreground hover:text-foreground ml-auto shrink-0 text-xs underline-offset-2 hover:underline"
         >
-          Copy MD
+          Copy markdown
         </button>
       </CardContent>
     </Card>
@@ -274,6 +281,9 @@ export function ResultPanel({
   onApplyWarmup,
   replicationSummary,
   costSummary,
+  sensitivitySummary,
+  sensitivityRunning,
+  onRunSensitivity,
 }: ResultPanelProps) {
   // VROL-720 — help-link anchor mapping. Routes to /help (same-tab) with a
   // hash so the matching definition scrolls into view.
@@ -491,6 +501,13 @@ export function ResultPanel({
             {...(onApplyWarmup ? { onApplyWarmup } : {})}
           />
           {replicationSummary ? <ReplicationsCard summary={replicationSummary} /> : null}
+          {onRunSensitivity ? (
+            <SensitivityCard
+              summary={sensitivitySummary ?? null}
+              running={sensitivityRunning === true}
+              onRun={onRunSensitivity}
+            />
+          ) : null}
           {costSummary ? <CostCard summary={costSummary} /> : null}
         </>
       ) : null}
@@ -666,7 +683,7 @@ export function ResultPanel({
                 (state) => (
                   <span key={state} className="flex items-center gap-1.5">
                     <span className={`h-2.5 w-2.5 rounded-sm ${stateColor(state)}`} />
-                    {state}
+                    {state === "BlockedOut" ? "Blocked" : state}
                   </span>
                 ),
               )}
