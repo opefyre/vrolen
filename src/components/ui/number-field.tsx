@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useCallback, useState } from "react";
 
 import { Input } from "@/components/ui/input";
@@ -6,6 +7,8 @@ import { cn } from "@/lib/utils";
 interface NumberFieldProps {
   readonly id?: string;
   readonly label?: string;
+  /** VROL-661 — optional slot rendered next to the label (e.g. validation dot). */
+  readonly labelSuffix?: ReactNode;
   readonly value: number;
   readonly onChange: (next: number) => void;
   readonly min?: number;
@@ -30,6 +33,7 @@ interface NumberFieldProps {
 export function NumberField({
   id,
   label,
+  labelSuffix,
   value,
   onChange,
   min,
@@ -70,8 +74,12 @@ export function NumberField({
   return (
     <div className={cn("flex flex-col gap-1", className)}>
       {label ? (
-        <label htmlFor={id} className="text-muted-foreground text-xs font-medium">
+        <label
+          htmlFor={id}
+          className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium"
+        >
           {label}
+          {labelSuffix}
         </label>
       ) : null}
       <Input

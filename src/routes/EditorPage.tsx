@@ -1810,6 +1810,15 @@ function EditorCanvas() {
               <NumberField
                 id="inspector-defect"
                 label="Defect rate"
+                labelSuffix={
+                  <FieldErrorIndicator
+                    issues={findIssuesForField(
+                      [...validation.errors, ...validation.warnings],
+                      selectedNode.id,
+                      "defectRate",
+                    )}
+                  />
+                }
                 value={Number((selectedNode.data as { defectRate?: unknown }).defectRate ?? 0)}
                 min={0}
                 max={1}
@@ -1823,6 +1832,15 @@ function EditorCanvas() {
               <NumberField
                 id="inspector-capacity"
                 label="Parallel cycles"
+                labelSuffix={
+                  <FieldErrorIndicator
+                    issues={findIssuesForField(
+                      [...validation.errors, ...validation.warnings],
+                      selectedNode.id,
+                      "capacity",
+                    )}
+                  />
+                }
                 value={Number((selectedNode.data as { capacity?: unknown }).capacity ?? 1)}
                 min={1}
                 max={10}
@@ -2001,6 +2019,15 @@ function EditorCanvas() {
                   <NumberField
                     id="inspector-rework-pass-limit"
                     label="Max rework passes"
+                    labelSuffix={
+                      <FieldErrorIndicator
+                        issues={findIssuesForField(
+                          [...validation.errors, ...validation.warnings],
+                          selectedNode.id,
+                          "reworkPassLimit",
+                        )}
+                      />
+                    }
                     value={(selectedNode.data as { reworkPassLimit?: number }).reworkPassLimit ?? 3}
                     min={1}
                     max={10}
