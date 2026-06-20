@@ -118,6 +118,7 @@ import {
   validateScenario,
   type ValidationIssue,
 } from "@/lib/validate-scenario";
+import { BulkInspector } from "@/components/editor/bulk-inspector";
 import { CustomParamsField } from "@/components/editor/custom-params-field";
 import type { CustomParam } from "@/lib/custom-params";
 import { FieldErrorIndicator } from "@/components/editor/field-error-indicator";
@@ -563,6 +564,33 @@ function EditorCanvas() {
   const [nodes, setNodes] = useState<Node[]>(initial.nodes);
   const [edges, setEdges] = useState<Edge[]>(initial.edges);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  // VROL-663 — bulk-select state. Single click → length 1; shift-click or
+  // box-select → length > 1; pane click → length 0.
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const onSelectionChange = useCallback(({ nodes: sel }: { nodes: Node[]; edges: Edge[] }) => {
+    const ids = sel.map((n) => n.id);
+    setSelectedNodeIds(ids);
+    setSelectedNodeId(ids.length === 1 ? (ids[0] ?? null) : null);
+  }, []);
+  const bulkPatch = useCallback(
+    (patch: Record<string, unknown>) => {
+      const idSet = new Set(selectedNodeIds);
+      setNodes((ns) =>
+        ns.map((n) => {
+          if (!idSet.has(n.id)) return n;
+          const next: Record<string, unknown> = {
+            ...(n.data as Record<string, unknown>),
+            ...patch,
+          };
+          for (const k of Object.keys(patch)) {
+            if (next[k] === undefined) delete next[k];
+          }
+          return { ...n, data: next };
+        }),
+      );
+    },
+    [selectedNodeIds, setNodes],
+  );
   const [result, setResult] = useState<ChainResult | null>(null);
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
   const [isRunning, setIsRunning] = useState<boolean>(false);
@@ -1701,7 +1729,9 @@ function EditorCanvas() {
       </div>
       <div
         className={`grid h-[calc(100vh-13rem)] gap-3 ${
-          selectedNode ? "grid-cols-[200px_1fr_260px]" : "grid-cols-[200px_1fr]"
+          selectedNode || selectedNodeIds.length > 1
+            ? "grid-cols-[200px_1fr_260px]"
+            : "grid-cols-[200px_1fr]"
         }`}
       >
         <Card className="overflow-y-auto" data-tour="palette">
@@ -1745,11 +1775,10 @@ function EditorCanvas() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onNodeClick={(_, n) => {
-              setSelectedNodeId(n.id);
-            }}
+            onSelectionChange={onSelectionChange}
             onPaneClick={() => {
               setSelectedNodeId(null);
+              setSelectedNodeIds([]);
             }}
             fitView
             proOptions={{ hideAttribution: true }}
@@ -1760,7 +1789,37 @@ function EditorCanvas() {
           </ReactFlow>
         </div>
 
-        {selectedNode ? (
+        {selectedNodeIds.length > 1 ? (
+          // VROL-663 — bulk panel when 2+ stations are selected.
+          <Card className="overflow-y-auto">
+            <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
+              <div className="space-y-1">
+                <CardTitle className="font-heading text-base">Bulk edit</CardTitle>
+                <CardDescription className="text-xs">
+                  {selectedNodeIds.length} stations
+                </CardDescription>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  setSelectedNodeIds([]);
+                  setSelectedNodeId(null);
+                }}
+                aria-label="Close bulk inspector"
+                className="-mt-1"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <BulkInspector
+                selectedNodes={nodes.filter((n) => selectedNodeIds.includes(n.id))}
+                onPatch={bulkPatch}
+              />
+            </CardContent>
+          </Card>
+        ) : selectedNode ? (
           <Card className="overflow-y-auto">
             <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
               <div className="space-y-1">
