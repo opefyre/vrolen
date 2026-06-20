@@ -1132,11 +1132,15 @@ function EditorCanvas() {
         toast.success("Simulation complete", { description: desc });
         // If a scenario is active, push a compact summary to history.
         if (activeScenarioName) {
+          // VROL-714 — capture the bottleneck label so the migration card can
+          // track changes across recent runs.
+          const headBn = [...r.bottlenecks].sort((a, b) => b.runningPct - a.runningPct)[0];
           const summary: RunHistoryEntry = {
             completed: r.completed,
             throughputLambda: r.throughputLambda,
             lineOee: r.lineOee,
             avgTimeInSystemW: r.avgTimeInSystemW,
+            ...(headBn?.label !== undefined ? { bottleneckLabel: headBn.label } : {}),
             runAtMs: Date.now(),
             payload: { graph: { nodes, edges }, settings },
           };
@@ -2800,10 +2804,29 @@ function EditorCanvas() {
                         </span>
                         <span
                           className="text-muted-foreground font-mono tabular-nums"
-                          title={`${r.completed.toLocaleString()} completed · OEE ${(r.lineOee * 100).toFixed(0)}%`}
+                          title={`${r.completed.toLocaleString()} completed · OEE ${(r.lineOee * 100).toFixed(0)}%${r.bottleneckLabel ? ` · bottleneck ${r.bottleneckLabel}` : ""}`}
                         >
                           {tPerHr.toLocaleString()}/hr
                         </span>
+                        {/* VROL-715 — replay this exact entry. */}
+                        {r.payload ? (
+                          <button
+                            type="button"
+                            aria-label={`Replay ${r.scenarioName}`}
+                            title="Load this run's snapshot into the canvas"
+                            onClick={() => {
+                              if (!r.payload) return;
+                              setNodes([...r.payload.graph.nodes]);
+                              setEdges([...r.payload.graph.edges]);
+                              setSettings(r.payload.settings);
+                              setScenariosOpen(false);
+                              toast.success(`Replayed ${r.scenarioName}`);
+                            }}
+                            className="border-border hover:bg-muted shrink-0 rounded border px-1 text-[10px]"
+                          >
+                            ▶
+                          </button>
+                        ) : null}
                         {/* VROL-682 — pick A or B to set up a history-vs-history compare. */}
                         {r.payload ? (
                           <div className="flex shrink-0 gap-1">
@@ -2989,6 +3012,25 @@ function EditorCanvas() {
                                 </span>
                               ) : null}
                             </div>
+                            {/* VROL-714 — bottleneck migration trail (oldest → newest). */}
+                            {history.some((h) => h.bottleneckLabel) ? (
+                              <div className="text-muted-foreground mt-1 flex flex-wrap gap-1 text-[10px]">
+                                <span className="text-[9px] tracking-wide uppercase">
+                                  Bottlenecks:
+                                </span>
+                                {[...history]
+                                  .reverse()
+                                  .filter((h) => h.bottleneckLabel)
+                                  .map((h, hi) => (
+                                    <span
+                                      key={String(h.runAtMs) + String(hi)}
+                                      className="bg-muted rounded px-1.5 py-0.5 font-mono text-[9px]"
+                                    >
+                                      {h.bottleneckLabel}
+                                    </span>
+                                  ))}
+                              </div>
+                            ) : null}
                             {/* VROL-691 — scenario notes inline editor. */}
                             <textarea
                               aria-label={`Notes for ${s.name}`}

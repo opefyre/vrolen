@@ -253,6 +253,17 @@ export function ThroughputChart({
           {hovered ? (
             <span className="font-mono tabular-nums">
               t={(hovered.tMs / 1000).toFixed(1)}s · {hovered.lineCompleted.toLocaleString()} parts
+              {/* VROL-716 — instantaneous rate at this hover point. */}
+              {(() => {
+                if (!hover || hover.idx === 0) return null;
+                const prev = samples[hover.idx - 1];
+                if (!prev) return null;
+                const dt = hovered.tMs - prev.tMs;
+                if (dt <= 0) return null;
+                const dParts = hovered.lineCompleted - prev.lineCompleted;
+                const ratePerHr = Math.round((dParts / dt) * 3_600_000);
+                return ` · ${ratePerHr.toLocaleString()}/h`;
+              })()}
             </span>
           ) : (
             <span>{maxY.toLocaleString()} parts at horizon</span>

@@ -267,14 +267,43 @@ export function ResultPanel({
   // VROL-636 — Per-station completed / state breakdown / product mix start
   // collapsed. KPI tiles + Bottleneck card + Throughput + OEE charts stay
   // visible as the primary read.
-  const [openSections, setOpenSections] = useState<{
+  // VROL-717 — persist open/closed state across runs and reloads.
+  const OPEN_SECTIONS_KEY = "vrolen.result-open-sections";
+  type OpenSections = {
     perStation: boolean;
     stateBreakdown: boolean;
     productMix: boolean;
     rework: boolean;
-  }>({ perStation: false, stateBreakdown: false, productMix: false, rework: false });
-  const toggleSection = (key: keyof typeof openSections): void => {
-    setOpenSections((s) => ({ ...s, [key]: !s[key] }));
+  };
+  const [openSections, setOpenSections] = useState<OpenSections>(() => {
+    const defaults: OpenSections = {
+      perStation: false,
+      stateBreakdown: false,
+      productMix: false,
+      rework: false,
+    };
+    if (typeof window === "undefined") return defaults;
+    try {
+      const raw = window.localStorage?.getItem?.(OPEN_SECTIONS_KEY);
+      if (!raw) return defaults;
+      const parsed = JSON.parse(raw) as Partial<OpenSections>;
+      return { ...defaults, ...parsed };
+    } catch {
+      return defaults;
+    }
+  });
+  const toggleSection = (key: keyof OpenSections): void => {
+    setOpenSections((s) => {
+      const next = { ...s, [key]: !s[key] };
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage?.setItem?.(OPEN_SECTIONS_KEY, JSON.stringify(next));
+        } catch {
+          // ignore quota
+        }
+      }
+      return next;
+    });
   };
   // VROL-641 — Only show the rework-over-time accordion when at least one
   // station had rework AND the sampler ran. Otherwise the section is

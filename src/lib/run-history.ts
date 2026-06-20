@@ -23,6 +23,8 @@ export interface RunHistoryEntry {
   readonly throughputLambda: number;
   readonly lineOee: number;
   readonly avgTimeInSystemW: number;
+  /** VROL-714 — label of the bottleneck station from this run. */
+  readonly bottleneckLabel?: string;
   readonly runAtMs: number;
   /**
    * Snapshot of the graph + settings at the moment of this run (VROL-611).
