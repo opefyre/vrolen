@@ -442,6 +442,11 @@ function StationNode({ data, selected, id }: NodeProps) {
   const d = data as StationNodeData;
   const Icon = STATION_TYPE_ICON[d.stationType ?? "machine"] ?? Factory;
   const accent = STATION_TYPE_ACCENT[d.stationType ?? "machine"] ?? STATION_TYPE_ACCENT.machine!;
+  // Inline edit state — Excalidraw-style double-click rename. Commits on
+  // Enter or blur; Esc cancels and restores the prior label.
+  const stationFlow = useReactFlow();
+  const [editing, setEditing] = useState<boolean>(false);
+  const [draft, setDraft] = useState<string>("");
   const maintenanceCount = Array.isArray(d.maintenanceWindows) ? d.maintenanceWindows.length : 0;
   const skillCount = Array.isArray(d.skills) ? d.skills.length : 0;
   const hasSetup = !!d.setupDistribution;
@@ -568,20 +573,56 @@ function StationNode({ data, selected, id }: NodeProps) {
         >
           <Icon className="h-4 w-4" />
         </span>
-        <div
-          className="min-w-0 truncate text-[13px] font-semibold"
-          title="Double-click to rename"
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            window.dispatchEvent(
-              new CustomEvent(NODE_LABEL_EDIT_EVENT, {
-                detail: { nodeId: id, current: typeof d.label === "string" ? d.label : "" },
-              }),
-            );
-          }}
-        >
-          {d.label ?? "Station"}
-        </div>
+        {editing ? (
+          <input
+            ref={(el) => {
+              if (el && document.activeElement !== el) {
+                el.focus();
+                el.select();
+              }
+            }}
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+            }}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+            }}
+            onBlur={() => {
+              const next = draft.trim() || "Station";
+              stationFlow.setNodes((ns) =>
+                ns.map((n) =>
+                  n.id === id
+                    ? { ...n, data: { ...(n.data as Record<string, unknown>), label: next } }
+                    : n,
+                ),
+              );
+              setEditing(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                (e.target as HTMLInputElement).blur();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setEditing(false);
+              }
+            }}
+            className="bg-card/95 min-w-0 flex-1 rounded border px-1 text-[13px] font-semibold"
+          />
+        ) : (
+          <div
+            className="min-w-0 truncate text-[13px] font-semibold"
+            title="Double-click to rename"
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              setDraft(typeof d.label === "string" ? d.label : "");
+              setEditing(true);
+            }}
+          >
+            {d.label ?? "Station"}
+          </div>
+        )}
       </div>
       {maintenanceCount +
         skillCount +
@@ -653,6 +694,7 @@ import { StickyNoteNode } from "@/components/canvas/sticky-note-node";
 import { summarizeReplications, type ReplicationSummary } from "@/lib/replications";
 import { summarizeCosts } from "@/lib/cost-economics";
 import { runSensitivitySweep, type SensitivitySummary } from "@/lib/sensitivity-sweep";
+import { runWipCurve, type WipCurveSummary } from "@/lib/wip-curve";
 
 const NODE_TYPES = { station: StationNode, sticky: StickyNoteNode, frame: FrameNode };
 
@@ -740,6 +782,9 @@ function EditorCanvas() {
   // Sensitivity sweep — fires on demand from the Results panel.
   const [sensitivitySummary, setSensitivitySummary] = useState<SensitivitySummary | null>(null);
   const [sensitivityRunning, setSensitivityRunning] = useState<boolean>(false);
+  // Throughput-vs-WIP scan — fires on demand from the Results panel.
+  const [wipCurveSummary, setWipCurveSummary] = useState<WipCurveSummary | null>(null);
+  const [wipCurveRunning, setWipCurveRunning] = useState<boolean>(false);
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [settings, setSettings] = useState<RunSettings>(() => initial.settings);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
@@ -1734,6 +1779,47 @@ function EditorCanvas() {
         toast.error("Sweep failed", { description: message });
       } finally {
         setSensitivityRunning(false);
+      }
+    }, 0);
+  }, [nodes, edges, settings]);
+
+  // Throughput-vs-WIP scan — runs N replays varying the buffer cap.
+  const handleWipCurveScan = useCallback((): void => {
+    const translation = graphToChainOptions(nodes, edges);
+    if (translation.error) {
+      toast.error("Can't scan WIP", { description: translation.error });
+      return;
+    }
+    setWipCurveRunning(true);
+    setTimeout(() => {
+      try {
+        const horizonMs = settings.horizonMs;
+        const warmupMs = Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2));
+        const buildBaseOptions = () =>
+          ({
+            ...(translation.topology
+              ? { topology: translation.topology }
+              : {
+                  stationCycleTimes: [...translation.cycleDistributions],
+                  stationLabels: [...translation.stationLabels],
+                }),
+          }) as ChainOptions;
+        const summary = runWipCurve({
+          horizonMs,
+          warmupMs,
+          seed: settings.seed,
+          currentCapacity: settings.interStationBufferCapacity,
+          buildBaseOptions,
+        });
+        setWipCurveSummary(summary);
+        toast.success(
+          `WIP scan · ${String(summary.points.length)} levels · ${summary.elapsedMs.toFixed(0)}ms`,
+        );
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        toast.error("WIP scan failed", { description: message });
+      } finally {
+        setWipCurveRunning(false);
       }
     }, 0);
   }, [nodes, edges, settings]);
@@ -3743,10 +3829,6 @@ function EditorCanvas() {
                     }}
                   />
                 ) : null}
-                <p className="text-muted-foreground text-[11px]">
-                  Position: {Math.round(selectedNode.position.x)} ,{" "}
-                  {Math.round(selectedNode.position.y)}
-                </p>
               </CardContent>
             ) : null}
           </Card>
@@ -3799,6 +3881,15 @@ function EditorCanvas() {
             sensitivitySummary={sensitivitySummary}
             sensitivityRunning={sensitivityRunning}
             onRunSensitivity={handleSensitivitySweep}
+            wipCurveSummary={wipCurveSummary}
+            wipCurveRunning={wipCurveRunning}
+            onRunWipCurve={handleWipCurveScan}
+            onApplyWipCapacity={(capacity) => {
+              setSettings((s) => ({ ...s, interStationBufferCapacity: capacity }));
+              setTimeout(() => {
+                if (!isRunning) handleRun();
+              }, 0);
+            }}
             costSummary={
               runMeta
                 ? summarizeCosts(

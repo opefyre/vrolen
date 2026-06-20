@@ -41,6 +41,7 @@ import { CostCard } from "./CostCard";
 import { ReplicationsCard } from "./ReplicationsCard";
 import { SensitivityCard } from "./SensitivityCard";
 import { VerificationCard } from "./VerificationCard";
+import { WipCurveCard } from "./WipCurveCard";
 
 const BOTTLES_ID = asMaterialId("bottles");
 const CAPS_ID = asMaterialId("caps");
@@ -80,6 +81,11 @@ interface ResultPanelProps {
   readonly sensitivityRunning?: boolean;
   /** Fires the sensitivity sweep on click. Card hidden if not provided. */
   readonly onRunSensitivity?: () => void;
+  /** Throughput-vs-WIP scan summary. */
+  readonly wipCurveSummary?: import("@/lib/wip-curve").WipCurveSummary | null;
+  readonly wipCurveRunning?: boolean;
+  readonly onRunWipCurve?: () => void;
+  readonly onApplyWipCapacity?: (capacity: number) => void;
 }
 
 /**
@@ -284,6 +290,10 @@ export function ResultPanel({
   sensitivitySummary,
   sensitivityRunning,
   onRunSensitivity,
+  wipCurveSummary,
+  wipCurveRunning,
+  onRunWipCurve,
+  onApplyWipCapacity,
 }: ResultPanelProps) {
   // VROL-720 — help-link anchor mapping. Routes to /help (same-tab) with a
   // hash so the matching definition scrolls into view.
@@ -506,6 +516,14 @@ export function ResultPanel({
               summary={sensitivitySummary ?? null}
               running={sensitivityRunning === true}
               onRun={onRunSensitivity}
+            />
+          ) : null}
+          {onRunWipCurve ? (
+            <WipCurveCard
+              summary={wipCurveSummary ?? null}
+              running={wipCurveRunning === true}
+              onRun={onRunWipCurve}
+              {...(onApplyWipCapacity ? { onApplyCapacity: onApplyWipCapacity } : {})}
             />
           ) : null}
           {costSummary ? <CostCard summary={costSummary} /> : null}
