@@ -1,0 +1,67 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`preset regression (VROL-472) > preset "bottling-line" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 6628,
+  "bottleneckLabel": "Capper",
+  "bottleneckReason": "starvation",
+  "completed": 212,
+  "lineOee": 0.693818,
+  "throughputPartsPerHour": 13876,
+}
+`;
+
+exports[`preset regression (VROL-472) > preset "maintenance-bound" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 1843,
+  "bottleneckLabel": "Conditioner",
+  "bottleneckReason": "maintenance",
+  "completed": 390,
+  "lineOee": 0.709091,
+  "throughputPartsPerHour": 25527,
+}
+`;
+
+exports[`preset regression (VROL-472) > preset "multi-product-changeover" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 2837,
+  "bottleneckLabel": "Capper",
+  "bottleneckReason": "starvation",
+  "completed": 459,
+  "lineOee": 1,
+  "throughputPartsPerHour": 30044,
+}
+`;
+
+exports[`preset regression (VROL-472) > preset "parallel-fillers" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 4020,
+  "bottleneckLabel": "Filler",
+  "bottleneckReason": "starvation",
+  "completed": 183,
+  "lineOee": 0.998182,
+  "throughputPartsPerHour": 11978,
+}
+`;
+
+exports[`preset regression (VROL-472) > preset "source-rate" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 0,
+  "bottleneckLabel": "Filler",
+  "bottleneckReason": "starvation",
+  "completed": 0,
+  "lineOee": 0,
+  "throughputPartsPerHour": 0,
+}
+`;
+
+exports[`preset regression (VROL-472) > preset "worker-bottleneck" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 4483,
+  "bottleneckLabel": "Capper",
+  "bottleneckReason": "blocking",
+  "completed": 280,
+  "lineOee": 0.509091,
+  "throughputPartsPerHour": 18327,
+}
+`;
