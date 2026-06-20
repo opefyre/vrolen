@@ -37,6 +37,8 @@ import { QualityLosses } from "./QualityLosses";
 import { RecommendationsCard } from "./RecommendationsCard";
 import { StatePareto } from "./StatePareto";
 import { ThroughputChart } from "./ThroughputChart";
+import { CostCard } from "./CostCard";
+import { ReplicationsCard } from "./ReplicationsCard";
 import { VerificationCard } from "./VerificationCard";
 
 const BOTTLES_ID = asMaterialId("bottles");
@@ -65,6 +67,12 @@ interface ResultPanelProps {
   readonly warmupMs: number;
   /** VROL-690 — pan+zoom canvas to a station by chain-order index. */
   readonly onFocusStation?: (stationIdx: number) => void;
+  /** When set, the Verification card renders an "Apply warm-up" button. */
+  readonly onApplyWarmup?: (ms: number) => void;
+  /** Cross-replication summary; rendered as a 95% CI table when present. */
+  readonly replicationSummary?: import("@/lib/replications").ReplicationSummary | null;
+  /** Cost summary; rendered as the Cost & revenue card when present. */
+  readonly costSummary?: import("@/lib/cost-economics").CostSummary | null;
 }
 
 /**
@@ -263,6 +271,9 @@ export function ResultPanel({
   horizonMs,
   warmupMs,
   onFocusStation,
+  onApplyWarmup,
+  replicationSummary,
+  costSummary,
 }: ResultPanelProps) {
   // VROL-720 — help-link anchor mapping. Routes to /help (same-tab) with a
   // hash so the matching definition scrolls into view.
@@ -473,7 +484,14 @@ export function ResultPanel({
               <FinalStateCard result={result} stationLabels={runMeta.stationLabels} />
             </CardContent>
           </Card>
-          <VerificationCard result={result} horizonMs={horizonMs} />
+          <VerificationCard
+            result={result}
+            horizonMs={horizonMs}
+            currentWarmupMs={warmupMs}
+            {...(onApplyWarmup ? { onApplyWarmup } : {})}
+          />
+          {replicationSummary ? <ReplicationsCard summary={replicationSummary} /> : null}
+          {costSummary ? <CostCard summary={costSummary} /> : null}
         </>
       ) : null}
 

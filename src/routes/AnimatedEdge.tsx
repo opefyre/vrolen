@@ -11,7 +11,7 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   type EdgeProps,
-  getBezierPath,
+  getSmoothStepPath,
   useReactFlow,
 } from "@xyflow/react";
 import { useId, useState } from "react";
@@ -39,13 +39,16 @@ export function AnimatedEdge(props: EdgeProps) {
   const series = data.bufferFillSeries;
   const playbackFillNow = data.playbackFillNow;
   const playbackPeak = data.playbackPeak;
-  const [edgePath, labelX, labelY] = getBezierPath({
+  // Smoothstep gives Lucidchart-style orthogonal routing with rounded
+  // corners — beats spaghetti bezier curves the moment the graph branches.
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
     sourcePosition: props.sourcePosition,
     targetX,
     targetY,
     targetPosition: props.targetPosition,
+    borderRadius: 12,
   });
   const pathId = `edge-path-${useId()}`;
   const flow = useReactFlow();

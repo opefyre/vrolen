@@ -140,6 +140,12 @@ export interface RunSettings {
    * (VROL-613) and per-station sparklines (VROL-614).
    */
   samplerIntervalMs: number;
+  /**
+   * Multi-replication count. 1 = single run (current behavior). >1 fires
+   * N runs with progressively offset seeds and surfaces a 95 % CI per KPI
+   * — Arena-style credibility on KPI numbers. Clamp at 1..50.
+   */
+  replications: number;
 }
 
 export const DEFAULT_RUN_SETTINGS: RunSettings = {
@@ -178,6 +184,7 @@ export const DEFAULT_RUN_SETTINGS: RunSettings = {
   },
   animateFlow: false,
   samplerIntervalMs: 0,
+  replications: 1,
   source: {
     enabled: false,
     intervalMs: 60_000,
@@ -293,6 +300,10 @@ export function mergeWithDefaults(parsed: Partial<RunSettings>): RunSettings {
       typeof parsed.samplerIntervalMs === "number" && parsed.samplerIntervalMs >= 0
         ? Math.floor(parsed.samplerIntervalMs)
         : DEFAULT_RUN_SETTINGS.samplerIntervalMs,
+    replications:
+      typeof parsed.replications === "number" && parsed.replications >= 1
+        ? Math.min(50, Math.floor(parsed.replications))
+        : DEFAULT_RUN_SETTINGS.replications,
     source: sanitizeSource(parsed.source),
     // VROL-297 — preserve schedule when present; otherwise fall back to the
     // default (which is the off-state empty arrays).

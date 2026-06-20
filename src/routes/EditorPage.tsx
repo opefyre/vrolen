@@ -648,6 +648,8 @@ import { CommandPalette, type CommandAction } from "@/components/canvas/command-
 import { AlignmentToolbar, type AlignOp } from "@/components/canvas/alignment-toolbar";
 import { applyAlignment } from "@/lib/align-nodes";
 import { StickyNoteNode } from "@/components/canvas/sticky-note-node";
+import { summarizeReplications, type ReplicationSummary } from "@/lib/replications";
+import { summarizeCosts } from "@/lib/cost-economics";
 
 const NODE_TYPES = { station: StationNode, sticky: StickyNoteNode };
 
@@ -730,6 +732,8 @@ function EditorCanvas() {
   );
   const [result, setResult] = useState<ChainResult | null>(null);
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
+  // Cross-replication summary — populated only when settings.replications > 1.
+  const [replicationSummary, setReplicationSummary] = useState<ReplicationSummary | null>(null);
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [settings, setSettings] = useState<RunSettings>(() => initial.settings);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
@@ -1566,43 +1570,54 @@ function EditorCanvas() {
 
     setIsRunning(true);
     setResult(null);
+    setReplicationSummary(null);
+    const replications = Math.max(1, Math.min(50, Math.floor(settings.replications)));
     setTimeout(() => {
       try {
         const t0 = performance.now();
-        const r = runChain({
-          // Prefer the DAG topology when the translator surfaced one (split / merge
-          // graphs); otherwise fall through to the linear API so the engine builds
-          // the implicit linear DAG.
-          ...(translation.topology
-            ? { topology: translation.topology }
-            : {
-                stationCycleTimes: [...translation.cycleDistributions],
-                stationLabels: [...translation.stationLabels],
-              }),
-          interStationBufferCapacity: settings.interStationBufferCapacity,
-          horizonMs: settings.horizonMs,
-          warmupMs: Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2)),
-          prng: new SeededPrng(settings.seed),
-          ...(materialsCfg ? { materials: materialsCfg } : {}),
-          ...(breakdownsCfg ? { breakdowns: breakdownsCfg } : {}),
-          ...(workersCfg ? { workers: workersCfg } : {}),
-          ...(maintenanceCfg ? { maintenance: maintenanceCfg } : {}),
-          ...(productsCfg ? { products: productsCfg } : {}),
-          ...(settings.samplerIntervalMs > 0
-            ? { sampler: { intervalMs: settings.samplerIntervalMs } }
-            : {}),
-          ...(settings.source.enabled
-            ? {
-                source: {
-                  interArrivalMs: constant(settings.source.intervalMs),
-                  ...(settings.source.batchSize > 1
-                    ? { batchSize: settings.source.batchSize }
-                    : {}),
-                },
-              }
-            : {}),
-        });
+        // Build the common opts once so each replication only varies its seed.
+        const buildOpts = (seed: number) =>
+          ({
+            ...(translation.topology
+              ? { topology: translation.topology }
+              : {
+                  stationCycleTimes: [...translation.cycleDistributions],
+                  stationLabels: [...translation.stationLabels],
+                }),
+            interStationBufferCapacity: settings.interStationBufferCapacity,
+            horizonMs: settings.horizonMs,
+            warmupMs: Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2)),
+            prng: new SeededPrng(seed),
+            ...(materialsCfg ? { materials: materialsCfg } : {}),
+            ...(breakdownsCfg ? { breakdowns: breakdownsCfg } : {}),
+            ...(workersCfg ? { workers: workersCfg } : {}),
+            ...(maintenanceCfg ? { maintenance: maintenanceCfg } : {}),
+            ...(productsCfg ? { products: productsCfg } : {}),
+            ...(settings.samplerIntervalMs > 0
+              ? { sampler: { intervalMs: settings.samplerIntervalMs } }
+              : {}),
+            ...(settings.source.enabled
+              ? {
+                  source: {
+                    interArrivalMs: constant(settings.source.intervalMs),
+                    ...(settings.source.batchSize > 1
+                      ? { batchSize: settings.source.batchSize }
+                      : {}),
+                  },
+                }
+              : {}),
+          }) as const;
+        // First rep is the canonical one (powers canvas + playback). Extra reps
+        // contribute to the cross-replication 95 % CI summary only.
+        const r = runChain(buildOpts(settings.seed));
+        const allResults: ChainResult[] = [r];
+        for (let i = 1; i < replications; i++) {
+          allResults.push(runChain(buildOpts(settings.seed + i * 17)));
+        }
         const wallMs = performance.now() - t0;
+        if (replications > 1) {
+          setReplicationSummary(summarizeReplications(allResults));
+        }
         // VROL-694 — compute throughput delta vs the previous run for this scenario.
         const prevRuns = activeScenarioName ? listRunHistory(activeScenarioName) : [];
         const prevRun = prevRuns[0];
@@ -1615,6 +1630,9 @@ function EditorCanvas() {
           desc += ` (${arrow} ${Math.abs(deltaPct).toFixed(0)}% vs last)`;
         }
         desc += ` · ${wallMs.toFixed(0)}ms`;
+        if (replications > 1) {
+          desc = `${String(replications)} replications · ${desc}`;
+        }
         setResult(r);
         // Auto-arm the playback scrubber at warmup so the canvas can replay
         // the run; if the sampler was off, leave playback null.
@@ -3259,6 +3277,71 @@ function EditorCanvas() {
                   updateSelectedNodeData({ defectRate: n });
                 }}
               />
+              {/* Cost / revenue inputs — empty by default. Filling any of them
+                  unlocks the Cost & revenue card under Results. */}
+              <details className="border-border bg-background/40 rounded-md border p-2 text-sm">
+                <summary className="text-muted-foreground cursor-pointer font-medium">
+                  Cost &amp; revenue (optional)
+                </summary>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <NumberField
+                    id="inspector-cost-hour"
+                    label="$ / hour"
+                    value={Number(
+                      (selectedNode.data as { costPerHour?: unknown }).costPerHour ?? 0,
+                    )}
+                    min={0}
+                    step={1}
+                    inputClassName="font-mono tabular-nums"
+                    onChange={(n) => {
+                      updateSelectedNodeData({ costPerHour: n });
+                    }}
+                  />
+                  <NumberField
+                    id="inspector-cost-cycle"
+                    label="$ / cycle"
+                    value={Number(
+                      (selectedNode.data as { costPerCycle?: unknown }).costPerCycle ?? 0,
+                    )}
+                    min={0}
+                    step={0.001}
+                    inputClassName="font-mono tabular-nums"
+                    onChange={(n) => {
+                      updateSelectedNodeData({ costPerCycle: n });
+                    }}
+                  />
+                  <NumberField
+                    id="inspector-cost-scrap"
+                    label="$ / scrap"
+                    value={Number(
+                      (selectedNode.data as { costPerScrap?: unknown }).costPerScrap ?? 0,
+                    )}
+                    min={0}
+                    step={0.01}
+                    inputClassName="font-mono tabular-nums"
+                    onChange={(n) => {
+                      updateSelectedNodeData({ costPerScrap: n });
+                    }}
+                  />
+                  <NumberField
+                    id="inspector-revenue"
+                    label="$ / good part"
+                    value={Number(
+                      (selectedNode.data as { revenuePerPart?: unknown }).revenuePerPart ?? 0,
+                    )}
+                    min={0}
+                    step={0.01}
+                    inputClassName="font-mono tabular-nums"
+                    onChange={(n) => {
+                      updateSelectedNodeData({ revenuePerPart: n });
+                    }}
+                  />
+                </div>
+                <p className="text-muted-foreground mt-1.5 text-[11px]">
+                  Set $/h on machines, $/cycle on consumable stations, $/scrap on QC, and $/good
+                  part on the output sink. The Cost &amp; revenue card unlocks after the next Run.
+                </p>
+              </details>
               <NumberField
                 id="inspector-capacity"
                 label="Parallel cycles"
@@ -3618,6 +3701,24 @@ function EditorCanvas() {
               });
               setSelectedNodeId(nodeId);
             }}
+            onApplyWarmup={(ms) => {
+              setSettings((s) => ({ ...s, warmupMs: ms }));
+              setTimeout(() => {
+                if (!isRunning) handleRun();
+              }, 0);
+            }}
+            replicationSummary={replicationSummary}
+            costSummary={
+              runMeta
+                ? summarizeCosts(
+                    result,
+                    settings.horizonMs,
+                    runMeta.chainNodeIds,
+                    runMeta.stationLabels,
+                    nodes,
+                  )
+                : null
+            }
           />
         </Suspense>
       ) : null}
@@ -4636,7 +4737,26 @@ function EditorCanvas() {
                     }));
                   }}
                 />
+                <NumberField
+                  id="rs-reps"
+                  label="Replications"
+                  value={settings.replications}
+                  min={1}
+                  max={50}
+                  onChange={(n) => {
+                    setSettings((s) => ({
+                      ...s,
+                      replications: Math.max(1, Math.min(50, Math.floor(n))),
+                    }));
+                  }}
+                />
               </div>
+              {settings.replications > 1 ? (
+                <p className="text-muted-foreground -mt-1 text-xs">
+                  Each run uses a different seed. The Result panel adds a 95% CI table across
+                  replications. Canvas + playback show the first replication.
+                </p>
+              ) : null}
               <div className="border-border space-y-1 rounded-md border border-dashed p-2">
                 <label className="flex items-center gap-2 text-sm font-medium">
                   <input
