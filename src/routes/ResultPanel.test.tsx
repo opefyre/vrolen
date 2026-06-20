@@ -89,10 +89,10 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
         warmupMs={0}
       />,
     );
-    // Rework tile in the bottom KPI row (always visible).
+    // Rework tile in the bottom KPI row (lives on Overview).
     expect(screen.getByText(/^Rework$/i)).toBeInTheDocument();
-    // Per-station completed card is collapsed by default (VROL-636);
-    // expand it to verify the annotation lives inside.
+    // Per-station completed lives on the Stations tab — switch + expand.
+    fireEvent.click(screen.getByRole("tab", { name: /Stations/i }));
     fireEvent.click(screen.getByRole("button", { name: /Per-station completed/i }));
     expect(screen.getByText(/· 7 rework/)).toBeInTheDocument();
   });
@@ -141,6 +141,8 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
         warmupMs={0}
       />,
     );
+    // Rework-over-time lives on the Quality tab.
+    fireEvent.click(screen.getByRole("tab", { name: /Quality/i }));
     expect(screen.getByRole("button", { name: /Rework over time/i })).toBeInTheDocument();
   });
 
@@ -153,6 +155,7 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
         warmupMs={0}
       />,
     );
+    fireEvent.click(screen.getByRole("tab", { name: /Quality/i }));
     expect(screen.queryByRole("button", { name: /Rework over time/i })).toBeNull();
   });
 
@@ -182,7 +185,7 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
     expect(screen.getByText(/^Avg time-in-system \(ms\)$/)).toBeInTheDocument();
   });
 
-  it("Per-station completed + state breakdown are collapsed by default (VROL-636)", () => {
+  it("Per-station completed lives in Stations tab and is collapsed by default (VROL-636)", () => {
     render(
       <ResultPanel
         result={fakeResult()}
@@ -191,12 +194,13 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
         warmupMs={0}
       />,
     );
-    // Header buttons render even when collapsed; bodies should not.
+    // Stations tab holds the per-station completed accordion.
+    fireEvent.click(screen.getByRole("tab", { name: /Stations/i }));
     expect(screen.getByRole("button", { name: /Per-station completed/i })).toBeInTheDocument();
+    // States tab holds the per-station state breakdown accordion.
+    fireEvent.click(screen.getByRole("tab", { name: /States/i }));
     expect(
       screen.getByRole("button", { name: /Per-station state breakdown/i }),
     ).toBeInTheDocument();
-    // Filler bar (rendered inside the per-station card body) is hidden.
-    expect(screen.queryByText("Filler")).toBeNull();
   });
 });

@@ -623,6 +623,8 @@ function StationNode({ data, selected, id }: NodeProps) {
   );
 }
 
+import { AlignmentGuidesOverlay } from "@/components/canvas/alignment-guides";
+import { useAlignmentGuides } from "@/components/canvas/use-alignment-guides";
 import { StickyNoteNode } from "@/components/canvas/sticky-note-node";
 
 const NODE_TYPES = { station: StationNode, sticky: StickyNoteNode };
@@ -892,6 +894,8 @@ function EditorCanvas() {
   }, []);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flow = useReactFlow();
+  // Alignment guides + Shift axis-lock fire on every ReactFlow node drag.
+  const alignmentGuides = useAlignmentGuides();
   // VROL-432 — offline mode signal. Cloud-sync flows (none yet) and AI
   // assistance (when shipped) gate off this. Until then it drives a small
   // banner so the user knows what's degraded.
@@ -1059,10 +1063,12 @@ function EditorCanvas() {
   const onDrop = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
       event.preventDefault();
-      const bounds = wrapperRef.current?.getBoundingClientRect();
+      // screenToFlowPosition takes SCREEN coords (event.clientX/Y). The
+      // old code subtracted the wrapper's bounds first, which made the
+      // node land far from the cursor. Pass the raw client coords.
       const position = flow.screenToFlowPosition({
-        x: event.clientX - (bounds?.left ?? 0),
-        y: event.clientY - (bounds?.top ?? 0),
+        x: event.clientX,
+        y: event.clientY,
       });
       // Sticky-note drop branch — palette emits a dedicated MIME so the
       // drop dispatches a sticky instead of a station.
@@ -2429,27 +2435,35 @@ function EditorCanvas() {
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onSelectionChange={onSelectionChange}
+            onNodeDragStart={alignmentGuides.onNodeDragStart}
+            onNodeDrag={alignmentGuides.onNodeDrag}
+            onNodeDragStop={alignmentGuides.onNodeDragStop}
             onPaneClick={() => {
               setSelectedNodeId(null);
               setSelectedNodeIds([]);
             }}
             fitView
             proOptions={{ hideAttribution: true }}
-            // VROL-277 — generous snap radius so a drag landing within 30px of
-            // a port auto-connects; ports highlight on hover via the station
-            // node's Handle styles.
+            // Generous snap radius so a drag landing within 30px of a port
+            // auto-connects; ports highlight on hover via the station node's
+            // Handle styles.
             connectionRadius={30}
             connectionLineStyle={{ strokeWidth: 2 }}
-            // Miro-style snap-to-grid + multi-select rectangle.
+            // Miro-style: drag empty space = marquee, drag node = move,
+            // right/middle mouse = pan. Snap-to-grid covers everyone; the
+            // alignment-guides hook adds neighbor-aware snapping on top.
+            // Multi-select uses Cmd (Mac) / Ctrl (Win) — Shift is reserved
+            // for axis-lock during single-node drag.
             snapToGrid
-            snapGrid={[16, 16]}
+            snapGrid={[8, 8]}
             selectionOnDrag
             panOnDrag={[1, 2]}
-            multiSelectionKeyCode="Shift"
+            multiSelectionKeyCode={["Meta", "Control"]}
           >
             <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
             <Controls />
             <MiniMap pannable zoomable />
+            <AlignmentGuidesOverlay guideLines={alignmentGuides.guideLines} />
             {nodesForFlow.length === 0 ? (
               <div
                 className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"

@@ -7,7 +7,16 @@
  * and exposes the same shape KpiStrip had inline.
  */
 
-import { Lightbulb, Link as LinkIcon } from "lucide-react";
+import {
+  Activity,
+  Award,
+  Boxes,
+  Layers,
+  Lightbulb,
+  Link as LinkIcon,
+  PieChart,
+  ShieldCheck,
+} from "lucide-react";
 import { useState } from "react";
 
 import type { ChainResult } from "@/engine";
@@ -23,7 +32,6 @@ import { cycleStats } from "@/lib/cycle-stats";
 
 import { BufferSummary } from "./BufferSummary";
 import { FinalStateCard } from "./FinalStateCard";
-import { Sparkline } from "./Sparkline";
 import { OeeBreakdown } from "./OeeBreakdown";
 import { QualityLosses } from "./QualityLosses";
 import { RecommendationsCard } from "./RecommendationsCard";
@@ -266,34 +274,13 @@ export function ResultPanel({
     };
     return map[label] ?? null;
   };
-  // VROL-722 — derive a per-KPI series from samples so each tile can show a
-  // tiny sparkline behind the headline value.
-  const tileSeries = (label: string): readonly number[] | null => {
-    if (result.samples.length < 2) return null;
-    if (label === "Completed") return result.samples.map((s) => s.lineCompleted);
-    if (label === "Throughput") {
-      return result.samples.map((s, i) => {
-        if (i === 0) return 0;
-        const prev = result.samples[i - 1];
-        if (!prev) return 0;
-        const dt = s.tMs - prev.tMs;
-        const dParts = s.lineCompleted - prev.lineCompleted;
-        return dt > 0 ? (dParts / dt) * 3_600_000 : 0;
-      });
-    }
-    return null;
-  };
   const tile = (label: string, value: string, hint?: string) => {
     const href = helpAnchor(label);
-    const series = tileSeries(label);
     return (
       <div className="border-border bg-card relative overflow-hidden rounded-md border p-3">
-        {/* VROL-722 — backdrop sparkline. */}
-        {series ? (
-          <div className="pointer-events-none absolute right-1 bottom-1 opacity-40">
-            <Sparkline series={series} width={64} height={20} />
-          </div>
-        ) : null}
+        {/* Backdrop sparklines were removed — they had no axis context
+            and confused readers. The Throughput tab shows the proper
+            chart with labeled axes. */}
         <div className="text-muted-foreground flex items-center justify-between text-xs tracking-wide uppercase">
           <span>{label}</span>
           {href ? (
@@ -373,6 +360,18 @@ export function ResultPanel({
   const hasMaterials = result.materialFinal !== undefined;
   const hasBreakdowns = result.perStationBreakdowns !== undefined;
   const hasLabor = result.laborUtilization !== undefined;
+  // Tabbed drill-down. Default to Overview (the actionable view).
+  type TabId = "overview" | "throughput" | "oee" | "states" | "quality" | "buffers" | "stations";
+  const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const tabs: { id: TabId; label: string; icon: typeof Activity }[] = [
+    { id: "overview", label: "Overview", icon: Lightbulb },
+    { id: "throughput", label: "Throughput", icon: Activity },
+    { id: "oee", label: "OEE", icon: Award },
+    { id: "states", label: "States", icon: PieChart },
+    { id: "quality", label: "Quality", icon: ShieldCheck },
+    { id: "buffers", label: "Buffers", icon: Boxes },
+    { id: "stations", label: "Stations", icon: Layers },
+  ];
   return (
     <div className="space-y-3">
       <InsightsBanner result={result} />
@@ -382,124 +381,179 @@ export function ResultPanel({
         {tile("Line OEE", `${fmt(result.lineOee * 100)}%`, "geometric mean")}
         {tile("Time-in-system", `${fmt(result.avgTimeInSystemW, 0)} ms`, "average W per part")}
       </div>
-      {/* VROL-741 — secondary stats: median cycle informs whether the average is skewed. */}
-      {(() => {
-        const cs = cycleStats(result);
-        if (cs.meanMs === 0) return null;
-        return (
-          <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-            <span>
-              <strong className="text-foreground font-mono">{fmt(cs.medianMs, 0)} ms</strong> median
-              cycle
-            </span>
-            <span>
-              <strong className="text-foreground font-mono">{fmt(cs.meanMs, 0)} ms</strong> mean
-            </span>
-            <span>
-              <strong className="text-foreground font-mono">{fmt(cs.minMs, 0)} ms</strong> min ·{" "}
-              <strong className="text-foreground font-mono">{fmt(cs.maxMs, 0)} ms</strong> max
-            </span>
-          </div>
-        );
-      })()}
-      <Accordion
-        title="Per-station completed"
-        status={
-          <AccordionStatus tone="configured">
-            {`${String(result.perStationCompleted.length)} station${
-              result.perStationCompleted.length === 1 ? "" : "s"
-            }`}
-          </AccordionStatus>
-        }
-        expanded={openSections.perStation}
-        onToggle={() => {
-          toggleSection("perStation");
-        }}
+
+      {/* Tab strip — replaces the previous wall of stacked cards with
+          progressive disclosure. Each tab renders a single focused view
+          below; the user picks what they want to see. */}
+      <div
+        role="tablist"
+        aria-label="Result details"
+        className="border-border bg-card flex flex-wrap gap-1 overflow-x-auto rounded-md border p-1"
       >
-        <div className="space-y-2">
-          {result.perStationCompleted.map((count, i) => {
-            const label = runMeta.stationLabels[i] ?? `Station ${String(i + 1)}`;
-            const max = Math.max(...result.perStationCompleted, 1);
-            const pct = (count / max) * 100;
-            const scrap = result.perStationScrapped[i] ?? 0;
-            const rework = result.perStationReworked[i] ?? 0;
+        {tabs.map((t) => {
+          const Icon = t.icon;
+          const active = activeTab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => {
+                setActiveTab(t.id);
+              }}
+              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                active
+                  ? "bg-sim-running/15 text-sim-running"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5" aria-hidden />
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+      {/* Cycle-time stats line shown only on the Overview + Stations tabs
+          (it's a headline number, not chart-y). */}
+      {activeTab === "overview" || activeTab === "stations"
+        ? (() => {
+            const cs = cycleStats(result);
+            if (cs.meanMs === 0) return null;
             return (
-              <div key={i} className="space-y-1">
-                <div className="flex items-baseline justify-between text-sm">
-                  <span className="text-foreground/80">{label}</span>
-                  <span className="font-mono tabular-nums">
-                    {count.toLocaleString()}
-                    {scrap > 0 ? (
-                      <span className="text-sim-down-foreground ml-2 text-xs">
-                        · {scrap.toLocaleString()} scrap
-                      </span>
-                    ) : null}
-                    {rework > 0 ? (
-                      <span className="text-sim-setup-foreground ml-2 text-xs">
-                        · {rework.toLocaleString()} rework
-                      </span>
-                    ) : null}
-                  </span>
-                </div>
-                <div className="bg-muted h-2 overflow-hidden rounded-full">
-                  <div
-                    className="bg-sim-running h-full rounded-full transition-[width]"
-                    style={{ width: `${String(pct)}%` }}
-                  />
-                </div>
+              <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                <span>
+                  <strong className="text-foreground font-mono">{fmt(cs.medianMs, 0)} ms</strong>{" "}
+                  median cycle
+                </span>
+                <span>
+                  <strong className="text-foreground font-mono">{fmt(cs.meanMs, 0)} ms</strong> mean
+                </span>
+                <span>
+                  <strong className="text-foreground font-mono">{fmt(cs.minMs, 0)} ms</strong> min ·{" "}
+                  <strong className="text-foreground font-mono">{fmt(cs.maxMs, 0)} ms</strong> max
+                </span>
               </div>
             );
-          })}
-        </div>
-      </Accordion>
+          })()
+        : null}
+      {activeTab === "stations" ? (
+        <Accordion
+          title="Per-station completed"
+          status={
+            <AccordionStatus tone="configured">
+              {`${String(result.perStationCompleted.length)} station${
+                result.perStationCompleted.length === 1 ? "" : "s"
+              }`}
+            </AccordionStatus>
+          }
+          expanded={openSections.perStation}
+          onToggle={() => {
+            toggleSection("perStation");
+          }}
+        >
+          <div className="space-y-2">
+            {result.perStationCompleted.map((count, i) => {
+              const label = runMeta.stationLabels[i] ?? `Station ${String(i + 1)}`;
+              const max = Math.max(...result.perStationCompleted, 1);
+              const pct = (count / max) * 100;
+              const scrap = result.perStationScrapped[i] ?? 0;
+              const rework = result.perStationReworked[i] ?? 0;
+              return (
+                <div key={i} className="space-y-1">
+                  <div className="flex items-baseline justify-between text-sm">
+                    <span className="text-foreground/80">{label}</span>
+                    <span className="font-mono tabular-nums">
+                      {count.toLocaleString()}
+                      {scrap > 0 ? (
+                        <span className="text-sim-down-foreground ml-2 text-xs">
+                          · {scrap.toLocaleString()} scrap
+                        </span>
+                      ) : null}
+                      {rework > 0 ? (
+                        <span className="text-sim-setup-foreground ml-2 text-xs">
+                          · {rework.toLocaleString()} rework
+                        </span>
+                      ) : null}
+                    </span>
+                  </div>
+                  <div className="bg-muted h-2 overflow-hidden rounded-full">
+                    <div
+                      className="bg-sim-running h-full rounded-full transition-[width]"
+                      style={{ width: `${String(pct)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Accordion>
+      ) : null}
 
-      <BottleneckExplanationCard
-        result={result}
-        bottleneckStationIdx={result.bottleneckStationIdx}
-        {...(onFocusStation ? { onFocusStation } : {})}
-      />
+      {activeTab === "overview" ? (
+        <>
+          <BottleneckExplanationCard
+            result={result}
+            bottleneckStationIdx={result.bottleneckStationIdx}
+            {...(onFocusStation ? { onFocusStation } : {})}
+          />
+          <Card id="recommendations">
+            <CardHeader>
+              <CardTitle className="font-heading text-base">
+                <AnchorTitle anchorId="recommendations">Recommendations</AnchorTitle>
+              </CardTitle>
+              <CardDescription>Ranked by expected impact on throughput.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <RecommendationsCard result={result} />
+            </CardContent>
+          </Card>
+          <Card id="final-state-overview">
+            <CardHeader>
+              <CardTitle className="font-heading text-base">Final state</CardTitle>
+              <CardDescription>Each station's dominant state at horizon end.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <FinalStateCard result={result} stationLabels={runMeta.stationLabels} />
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
 
-      <Card id="recommendations">
-        <CardHeader>
-          <CardTitle className="font-heading text-base">
-            <AnchorTitle anchorId="recommendations">Recommendations</AnchorTitle>
-          </CardTitle>
-          <CardDescription>Ranked by expected impact on throughput.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <RecommendationsCard result={result} />
-        </CardContent>
-      </Card>
+      {activeTab === "states" ? (
+        <Card id="state-pareto">
+          <CardHeader>
+            <CardTitle className="font-heading text-base">
+              <AnchorTitle anchorId="state-pareto">State Pareto</AnchorTitle>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <StatePareto result={result} />
+          </CardContent>
+        </Card>
+      ) : null}
 
-      <Card id="state-pareto">
-        <CardHeader>
-          <CardTitle className="font-heading text-base">
-            <AnchorTitle anchorId="state-pareto">State Pareto</AnchorTitle>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <StatePareto result={result} />
-        </CardContent>
-      </Card>
+      {activeTab === "oee" ? (
+        <Card id="oee-breakdown">
+          <CardHeader>
+            <CardTitle className="font-heading text-base">
+              <AnchorTitle anchorId="oee-breakdown">OEE breakdown</AnchorTitle>
+            </CardTitle>
+            <CardDescription>
+              Availability × Performance × Quality per station. The slim factor is the lever.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <OeeBreakdown result={result} />
+          </CardContent>
+        </Card>
+      ) : null}
 
-      <Card id="oee-breakdown">
-        <CardHeader>
-          <CardTitle className="font-heading text-base">
-            <AnchorTitle anchorId="oee-breakdown">OEE breakdown</AnchorTitle>
-          </CardTitle>
-          <CardDescription>
-            Availability × Performance × Quality per station. The slim factor is the lever.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <OeeBreakdown result={result} />
-        </CardContent>
-      </Card>
-
-      {/* VROL-723 + 724 — quality losses card; auto-hides when totals are zero. */}
-      {result.perStationScrapped.reduce((a, b) => a + b, 0) +
+      {/* Quality losses: only on the Quality tab (auto-hides anyway when zero). */}
+      {activeTab === "quality" &&
+      result.perStationScrapped.reduce((a, b) => a + b, 0) +
         result.perStationReworked.reduce((a, b) => a + b, 0) >
-      0 ? (
+        0 ? (
         <Card id="quality-losses">
           <CardHeader>
             <CardTitle className="font-heading text-base">
@@ -513,59 +567,55 @@ export function ResultPanel({
         </Card>
       ) : null}
 
-      <Card id="buffer-summary">
-        <CardHeader>
-          <CardTitle className="font-heading text-base">
-            <AnchorTitle anchorId="buffer-summary">Buffer fill</AnchorTitle>
-          </CardTitle>
-          <CardDescription>Average + peak fill per inter-station edge.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <BufferSummary result={result} />
-        </CardContent>
-      </Card>
+      {activeTab === "buffers" ? (
+        <Card id="buffer-summary">
+          <CardHeader>
+            <CardTitle className="font-heading text-base">
+              <AnchorTitle anchorId="buffer-summary">Buffer fill</AnchorTitle>
+            </CardTitle>
+            <CardDescription>Average + peak fill per inter-station edge.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <BufferSummary result={result} />
+          </CardContent>
+        </Card>
+      ) : null}
 
-      <Card id="final-state">
-        <CardHeader>
-          <CardTitle className="font-heading text-base">
-            <AnchorTitle anchorId="final-state">Final state</AnchorTitle>
-          </CardTitle>
-          <CardDescription>Each station's dominant state at horizon end.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <FinalStateCard result={result} stationLabels={runMeta.stationLabels} />
-        </CardContent>
-      </Card>
+      {/* Final-state card now lives only in the Overview tab (rendered earlier). */}
 
-      <Card id="throughput">
-        <CardHeader>
-          <CardTitle className="font-heading text-base">
-            <AnchorTitle anchorId="throughput">Throughput over time</AnchorTitle>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ThroughputChart samples={result.samples} horizonMs={horizonMs} warmupMs={warmupMs} />
-        </CardContent>
-      </Card>
+      {activeTab === "throughput" ? (
+        <Card id="throughput">
+          <CardHeader>
+            <CardTitle className="font-heading text-base">
+              <AnchorTitle anchorId="throughput">Throughput over time</AnchorTitle>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ThroughputChart samples={result.samples} horizonMs={horizonMs} warmupMs={warmupMs} />
+          </CardContent>
+        </Card>
+      ) : null}
 
-      <Card id="bottleneck-state">
-        <CardHeader>
-          <CardTitle className="font-heading text-base">
-            <AnchorTitle anchorId="bottleneck-state">Bottleneck state over time</AnchorTitle>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <OeeOverTimeChart
-            samples={result.samples}
-            stationLabels={runMeta.stationLabels}
-            bottleneckStationIdx={result.bottleneckStationIdx}
-            horizonMs={horizonMs}
-            warmupMs={warmupMs}
-          />
-        </CardContent>
-      </Card>
+      {activeTab === "oee" ? (
+        <Card id="bottleneck-state">
+          <CardHeader>
+            <CardTitle className="font-heading text-base">
+              <AnchorTitle anchorId="bottleneck-state">Bottleneck state over time</AnchorTitle>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <OeeOverTimeChart
+              samples={result.samples}
+              stationLabels={runMeta.stationLabels}
+              bottleneckStationIdx={result.bottleneckStationIdx}
+              horizonMs={horizonMs}
+              warmupMs={warmupMs}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
 
-      {showReworkChart ? (
+      {activeTab === "quality" && showReworkChart ? (
         <Accordion
           title="Rework over time"
           status={
@@ -589,7 +639,9 @@ export function ResultPanel({
         </Accordion>
       ) : null}
 
-      {result.perProductCompleted && result.perProductCompleted.size > 0 ? (
+      {activeTab === "stations" &&
+      result.perProductCompleted &&
+      result.perProductCompleted.size > 0 ? (
         <Accordion
           title="Product mix at sink"
           status={
@@ -608,45 +660,48 @@ export function ResultPanel({
         </Accordion>
       ) : null}
 
-      <Accordion
-        title="Per-station state breakdown"
-        status={<AccordionStatus tone="configured">Time-weighted %</AccordionStatus>}
-        expanded={openSections.stateBreakdown}
-        onToggle={() => {
-          toggleSection("stateBreakdown");
-        }}
-      >
-        <div className="space-y-3">
-          {result.bottlenecks.map((b) => (
-            <div key={String(b.stationId)} className="space-y-1">
-              <div className="text-foreground/80 text-sm">{b.label ?? String(b.stationId)}</div>
-              <div className="bg-muted flex h-2 overflow-hidden rounded-full">
-                {b.breakdown
-                  .filter((seg) => seg.pct > 0.001)
-                  .map((seg) => (
-                    <div
-                      key={seg.state}
-                      title={`${seg.state}: ${(seg.pct * 100).toFixed(1)}%`}
-                      className={`h-full ${stateColor(seg.state)}`}
-                      style={{ width: `${String(seg.pct * 100)}%` }}
-                    />
-                  ))}
+      {activeTab === "states" ? (
+        <Accordion
+          title="Per-station state breakdown"
+          status={<AccordionStatus tone="configured">Time-weighted %</AccordionStatus>}
+          expanded={openSections.stateBreakdown}
+          onToggle={() => {
+            toggleSection("stateBreakdown");
+          }}
+        >
+          <div className="space-y-3">
+            {result.bottlenecks.map((b) => (
+              <div key={String(b.stationId)} className="space-y-1">
+                <div className="text-foreground/80 text-sm">{b.label ?? String(b.stationId)}</div>
+                <div className="bg-muted flex h-2 overflow-hidden rounded-full">
+                  {b.breakdown
+                    .filter((seg) => seg.pct > 0.001)
+                    .map((seg) => (
+                      <div
+                        key={seg.state}
+                        title={`${seg.state}: ${(seg.pct * 100).toFixed(1)}%`}
+                        className={`h-full ${stateColor(seg.state)}`}
+                        style={{ width: `${String(seg.pct * 100)}%` }}
+                      />
+                    ))}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-        <div className="text-muted-foreground mt-3 flex flex-wrap gap-2 text-xs">
-          {["Running", "Setup", "Maintenance", "Down", "BlockedOut", "Starved", "Idle"].map(
-            (state) => (
-              <span key={state} className="flex items-center gap-1.5">
-                <span className={`h-2.5 w-2.5 rounded-sm ${stateColor(state)}`} />
-                {state}
-              </span>
-            ),
-          )}
-        </div>
-      </Accordion>
-      {hasMaterials || hasBreakdowns || hasLabor || totalScrapped > 0 || totalReworked > 0 ? (
+            ))}
+          </div>
+          <div className="text-muted-foreground mt-3 flex flex-wrap gap-2 text-xs">
+            {["Running", "Setup", "Maintenance", "Down", "BlockedOut", "Starved", "Idle"].map(
+              (state) => (
+                <span key={state} className="flex items-center gap-1.5">
+                  <span className={`h-2.5 w-2.5 rounded-sm ${stateColor(state)}`} />
+                  {state}
+                </span>
+              ),
+            )}
+          </div>
+        </Accordion>
+      ) : null}
+      {activeTab === "overview" &&
+      (hasMaterials || hasBreakdowns || hasLabor || totalScrapped > 0 || totalReworked > 0) ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {finalBottles !== null
             ? tile(
