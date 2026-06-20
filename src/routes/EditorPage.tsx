@@ -2460,7 +2460,19 @@ function EditorCanvas() {
       {result && runMeta ? (
         <Suspense
           fallback={
-            <div className="bg-muted h-40 animate-pulse rounded-md" aria-label="Loading results" />
+            <div className="space-y-3" aria-label="Loading results">
+              {/* VROL-725 — richer skeleton mirroring the actual result layout. */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {[0, 1, 2, 3].map((i) => (
+                  <div
+                    key={i}
+                    className="border-border bg-muted/40 h-20 animate-pulse rounded-md border p-3"
+                  />
+                ))}
+              </div>
+              <div className="border-border bg-muted/30 h-24 animate-pulse rounded-md border" />
+              <div className="border-border bg-muted/30 h-40 animate-pulse rounded-md border" />
+            </div>
           }
         >
           <ResultPanel

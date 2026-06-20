@@ -21,7 +21,9 @@ import { OeeOverTimeChart } from "./OeeOverTimeChart";
 import { ReworkOverTimeChart } from "./ReworkOverTimeChart";
 import { BufferSummary } from "./BufferSummary";
 import { FinalStateCard } from "./FinalStateCard";
+import { Sparkline } from "./Sparkline";
 import { OeeBreakdown } from "./OeeBreakdown";
+import { QualityLosses } from "./QualityLosses";
 import { RecommendationsCard } from "./RecommendationsCard";
 import { StatePareto } from "./StatePareto";
 import { ThroughputChart } from "./ThroughputChart";
@@ -262,10 +264,34 @@ export function ResultPanel({
     };
     return map[label] ?? null;
   };
+  // VROL-722 — derive a per-KPI series from samples so each tile can show a
+  // tiny sparkline behind the headline value.
+  const tileSeries = (label: string): readonly number[] | null => {
+    if (result.samples.length < 2) return null;
+    if (label === "Completed") return result.samples.map((s) => s.lineCompleted);
+    if (label === "Throughput") {
+      return result.samples.map((s, i) => {
+        if (i === 0) return 0;
+        const prev = result.samples[i - 1];
+        if (!prev) return 0;
+        const dt = s.tMs - prev.tMs;
+        const dParts = s.lineCompleted - prev.lineCompleted;
+        return dt > 0 ? (dParts / dt) * 3_600_000 : 0;
+      });
+    }
+    return null;
+  };
   const tile = (label: string, value: string, hint?: string) => {
     const href = helpAnchor(label);
+    const series = tileSeries(label);
     return (
-      <div className="border-border bg-card rounded-md border p-3">
+      <div className="border-border bg-card relative overflow-hidden rounded-md border p-3">
+        {/* VROL-722 — backdrop sparkline. */}
+        {series ? (
+          <div className="pointer-events-none absolute right-1 bottom-1 opacity-40">
+            <Sparkline series={series} width={64} height={20} />
+          </div>
+        ) : null}
         <div className="text-muted-foreground flex items-center justify-between text-xs tracking-wide uppercase">
           <span>{label}</span>
           {href ? (
@@ -447,6 +473,23 @@ export function ResultPanel({
           <OeeBreakdown result={result} />
         </CardContent>
       </Card>
+
+      {/* VROL-723 + 724 — quality losses card; auto-hides when totals are zero. */}
+      {result.perStationScrapped.reduce((a, b) => a + b, 0) +
+        result.perStationReworked.reduce((a, b) => a + b, 0) >
+      0 ? (
+        <Card id="quality-losses">
+          <CardHeader>
+            <CardTitle className="font-heading text-base">
+              <AnchorTitle anchorId="quality-losses">Quality losses</AnchorTitle>
+            </CardTitle>
+            <CardDescription>Scrap (red) + rework (yellow) per station.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <QualityLosses result={result} stationLabels={runMeta.stationLabels} />
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card id="buffer-summary">
         <CardHeader>
