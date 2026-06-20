@@ -18,6 +18,26 @@ export interface ScenarioBundle {
   }>;
 }
 
+/**
+ * VROL-704 — recursively sort object keys so the same set of scenarios
+ * always serialises to a byte-identical bundle. Lets users diff exports
+ * across time without spurious churn.
+ */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    const keys = Object.keys(value as Record<string, unknown>).sort();
+    for (const k of keys) out[k] = canonical((value as Record<string, unknown>)[k]);
+    return out;
+  }
+  return value;
+}
+
+export function stringifyBundle(bundle: ScenarioBundle): string {
+  return JSON.stringify(canonical(bundle), null, 2);
+}
+
 export function buildBundle(exportedAtMs: number): ScenarioBundle {
   const names = listScenarios().map((s) => s.name);
   const scenarios = names

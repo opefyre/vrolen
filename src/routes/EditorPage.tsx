@@ -148,7 +148,7 @@ import {
   setScenarioNotes,
   type ScenarioSummary,
 } from "@/lib/scenario-store";
-import { buildBundle, importBundle, isBundle } from "@/lib/scenario-bundle";
+import { buildBundle, importBundle, isBundle, stringifyBundle } from "@/lib/scenario-bundle";
 import { toast } from "@/lib/toast";
 import {
   DEFAULT_RUN_SETTINGS,
@@ -410,7 +410,11 @@ const STATION_TYPE_ACCENT: Record<string, { pill: string; border: string }> = {
   custom: { pill: "bg-muted text-muted-foreground", border: "border-l-muted-foreground/40" },
 };
 
-function StationNode({ data, selected }: NodeProps) {
+/** VROL-703 — dispatched when a user double-clicks a station label.
+ *  EditorPage listens at the document level and opens an inline editor. */
+const NODE_LABEL_EDIT_EVENT = "vrolen-edit-label";
+
+function StationNode({ data, selected, id }: NodeProps) {
   const d = data as StationNodeData;
   const Icon = STATION_TYPE_ICON[d.stationType ?? "machine"] ?? Factory;
   const accent = STATION_TYPE_ACCENT[d.stationType ?? "machine"] ?? STATION_TYPE_ACCENT.machine!;
@@ -476,7 +480,20 @@ function StationNode({ data, selected }: NodeProps) {
         >
           <Icon className="h-4 w-4" />
         </span>
-        <div className="min-w-0 truncate text-[13px] font-semibold">{d.label ?? "Station"}</div>
+        <div
+          className="min-w-0 truncate text-[13px] font-semibold"
+          title="Double-click to rename"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            window.dispatchEvent(
+              new CustomEvent(NODE_LABEL_EDIT_EVENT, {
+                detail: { nodeId: id, current: typeof d.label === "string" ? d.label : "" },
+              }),
+            );
+          }}
+        >
+          {d.label ?? "Station"}
+        </div>
       </div>
       {maintenanceCount +
         skillCount +
@@ -849,6 +866,30 @@ function EditorCanvas() {
     },
     [selectedNodeId, setNodes],
   );
+
+  // VROL-703 — double-click on a station label fires NODE_LABEL_EDIT_EVENT.
+  // Catch it, prompt() the user (good enough for v0), and patch the node label.
+  useEffect(() => {
+    const onEdit = (e: Event): void => {
+      const detail = (e as CustomEvent<{ nodeId: string; current: string }>).detail;
+      if (!detail) return;
+      const next = window.prompt("Rename station", detail.current);
+      if (next === null) return;
+      const trimmed = next.trim();
+      if (trimmed === "") return;
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === detail.nodeId
+            ? { ...n, data: { ...(n.data as Record<string, unknown>), label: trimmed } }
+            : n,
+        ),
+      );
+    };
+    window.addEventListener(NODE_LABEL_EDIT_EVENT, onEdit);
+    return () => {
+      window.removeEventListener(NODE_LABEL_EDIT_EVENT, onEdit);
+    };
+  }, [setNodes]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -1630,12 +1671,15 @@ function EditorCanvas() {
           ) : result && doneAt ? (
             <>
               <CheckCircle2 className="h-3 w-3" />
-              Done at{" "}
-              {doneAt.toLocaleTimeString(undefined, {
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              })}
+              {/* VROL-705 — pill text shows throughput + OEE summary, not just the time. */}
+              {Math.round(result.throughputLambda * 3_600_000).toLocaleString()}
+              /h · OEE {(result.lineOee * 100).toFixed(0)}%
+              <span className="text-muted-foreground ml-1.5 hidden font-mono text-[10px] sm:inline">
+                {doneAt.toLocaleTimeString(undefined, {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </span>
             </>
           ) : (
             <>
@@ -1857,6 +1901,10 @@ function EditorCanvas() {
                     result={validation}
                     onIssueFocus={focusValidationIssue}
                     onIssueFix={applyValidationFix}
+                    onFixAll={(issues) => {
+                      for (const iss of issues) applyValidationFix(iss);
+                      toast.success(`Applied ${String(issues.length)} fixes`);
+                    }}
                   />
                 </div>
               ) : null}
@@ -2500,7 +2548,7 @@ function EditorCanvas() {
                   const bundle = buildBundle(Date.now());
                   downloadFile(
                     `vrolen-scenarios-${String(Date.now())}.json`,
-                    JSON.stringify(bundle, null, 2),
+                    stringifyBundle(bundle),
                     "application/json",
                   );
                   toast.success("Exported scenarios", {
