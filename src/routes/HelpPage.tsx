@@ -108,7 +108,7 @@ export default function HelpPage() {
         </p>
       </div>
 
-      <Card>
+      <Card id="kpis">
         <CardHeader>
           <CardTitle className="font-heading flex items-center gap-2 text-lg">
             <span className="bg-sim-running inline-block h-2 w-2 rounded-full" aria-hidden />
@@ -120,8 +120,12 @@ export default function HelpPage() {
           <dl className="space-y-4">
             {KPI_TERMS.map((t) => {
               const Icon = t.icon;
+              const anchor = t.title
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-|-$/g, "");
               return (
-                <div key={t.title} className="flex gap-3">
+                <div key={t.title} id={anchor} className="flex scroll-mt-4 gap-3">
                   <Icon className="text-muted-foreground mt-0.5 h-5 w-5 shrink-0" aria-hidden />
                   <div className="space-y-1">
                     <dt className="text-sm font-semibold">{t.title}</dt>
@@ -150,7 +154,7 @@ export default function HelpPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="states">
         <CardHeader>
           <CardTitle className="font-heading flex items-center gap-2 text-lg">
             <span className="bg-sim-setup inline-block h-2 w-2 rounded-full" aria-hidden />

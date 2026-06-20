@@ -19,6 +19,8 @@ import { toast } from "@/lib/toast";
 
 import { OeeOverTimeChart } from "./OeeOverTimeChart";
 import { ReworkOverTimeChart } from "./ReworkOverTimeChart";
+import { cycleStats } from "@/lib/cycle-stats";
+
 import { BufferSummary } from "./BufferSummary";
 import { FinalStateCard } from "./FinalStateCard";
 import { Sparkline } from "./Sparkline";
@@ -380,6 +382,26 @@ export function ResultPanel({
         {tile("Line OEE", `${fmt(result.lineOee * 100)}%`, "geometric mean")}
         {tile("Time-in-system", `${fmt(result.avgTimeInSystemW, 0)} ms`, "average W per part")}
       </div>
+      {/* VROL-741 — secondary stats: median cycle informs whether the average is skewed. */}
+      {(() => {
+        const cs = cycleStats(result);
+        if (cs.meanMs === 0) return null;
+        return (
+          <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+            <span>
+              <strong className="text-foreground font-mono">{fmt(cs.medianMs, 0)} ms</strong> median
+              cycle
+            </span>
+            <span>
+              <strong className="text-foreground font-mono">{fmt(cs.meanMs, 0)} ms</strong> mean
+            </span>
+            <span>
+              <strong className="text-foreground font-mono">{fmt(cs.minMs, 0)} ms</strong> min ·{" "}
+              <strong className="text-foreground font-mono">{fmt(cs.maxMs, 0)} ms</strong> max
+            </span>
+          </div>
+        );
+      })()}
       <Accordion
         title="Per-station completed"
         status={

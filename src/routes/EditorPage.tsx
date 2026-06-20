@@ -813,8 +813,23 @@ function EditorCanvas() {
       1,
   );
 
+  // VROL-738 — autosave indicator flash. Drives off the same effect as the
+  // saveGraph call so the chip pulses 'Saving…' for ~250ms after each change.
+  const [autosaveState, setAutosaveState] = useState<"saved" | "saving">("saved");
   useEffect(() => {
     saveGraph({ nodes, edges });
+    let id: ReturnType<typeof setTimeout> | null = null;
+    // Defer the state update one microtask so it isn't synchronous with the
+    // commit (see react-hooks/set-state-in-effect rule).
+    queueMicrotask(() => {
+      setAutosaveState("saving");
+      id = setTimeout(() => {
+        setAutosaveState("saved");
+      }, 250);
+    });
+    return () => {
+      if (id !== null) clearTimeout(id);
+    };
   }, [nodes, edges]);
 
   /**
@@ -1750,6 +1765,17 @@ function EditorCanvas() {
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-foreground/80 truncate text-sm font-semibold">
             {activeScenarioName ?? "Untitled scenario"}
+          </span>
+          {/* VROL-738 — autosave indicator. */}
+          <span
+            className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+              autosaveState === "saving"
+                ? "bg-sim-setup/20 text-sim-setup-foreground"
+                : "bg-muted text-muted-foreground"
+            }`}
+            aria-live="polite"
+          >
+            {autosaveState === "saving" ? "Saving…" : "Saved"}
           </span>
           {activeScenarioName && activeScenarioIsModified ? (
             <span
