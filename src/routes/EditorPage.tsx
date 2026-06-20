@@ -1653,7 +1653,11 @@ function EditorCanvas() {
       {/* VROL-634 — sticky top bar: scenario name + status pill + primary
           actions. Replaces the 9-button stack that used to live in the left
           column with a horizontal action hierarchy. */}
-      <div className="border-border bg-card/80 supports-[backdrop-filter]:bg-card/60 sticky top-0 z-20 -mx-6 flex flex-wrap items-center gap-3 border-b px-6 py-2 backdrop-blur">
+      <div
+        role="toolbar"
+        aria-label="Scenario actions"
+        className="border-border bg-card/80 supports-[backdrop-filter]:bg-card/60 sticky top-0 z-20 -mx-6 flex flex-wrap items-center gap-3 border-b px-6 py-2 backdrop-blur"
+      >
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-foreground/80 truncate text-sm font-semibold">
             {activeScenarioName ?? "Untitled scenario"}
@@ -1700,6 +1704,12 @@ function EditorCanvas() {
                   hour: "2-digit",
                   minute: "2-digit",
                 })}
+              </span>
+              {/* VROL-718 — explicit screen-reader-only announcement spelled out. */}
+              <span className="sr-only">
+                Simulation complete. {result.completed.toLocaleString()} parts. Throughput{" "}
+                {Math.round(result.throughputLambda * 3_600_000).toLocaleString()} per hour. Line
+                OEE {(result.lineOee * 100).toFixed(0)} percent.
               </span>
             </>
           ) : (
@@ -1903,6 +1913,8 @@ function EditorCanvas() {
                     : "border-sim-setup/40 bg-sim-setup/10 text-sim-setup-foreground"
                 }`}
                 aria-label={`${String(validation.errors.length)} errors, ${String(validation.warnings.length)} warnings`}
+                // VROL-721 — live region so screen-reader users hear updates.
+                aria-live="polite"
                 title="Open validation panel"
               >
                 {validation.errors.length > 0 ? (

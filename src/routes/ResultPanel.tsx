@@ -251,13 +251,39 @@ export function ResultPanel({
   warmupMs,
   onFocusStation,
 }: ResultPanelProps) {
-  const tile = (label: string, value: string, hint?: string) => (
-    <div className="border-border bg-card rounded-md border p-3">
-      <div className="text-muted-foreground text-xs tracking-wide uppercase">{label}</div>
-      <div className="font-mono text-xl font-semibold tabular-nums">{value}</div>
-      {hint ? <div className="text-muted-foreground mt-0.5 text-xs">{hint}</div> : null}
-    </div>
-  );
+  // VROL-720 — help-link anchor mapping. Routes to /help (same-tab) with a
+  // hash so the matching definition scrolls into view.
+  const helpAnchor = (label: string): string | null => {
+    const map: Record<string, string> = {
+      Completed: "/help",
+      Throughput: "/help",
+      "Line OEE": "/help",
+      "Time-in-system": "/help",
+    };
+    return map[label] ?? null;
+  };
+  const tile = (label: string, value: string, hint?: string) => {
+    const href = helpAnchor(label);
+    return (
+      <div className="border-border bg-card rounded-md border p-3">
+        <div className="text-muted-foreground flex items-center justify-between text-xs tracking-wide uppercase">
+          <span>{label}</span>
+          {href ? (
+            <a
+              href={href}
+              aria-label={`What is ${label}?`}
+              className="hover:text-foreground rounded-full px-1 text-[10px]"
+              title="Open glossary"
+            >
+              ?
+            </a>
+          ) : null}
+        </div>
+        <div className="font-mono text-xl font-semibold tabular-nums">{value}</div>
+        {hint ? <div className="text-muted-foreground mt-0.5 text-xs">{hint}</div> : null}
+      </div>
+    );
+  };
   const throughputPerHour = result.throughputLambda * 3_600_000;
   const fmt = (n: number, digits = 1) =>
     n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
