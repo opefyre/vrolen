@@ -55,6 +55,17 @@ exports[`preset regression (VROL-472) > preset "source-rate" KPI summary matches
 }
 `;
 
+exports[`preset regression (VROL-472) > preset "two-line-packing" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 7279,
+  "bottleneckLabel": "Packer",
+  "bottleneckReason": "starvation",
+  "completed": 250,
+  "lineOee": 1,
+  "throughputPartsPerHour": 16364,
+}
+`;
+
 exports[`preset regression (VROL-472) > preset "worker-bottleneck" KPI summary matches snapshot 1`] = `
 {
   "avgTimeInSystemMs": 4483,

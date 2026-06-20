@@ -233,6 +233,38 @@ const SOURCE_RATE: Preset = {
   },
 };
 
+// ─── 7. Two-line shared packing (VROL-449) ──────────────────────────────────
+const TWO_LINE_PACKING: Preset = {
+  id: "two-line-packing",
+  title: "Two-line shared packing",
+  blurb:
+    "Two parallel lines (Filler→Capper each) merge into a single Packer. Packer is the bottleneck — both upstream cappers compete for it.",
+  highlight: "merge topology + downstream bottleneck",
+  graph: {
+    nodes: [
+      // Single shared source feeds both lines (engine requires single source).
+      station("src", "Source", "input", 60, 180, { cycleDistribution: constant(30) }),
+      station("a2", "Filler A", "machine", 260, 80, { cycleDistribution: constant(120) }),
+      station("a3", "Capper A", "machine", 440, 80, { cycleDistribution: constant(150) }),
+      station("b2", "Filler B", "machine", 260, 280, { cycleDistribution: constant(120) }),
+      station("b3", "Capper B", "machine", 440, 280, { cycleDistribution: constant(150) }),
+      // Packer is intentionally slower — bottleneck where both lines merge.
+      station("p", "Packer", "machine", 640, 180, { cycleDistribution: constant(220) }),
+      station("o", "Output", "output", 840, 180, { cycleDistribution: constant(30) }),
+    ],
+    edges: [
+      edge("esrc-a2", "src", "a2"),
+      edge("esrc-b2", "src", "b2"),
+      edge("ea2-a3", "a2", "a3"),
+      edge("ea3-p", "a3", "p"),
+      edge("eb2-b3", "b2", "b3"),
+      edge("eb3-p", "b3", "p"),
+      edge("ep-o", "p", "o"),
+    ],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000 },
+};
+
 export const PRESETS: readonly Preset[] = [
   BOTTLING_LINE,
   MULTI_PRODUCT_CHANGEOVER,
@@ -240,6 +272,7 @@ export const PRESETS: readonly Preset[] = [
   WORKER_BOTTLENECK,
   PARALLEL_FILLERS,
   SOURCE_RATE,
+  TWO_LINE_PACKING,
 ];
 
 export function getPreset(id: string): Preset | undefined {

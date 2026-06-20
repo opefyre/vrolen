@@ -49,6 +49,25 @@ describe("presets (VROL-630)", () => {
     expect(p!.settings.source.intervalMs).toBeGreaterThan(0);
   });
 
+  it("Two-line packing preset runs + Packer is the bottleneck (VROL-449)", () => {
+    const p = getPreset("two-line-packing");
+    expect(p).toBeDefined();
+    const translation = graphToChainOptions(p!.graph.nodes, p!.graph.edges);
+    expect(translation.error).toBeNull();
+    const result = runChain({
+      ...(translation.topology
+        ? { topology: translation.topology }
+        : { stationCycleTimes: [...translation.cycleDistributions] }),
+      interStationBufferCapacity: 10,
+      horizonMs: 60_000,
+      warmupMs: 5_000,
+      prng: new SeededPrng(7),
+    });
+    expect(result.completed).toBeGreaterThan(0);
+    // Packer runs at the highest occupancy = bottleneck.
+    expect(result.bottlenecks[0]?.label).toBe("Packer");
+  });
+
   it("Bottling line preset runs end-to-end and produces completed parts", () => {
     const p = getPreset("bottling-line");
     expect(p).toBeDefined();
