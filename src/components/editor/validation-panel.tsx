@@ -57,6 +57,23 @@ export function ValidationPanel({ result, onIssueFocus, onIssueFix }: Validation
   );
 }
 
+/**
+ * VROL-697 — group identical issues (same code + message) so a single problem
+ * affecting N nodes collapses to one row with a "× N" suffix.
+ */
+function groupIssues(issues: readonly ValidationIssue[]): readonly ValidationIssue[] {
+  const seen = new Map<string, { issue: ValidationIssue; count: number }>();
+  for (const iss of issues) {
+    const key = `${iss.code}::${iss.message}`;
+    const prev = seen.get(key);
+    if (prev) prev.count++;
+    else seen.set(key, { issue: iss, count: 1 });
+  }
+  return [...seen.values()].map(({ issue, count }) =>
+    count > 1 ? { ...issue, message: `${issue.message} (× ${String(count)} stations)` } : issue,
+  );
+}
+
 function Section({
   title,
   issues,
@@ -68,13 +85,14 @@ function Section({
   onClick: (issue: ValidationIssue) => void;
   onFix?: ((issue: ValidationIssue) => void) | undefined;
 }) {
+  const grouped = groupIssues(issues);
   return (
     <div className="space-y-1 pb-2">
       <div className="text-muted-foreground px-1 pt-1 text-[10px] font-medium tracking-wide uppercase">
         {title}
       </div>
       <ul className="space-y-1">
-        {issues.map((iss, idx) => (
+        {grouped.map((iss, idx) => (
           <li
             key={`${iss.code}-${String(idx)}`}
             className="hover:bg-muted flex items-start gap-2 rounded-md p-2 text-xs"

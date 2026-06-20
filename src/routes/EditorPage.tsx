@@ -619,6 +619,8 @@ function EditorCanvas() {
   const [scenariosOpen, setScenariosOpen] = useState<boolean>(false);
   // VROL-685 — case-insensitive search filter for the scenarios list.
   const [scenarioSearch, setScenarioSearch] = useState<string>("");
+  // VROL-695 — sort dropdown state.
+  const [scenarioSort, setScenarioSort] = useState<"date" | "name" | "nodes">("date");
   // VROL-682 — two slots for picking history runs to compare.
   const [historyCompareA, setHistoryCompareA] = useState<number | null>(null);
   const [historyCompareB, setHistoryCompareB] = useState<number | null>(null);
@@ -1072,10 +1074,20 @@ function EditorCanvas() {
             : {}),
         });
         const wallMs = performance.now() - t0;
+        // VROL-694 — compute throughput delta vs the previous run for this scenario.
+        const prevRuns = activeScenarioName ? listRunHistory(activeScenarioName) : [];
+        const prevRun = prevRuns[0];
+        const tPerHr = r.throughputLambda * 3_600_000;
+        const prevPerHr = prevRun ? prevRun.throughputLambda * 3_600_000 : null;
+        let desc = `${r.completed.toLocaleString()} parts · ${tPerHr.toFixed(0)}/h`;
+        if (prevPerHr !== null && prevPerHr > 0) {
+          const deltaPct = ((tPerHr - prevPerHr) / prevPerHr) * 100;
+          const arrow = deltaPct > 0.5 ? "▲" : deltaPct < -0.5 ? "▼" : "=";
+          desc += ` (${arrow} ${Math.abs(deltaPct).toFixed(0)}% vs last)`;
+        }
+        desc += ` · ${wallMs.toFixed(0)}ms`;
         setResult(r);
-        toast.success("Simulation complete", {
-          description: `${r.completed.toLocaleString()} parts in ${wallMs.toFixed(0)}ms wall-clock`,
-        });
+        toast.success("Simulation complete", { description: desc });
         // If a scenario is active, push a compact summary to history.
         if (activeScenarioName) {
           const summary: RunHistoryEntry = {
@@ -1324,6 +1336,44 @@ function EditorCanvas() {
     const current = JSON.stringify({ graph: { nodes, edges }, settings });
     return current !== activeScenarioSnapshot;
   }, [activeScenarioName, activeScenarioSnapshot, nodes, edges, settings]);
+  // VROL-696 — compact diff hint vs the saved snapshot: counts how many
+  // nodes / edges / settings keys differ. Used in the toolbar pill hover.
+  const activeScenarioDiff = useMemo(() => {
+    if (!activeScenarioIsModified || !activeScenarioSnapshot) return null;
+    try {
+      const saved = JSON.parse(activeScenarioSnapshot) as {
+        graph: { nodes: Node[]; edges: Edge[] };
+        settings: Record<string, unknown>;
+      };
+      const savedNodeJson = new Map(saved.graph.nodes.map((n) => [n.id, JSON.stringify(n)]));
+      const currentNodeJson = new Map(nodes.map((n) => [n.id, JSON.stringify(n)]));
+      let nodeChanges = 0;
+      for (const [id, j] of currentNodeJson) {
+        if (savedNodeJson.get(id) !== j) nodeChanges++;
+      }
+      for (const id of savedNodeJson.keys()) {
+        if (!currentNodeJson.has(id)) nodeChanges++;
+      }
+      const savedEdgeIds = new Set(saved.graph.edges.map((e) => e.id));
+      const currentEdgeIds = new Set(edges.map((e) => e.id));
+      let edgeChanges = 0;
+      for (const id of currentEdgeIds) if (!savedEdgeIds.has(id)) edgeChanges++;
+      for (const id of savedEdgeIds) if (!currentEdgeIds.has(id)) edgeChanges++;
+      const currentSettingsKeys = Object.keys(settings) as readonly string[];
+      let settingsChanges = 0;
+      for (const k of currentSettingsKeys) {
+        if (
+          JSON.stringify((settings as Record<string, unknown>)[k]) !==
+          JSON.stringify(saved.settings[k])
+        ) {
+          settingsChanges++;
+        }
+      }
+      return { nodeChanges, edgeChanges, settingsChanges };
+    } catch {
+      return null;
+    }
+  }, [activeScenarioIsModified, activeScenarioSnapshot, nodes, edges, settings]);
 
   // Render edges with per-edge throughput labels from the last run, if we have one.
   // When animateFlow is on, also assign the animated custom edge type so dots
@@ -1546,8 +1596,18 @@ function EditorCanvas() {
             {activeScenarioName ?? "Untitled scenario"}
           </span>
           {activeScenarioName && activeScenarioIsModified ? (
-            <span className="bg-sim-setup/20 text-sim-setup-foreground rounded-full px-1.5 py-0.5 text-[10px] font-medium">
+            <span
+              className="bg-sim-setup/20 text-sim-setup-foreground rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+              title={
+                activeScenarioDiff
+                  ? `Modified vs saved: ${String(activeScenarioDiff.nodeChanges)} node${activeScenarioDiff.nodeChanges === 1 ? "" : "s"}, ${String(activeScenarioDiff.edgeChanges)} edge${activeScenarioDiff.edgeChanges === 1 ? "" : "s"}, ${String(activeScenarioDiff.settingsChanges)} setting${activeScenarioDiff.settingsChanges === 1 ? "" : "s"}`
+                  : "Modified vs saved"
+              }
+            >
               modified
+              {activeScenarioDiff
+                ? ` · ${String(activeScenarioDiff.nodeChanges + activeScenarioDiff.edgeChanges + activeScenarioDiff.settingsChanges)} Δ`
+                : ""}
             </span>
           ) : null}
         </div>
@@ -2680,16 +2740,31 @@ function EditorCanvas() {
             ) : null}
             {/* VROL-685 — scenario search; hidden when fewer than 3 to save space. */}
             {scenarios.length >= 3 ? (
-              <Input
-                type="search"
-                value={scenarioSearch}
-                placeholder="Search scenarios…"
-                onChange={(e) => {
-                  setScenarioSearch(e.target.value);
-                }}
-                data-testid="scenario-search"
-                className="text-sm"
-              />
+              <div className="flex gap-2">
+                <Input
+                  type="search"
+                  value={scenarioSearch}
+                  placeholder="Search scenarios…"
+                  onChange={(e) => {
+                    setScenarioSearch(e.target.value);
+                  }}
+                  data-testid="scenario-search"
+                  className="text-sm"
+                />
+                {/* VROL-695 — sort dropdown. */}
+                <select
+                  aria-label="Sort scenarios"
+                  value={scenarioSort}
+                  onChange={(e) => {
+                    setScenarioSort(e.target.value as typeof scenarioSort);
+                  }}
+                  className="border-border bg-background rounded-md border px-2 text-xs"
+                >
+                  <option value="date">Newest</option>
+                  <option value="name">Name A→Z</option>
+                  <option value="nodes">Nodes ↓</option>
+                </select>
+              </div>
             ) : null}
             {scenarios.length === 0 ? (
               <EmptyState
@@ -2704,7 +2779,12 @@ function EditorCanvas() {
               />
             ) : (
               <ul className="space-y-2">
-                {scenarios
+                {[...scenarios]
+                  .sort((a, b) => {
+                    if (scenarioSort === "name") return a.name.localeCompare(b.name);
+                    if (scenarioSort === "nodes") return b.nodeCount - a.nodeCount;
+                    return b.savedAtMs - a.savedAtMs;
+                  })
                   .filter((s) =>
                     scenarioSearch.trim() === ""
                       ? true
