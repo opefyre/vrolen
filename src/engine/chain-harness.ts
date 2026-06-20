@@ -761,7 +761,11 @@ function* simulationStream(
     if (mgr) mgr.schedule(0);
   }
 
-  const inputBuffer = new Buffer<TrackedPart>(10_000_000);
+  // VROL-469 — inputBuffer is time-tracked so its WIP contributes to L.
+  // Previously a plain Buffer, which made L undercount whenever the source
+  // queued a part before the source station pulled it (~1 part per cycle
+  // in a balanced chain, causing a measurable L vs λW drift).
+  const inputBuffer = new TrackedBuffer<TrackedPart>(10_000_000);
   const sinkBuffer = new Buffer<TrackedPart>(10_000_000);
   // One CountingTrackedBuffer per topology edge.
   const edgeBuffers: CountingTrackedBuffer<TrackedPart>[] = topology.edges.map(
@@ -1295,6 +1299,9 @@ function* simulationStream(
   for (const buf of edgeBuffers) {
     bufferWipL += buf.averageWIP(endTimeMs);
   }
+  // VROL-469 — count the source-side inputBuffer too. Without this the
+  // chain undercounted L by ~1 part-equivalent per cycle in steady state.
+  bufferWipL += inputBuffer.averageWIP(endTimeMs);
   const inFlightApprox = executors.reduce((s, e) => s + e.config.capacity, 0);
   const averageWipL = bufferWipL + inFlightApprox;
 

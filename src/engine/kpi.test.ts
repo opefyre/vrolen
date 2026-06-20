@@ -124,6 +124,29 @@ describe("ThroughputKPI — single station", () => {
   });
 });
 
+describe("Little's Law — long-horizon fixture (VROL-469)", () => {
+  it("L = λW within 1% on a balanced 3-station chain at steady state", () => {
+    // 1 hour sim, 1000ms cycles, 60s warm-up, deep buffers. Long enough
+    // to wash out transients; short enough to run in tests in <1s.
+    // Deep buffers prevent blocking so inFlightApprox is exact. With
+    // the VROL-469 inputBuffer tracking fix, every part-millisecond in
+    // the system is counted in L.
+    const result = runChain({
+      stationCycleTimes: [constant(1_000), constant(1_000), constant(1_000)],
+      interStationBufferCapacity: 50,
+      horizonMs: 3_600_000,
+      warmupMs: 60_000,
+      prng: new SeededPrng(0xc0ffee),
+    });
+    const { averageWipL, throughputLambda, avgTimeInSystemW } = result;
+    expect(result.completed).toBeGreaterThan(3_000);
+    const predicted = throughputLambda * avgTimeInSystemW;
+    const ratio = predicted / averageWipL;
+    expect(ratio).toBeGreaterThan(0.99);
+    expect(ratio).toBeLessThan(1.01);
+  });
+});
+
 describe("Little's Law — 3-station chain in steady state", () => {
   it("L ≈ λW within order-of-magnitude on a balanced 3-station chain", () => {
     // 3 stations each at 100ms cycle time, 10-deep inter-buffers, 100s sim.
