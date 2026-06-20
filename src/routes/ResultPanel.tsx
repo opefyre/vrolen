@@ -18,6 +18,7 @@ import { narrateRun } from "@/lib/narrate-run";
 
 import { OeeOverTimeChart } from "./OeeOverTimeChart";
 import { ReworkOverTimeChart } from "./ReworkOverTimeChart";
+import { OeeBreakdown } from "./OeeBreakdown";
 import { StatePareto } from "./StatePareto";
 import { ThroughputChart } from "./ThroughputChart";
 
@@ -266,6 +267,18 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
         </CardHeader>
         <CardContent>
           <StatePareto result={result} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-heading text-base">OEE breakdown</CardTitle>
+          <CardDescription>
+            Availability × Performance × Quality per station. The slim factor is the lever.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <OeeBreakdown result={result} />
         </CardContent>
       </Card>
 

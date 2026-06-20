@@ -1,4 +1,5 @@
 import {
+  BookOpen,
   Factory,
   LayoutGrid,
   Network,
@@ -25,6 +26,7 @@ const NAV_ITEMS: readonly NavItem[] = [
   { href: "/", label: "Home", icon: LayoutGrid },
   { href: "/run", label: "Run", icon: Play },
   { href: "/editor", label: "Editor", icon: Network },
+  { href: "/help", label: "Glossary", icon: BookOpen },
   { href: "/design-tokens", label: "Design tokens", icon: Palette },
 ];
 

@@ -83,6 +83,27 @@ export function listRuns(scenarioName: string): readonly RunHistoryEntry[] {
   return readStore()[scenarioName] ?? [];
 }
 
+export interface RunHistoryEntryWithScenario extends RunHistoryEntry {
+  readonly scenarioName: string;
+}
+
+/**
+ * VROL-674 — recent runs across every scenario, newest-first, capped.
+ * Powers the "Recent runs" section in the scenarios sheet so users can
+ * jump back to a recent run without scrolling per-scenario lists.
+ */
+export function listRecentRuns(limit = 10): readonly RunHistoryEntryWithScenario[] {
+  const store = readStore();
+  const all: RunHistoryEntryWithScenario[] = [];
+  for (const [scenarioName, entries] of Object.entries(store)) {
+    for (const entry of entries) {
+      all.push({ ...entry, scenarioName });
+    }
+  }
+  all.sort((a, b) => b.runAtMs - a.runAtMs);
+  return all.slice(0, limit);
+}
+
 export function clearRuns(scenarioName: string): void {
   const store = readStore();
   if (!(scenarioName in store)) return;

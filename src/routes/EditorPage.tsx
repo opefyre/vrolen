@@ -110,6 +110,7 @@ import {
   addRun as addRunToHistory,
   listRuns as listRunHistory,
   type RunHistoryEntry,
+  type RunHistoryEntryWithScenario,
 } from "@/lib/run-history";
 import { consumePendingPreset, PRESETS, type Preset } from "@/lib/presets";
 import { runScenario, type ScenarioRunOutcome } from "@/lib/run-scenario";
@@ -521,6 +522,8 @@ const NODE_TYPES = { station: StationNode };
 // bloat the first non-editor route. It's used inside this lazy-loaded file,
 // so a normal import is fine.
 import { AnimatedEdge } from "./AnimatedEdge";
+import { hasSeenWelcomeToast, markWelcomeToastSeen } from "@/lib/welcome-toast";
+
 import { OnboardingTour } from "./OnboardingTour";
 import { hasSeenOnboarding } from "./onboarding-state";
 import { Sparkline } from "./Sparkline";
@@ -729,10 +732,35 @@ function EditorCanvas() {
       return out;
     },
   );
+  // VROL-674 — flattened recent runs across all scenarios for the sticky panel.
+  const recentRuns: readonly RunHistoryEntryWithScenario[] = useMemo(() => {
+    const all: RunHistoryEntryWithScenario[] = [];
+    for (const [name, entries] of Object.entries(historyByScenario)) {
+      for (const e of entries) all.push({ ...e, scenarioName: name });
+    }
+    all.sort((a, b) => b.runAtMs - a.runAtMs);
+    return all.slice(0, 10);
+  }, [historyByScenario]);
 
   useEffect(() => {
     saveRunSettings(settings);
   }, [settings]);
+
+  // VROL-677 — one-time welcome toast on first /editor visit. Fires alongside
+  // the modal tour for users who skip the tour; harmless if both surface.
+  useEffect(() => {
+    if (hasSeenWelcomeToast()) return;
+    markWelcomeToastSeen();
+    const id = setTimeout(() => {
+      toast.message("Welcome to the editor", {
+        description:
+          "Drag a station from the palette on the left, or open Scenarios → Examples to load a preset.",
+      });
+    }, 600);
+    return () => {
+      clearTimeout(id);
+    };
+  }, []);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flow = useReactFlow();
   const nodeIdRef = useRef<number>(
@@ -2433,6 +2461,41 @@ function EditorCanvas() {
                 ))}
               </ul>
             </div>
+            {/* VROL-674 — recent runs across every scenario, newest-first. */}
+            {recentRuns.length > 0 ? (
+              <div
+                className="border-border space-y-2 rounded-md border p-3"
+                data-testid="recent-runs-panel"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium">Recent runs</div>
+                  <span className="text-muted-foreground text-[10px]">
+                    last {recentRuns.length}
+                  </span>
+                </div>
+                <ul className="space-y-1">
+                  {recentRuns.map((r, i) => {
+                    const tPerHr = Math.round(r.throughputLambda * 3_600_000);
+                    return (
+                      <li
+                        key={`${r.scenarioName}-${String(r.runAtMs)}-${String(i)}`}
+                        className="bg-card border-border flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-xs"
+                      >
+                        <span className="min-w-0 flex-1 truncate font-medium">
+                          {r.scenarioName}
+                        </span>
+                        <span
+                          className="text-muted-foreground font-mono tabular-nums"
+                          title={`${r.completed.toLocaleString()} completed · OEE ${(r.lineOee * 100).toFixed(0)}%`}
+                        >
+                          {tPerHr.toLocaleString()}/hr
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : null}
             {scenarios.length === 0 ? (
               <EmptyState
                 icon={Save}

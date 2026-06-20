@@ -4,6 +4,7 @@ import { AppShell } from "@/components/AppShell";
 import { Toaster } from "@/components/Toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import DesignTokens from "@/routes/DesignTokens";
+import HelpPage from "@/routes/HelpPage";
 import LandingPage from "@/routes/LandingPage";
 import RunPage from "@/routes/RunPage";
 
@@ -24,6 +25,7 @@ export default function App() {
   const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
   let page;
   if (pathname === "/design-tokens") page = <DesignTokens />;
+  else if (pathname === "/help") page = <HelpPage />;
   else if (pathname === "/run") page = <RunPage />;
   else if (pathname === "/editor")
     page = (

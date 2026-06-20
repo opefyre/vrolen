@@ -4,6 +4,7 @@ import {
   _clearAllForTests,
   addRun,
   clearRuns,
+  listRecentRuns,
   listRuns,
   type RunHistoryEntry,
 } from "./run-history";
@@ -71,6 +72,19 @@ describe("run-history", () => {
     const runs = listRuns("scenP");
     expect(runs[0]?.payload).toBeDefined();
     expect(runs[0]?.payload?.graph.nodes).toEqual([]);
+  });
+
+  it("listRecentRuns flattens across scenarios newest-first with cap (VROL-674)", () => {
+    addRun("a", entry(100));
+    addRun("b", entry(300));
+    addRun("a", entry(200));
+    addRun("c", entry(500));
+    const recent = listRecentRuns(3);
+    expect(recent).toHaveLength(3);
+    expect(recent[0]?.runAtMs).toBe(500);
+    expect(recent[0]?.scenarioName).toBe("c");
+    expect(recent[1]?.runAtMs).toBe(300);
+    expect(recent[2]?.runAtMs).toBe(200);
   });
 
   it("clearRuns removes the scenario's history", () => {
