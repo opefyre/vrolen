@@ -816,6 +816,34 @@ function EditorCanvas() {
   // VROL-738 — autosave indicator flash. Drives off the same effect as the
   // saveGraph call so the chip pulses 'Saving…' for ~250ms after each change.
   const [autosaveState, setAutosaveState] = useState<"saved" | "saving">("saved");
+  // VROL-739 — on first mount, if the persisted canvas was non-empty (i.e. we
+  // actually recovered prior work), surface a one-shot toast with an Undo
+  // affordance so the user can confirm or revert the restore.
+  const restoreCheckedRef = useRef(false);
+  useEffect(() => {
+    if (restoreCheckedRef.current) return;
+    restoreCheckedRef.current = true;
+    if (initial.presetTitle) return;
+    if (initial.nodes.length === 0) return;
+    toast.message("Restored last session", {
+      description: `${String(initial.nodes.length)} stations · ${String(initial.edges.length)} edges`,
+      action: {
+        label: "Start fresh",
+        onClick: () => {
+          setNodes([]);
+          setEdges([]);
+          setSelectedNodeId(null);
+          toast.success("Canvas cleared");
+        },
+      },
+    });
+  }, [
+    initial.nodes.length,
+    initial.edges.length,
+    initial.presetTitle,
+    initial.nodes,
+    initial.edges,
+  ]);
   useEffect(() => {
     saveGraph({ nodes, edges });
     let id: ReturnType<typeof setTimeout> | null = null;
