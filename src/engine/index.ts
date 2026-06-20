@@ -203,3 +203,28 @@ export { meanOf } from "./distribution";
 // OEE + canonical sub-metrics (VROL-138).
 export type { OeeMetrics, OeeInputs } from "./oee";
 export { computeOee } from "./oee";
+
+// VROL-163/166/170/174/178/182 — Agent overlay (E05). Spatial reasoning that
+// sits on top of the DES engine: positions, straight-line movement, travel
+// time, worker ranking, shift transitions, and spatial KPIs.
+export type {
+  Point,
+  WorkerMode,
+  WorkerSpatialState,
+  WorkerCandidate,
+  RankOptions,
+  ShiftSignal,
+} from "./spatial";
+export {
+  distance,
+  travelTimeMs,
+  advanceWorker,
+  rankWorkers,
+  applyShiftSignal,
+  SpatialKpi,
+} from "./spatial";
+
+// VROL-76 — Sampler interface re-export so consumers don't have to dig into
+// the engine subtree.
+export type { Sampler } from "./sampler";
+export { makeSampler } from "./sampler";
