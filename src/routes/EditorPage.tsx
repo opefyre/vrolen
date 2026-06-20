@@ -165,6 +165,9 @@ const STATION_TYPE_ICON: Record<string, typeof Factory> = {
   transport: Truck,
   input: ConciergeBell,
   output: Wrench,
+  // VROL-274 — escape-hatch type for stations that don't fit the standard
+  // typed renderers. Engine treats as a normal timed-delay station.
+  custom: HelpCircle,
 };
 
 const PALETTE: readonly PaletteItem[] = [
@@ -176,6 +179,8 @@ const PALETTE: readonly PaletteItem[] = [
   { stationType: "transport", label: "Transport", icon: Truck, summary: "Move parts" },
   { stationType: "input", label: "Material input", icon: ConciergeBell, summary: "Source" },
   { stationType: "output", label: "Output", icon: Wrench, summary: "Sink" },
+  // VROL-274 — generic escape-hatch.
+  { stationType: "custom", label: "Custom", icon: HelpCircle, summary: "Generic timed-delay" },
 ];
 
 /**
@@ -390,6 +395,9 @@ const STATION_TYPE_ACCENT: Record<string, { pill: string; border: string }> = {
     pill: "bg-sim-maintenance/15 text-sim-maintenance",
     border: "border-l-sim-maintenance/60",
   },
+  // VROL-274 — neutral muted accent so a CustomStation reads as "tell me
+  // what this is" rather than borrowing semantics from one of the typed types.
+  custom: { pill: "bg-muted text-muted-foreground", border: "border-l-muted-foreground/40" },
 };
 
 function StationNode({ data, selected }: NodeProps) {
@@ -404,6 +412,9 @@ function StationNode({ data, selected }: NodeProps) {
       ? Object.keys(d.changeoverMatrix).length > 0
       : false;
   const hasRework = typeof d.reworkTargetNodeId === "string" && d.reworkTargetNodeId.length > 0;
+  // VROL-274 — CustomStation explicit badge so the canvas surface always
+  // tells the user "this is user-defined" without opening Inspector.
+  const isCustom = d.stationType === "custom";
   // VROL-650 — surface parallel-capacity on the node so it's discoverable
   // without opening Inspector. capacity=1 (default) shows nothing.
   const capacity =
@@ -450,9 +461,18 @@ function StationNode({ data, selected }: NodeProps) {
         (hasSetup ? 1 : 0) +
         (hasMatrix ? 1 : 0) +
         (hasRework ? 1 : 0) +
-        (hasParallel ? 1 : 0) >
+        (hasParallel ? 1 : 0) +
+        (isCustom ? 1 : 0) >
       0 ? (
         <div className="text-muted-foreground mt-1.5 flex flex-wrap gap-1 text-[10px]">
+          {isCustom ? (
+            <span
+              className="bg-muted text-foreground rounded-full px-1.5 py-0.5"
+              title="User-defined station — engine treats as a generic timed delay"
+            >
+              Custom
+            </span>
+          ) : null}
           {maintenanceCount > 0 ? (
             <span className="bg-muted rounded-full px-1.5 py-0.5" title="Maintenance windows">
               🛠 {maintenanceCount}
