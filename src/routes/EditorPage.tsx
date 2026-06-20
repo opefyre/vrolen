@@ -1193,16 +1193,33 @@ function EditorCanvas() {
       }
       const horizonMs = settings.horizonMs;
       const warmupMs = Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2));
-      setComparison({
-        aName: savedName,
-        aResult: aOutcome.result,
-        aStationLabels: aOutcome.runMeta.stationLabels,
-        bName: "Current canvas",
-        bResult: bOutcome.result,
-        bStationLabels: bOutcome.runMeta.stationLabels,
-        horizonMs,
-        warmupMs,
-      });
+      // VROL-713 — honor the user's persisted A↔B flip preference.
+      const flip =
+        typeof window !== "undefined" &&
+        window.localStorage?.getItem?.("vrolen.compare-flip") === "1";
+      setComparison(
+        flip
+          ? {
+              aName: "Current canvas",
+              aResult: bOutcome.result,
+              aStationLabels: bOutcome.runMeta.stationLabels,
+              bName: savedName,
+              bResult: aOutcome.result,
+              bStationLabels: aOutcome.runMeta.stationLabels,
+              horizonMs,
+              warmupMs,
+            }
+          : {
+              aName: savedName,
+              aResult: aOutcome.result,
+              aStationLabels: aOutcome.runMeta.stationLabels,
+              bName: "Current canvas",
+              bResult: bOutcome.result,
+              bStationLabels: bOutcome.runMeta.stationLabels,
+              horizonMs,
+              warmupMs,
+            },
+      );
       // VROL-654 — persist the comparison so it survives navigating away.
       try {
         addComparison({
@@ -2472,6 +2489,36 @@ function EditorCanvas() {
                 variant="outline"
                 size="sm"
                 onClick={() => {
+                  // VROL-713 — flip A and B sides; persisted preference so users
+                  // who consistently want canvas-as-A see it that way next time.
+                  if (typeof window !== "undefined") {
+                    const v = window.localStorage?.getItem?.("vrolen.compare-flip") ?? "0";
+                    window.localStorage?.setItem?.("vrolen.compare-flip", v === "1" ? "0" : "1");
+                  }
+                  setComparison((c) =>
+                    c
+                      ? {
+                          aName: c.bName,
+                          aResult: c.bResult,
+                          aStationLabels: c.bStationLabels,
+                          bName: c.aName,
+                          bResult: c.aResult,
+                          bStationLabels: c.aStationLabels,
+                          horizonMs: c.horizonMs,
+                          warmupMs: c.warmupMs,
+                        }
+                      : null,
+                  );
+                }}
+              >
+                Flip A↔B
+              </Button>
+            ) : null}
+            {comparison ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
                   // VROL-668 — export comparison as JSON.
                   const payload = {
                     savedAtMs: Date.now(),
@@ -3184,9 +3231,53 @@ function EditorCanvas() {
 
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
         <SheetContent side="right" className="w-[24rem] sm:max-w-md">
-          <SheetHeader>
-            <SheetTitle>Run settings</SheetTitle>
-            <SheetDescription>Applied to every Run. Persisted across reloads.</SheetDescription>
+          <SheetHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
+            <div className="space-y-1">
+              <SheetTitle>Run settings</SheetTitle>
+              <SheetDescription>Applied to every Run. Persisted across reloads.</SheetDescription>
+            </div>
+            {/* VROL-712 — copy / paste settings JSON. */}
+            <div className="flex shrink-0 gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  try {
+                    void navigator.clipboard?.writeText(JSON.stringify(settings, null, 2));
+                    toast.success("Settings copied as JSON");
+                  } catch {
+                    toast.error("Copy failed");
+                  }
+                }}
+              >
+                Copy
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    const text = await navigator.clipboard?.readText();
+                    if (!text) {
+                      toast.error("Clipboard is empty");
+                      return;
+                    }
+                    const parsed = JSON.parse(text) as unknown;
+                    if (!parsed || typeof parsed !== "object") {
+                      toast.error("Not a settings object");
+                      return;
+                    }
+                    setSettings({ ...DEFAULT_RUN_SETTINGS, ...(parsed as RunSettings) });
+                    toast.success("Settings pasted from clipboard");
+                  } catch (err) {
+                    const m = err instanceof Error ? err.message : String(err);
+                    toast.error("Paste failed", { description: m });
+                  }
+                }}
+              >
+                Paste
+              </Button>
+            </div>
           </SheetHeader>
           <div className="space-y-5 px-4 pb-6">
             {/* VROL-633 — at-a-glance status strip so the user sees which
@@ -3262,6 +3353,28 @@ function EditorCanvas() {
                     }}
                     className="font-mono tabular-nums"
                   />
+                  {/* VROL-710 — horizon quick picks. */}
+                  <div className="flex flex-wrap gap-1">
+                    {[
+                      { label: "1h", ms: 3_600_000 },
+                      { label: "8h", ms: 8 * 3_600_000 },
+                      { label: "24h", ms: 24 * 3_600_000 },
+                      { label: "1w", ms: 7 * 24 * 3_600_000 },
+                    ].map((p) => (
+                      <button
+                        key={p.label}
+                        type="button"
+                        onClick={() => {
+                          setSettings((s) => ({ ...s, horizonMs: p.ms }));
+                        }}
+                        className={`border-border hover:bg-muted rounded-md border px-1.5 py-0.5 font-mono text-[10px] ${
+                          settings.horizonMs === p.ms ? "bg-muted text-foreground" : ""
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <NumberField
                   id="rs-warmup"
@@ -4297,16 +4410,44 @@ function EditorCanvas() {
             </Accordion>
 
             <div className="flex justify-between gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setSettings(DEFAULT_RUN_SETTINGS);
-                  toast.info("Run settings reset");
-                }}
-              >
-                Reset to defaults
-              </Button>
+              <div className="flex items-center gap-2">
+                {confirmReset ? (
+                  <>
+                    <span className="text-muted-foreground text-xs">Discard all changes?</span>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => {
+                        setSettings(DEFAULT_RUN_SETTINGS);
+                        setConfirmReset(false);
+                        toast.info("Run settings reset");
+                      }}
+                    >
+                      Yes, reset
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setConfirmReset(false);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      // VROL-711 — require inline confirm before clobbering settings.
+                      setConfirmReset(true);
+                    }}
+                  >
+                    Reset to defaults
+                  </Button>
+                )}
+              </div>
               <Button
                 size="sm"
                 onClick={() => {
