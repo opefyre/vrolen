@@ -1122,6 +1122,50 @@ describe("runChain — rework loops (VROL-626)", () => {
   });
 });
 
+describe("runChain — production plan FIFO (VROL-158)", () => {
+  it("emits products in plan order; counts match plan quantities", () => {
+    // Plan: 5 A's, then 3 B's, then 2 A's. 10 parts total.
+    // 50ms cycles × 3 stations + ample buffer → all 10 finish in well under 60s.
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(50), constant(50)],
+      interStationBufferCapacity: 20,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+      products: {
+        products: [
+          { id: "A", weight: 1 }, // weights ignored once plan is set
+          { id: "B", weight: 1 },
+        ],
+        productionPlan: [
+          { productId: "A", quantity: 5 },
+          { productId: "B", quantity: 3 },
+          { productId: "A", quantity: 2 },
+        ],
+      },
+    });
+    expect(result.completed).toBe(10);
+    expect(result.perProductCompleted!.get("A")).toBe(7);
+    expect(result.perProductCompleted!.get("B")).toBe(3);
+  });
+
+  it("stops emitting once the plan is exhausted (source drains naturally)", () => {
+    // Plan: 3 parts. Long horizon. Source must not keep producing.
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(50)],
+      interStationBufferCapacity: 10,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+      products: {
+        products: [{ id: "A", weight: 1 }],
+        productionPlan: [{ productId: "A", quantity: 3 }],
+      },
+    });
+    expect(result.completed).toBe(3);
+  });
+});
+
 describe("runChain — multi-product mix (VROL-594)", () => {
   it("samples products at the source according to the configured weights", () => {
     // 60/40 A/B mix; over many parts the observed ratio should match within ~5%.

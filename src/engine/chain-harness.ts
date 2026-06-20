@@ -245,6 +245,16 @@ export interface ChainResult {
 export interface ChainProductsConfig {
   /** Weighted product mix. Weights are normalized; relative sizes are what matter. */
   readonly products: ReadonlyArray<{ readonly id: string; readonly weight: number }>;
+  /**
+   * VROL-158 — optional production plan. When set, the source emits parts
+   * in this exact order: `quantity` of `productId`, then move to the next
+   * entry. When the plan is exhausted, no more parts are pushed (chain
+   * drains naturally). Overrides the weighted mix above.
+   */
+  readonly productionPlan?: ReadonlyArray<{
+    readonly productId: string;
+    readonly quantity: number;
+  }>;
 }
 
 export interface ChainWorkerConfig {
@@ -944,7 +954,24 @@ function* simulationStream(
       productCumulative.push({ id: p.id, cum: acc });
     }
   }
+  // VROL-158 — production plan state. When set, pickProduct walks the plan
+  // FIFO; pushPart returns false once the plan is exhausted so refillOne
+  // stops emitting parts.
+  const plan = opts.products?.productionPlan;
+  let planIdx = 0;
+  let planUnitsRemaining = plan && plan.length > 0 ? plan[0]!.quantity : 0;
   const pickProduct = (): string | undefined => {
+    if (plan && plan.length > 0) {
+      // Skip exhausted entries.
+      while (planIdx < plan.length && planUnitsRemaining <= 0) {
+        planIdx += 1;
+        if (planIdx < plan.length) planUnitsRemaining = plan[planIdx]!.quantity;
+      }
+      if (planIdx >= plan.length) return undefined; // plan exhausted
+      const entry = plan[planIdx]!;
+      planUnitsRemaining -= 1;
+      return entry.productId;
+    }
     if (productCumulative.length === 0) return undefined;
     const r = opts.prng.nextFloat();
     for (const entry of productCumulative) {
@@ -952,6 +979,9 @@ function* simulationStream(
     }
     return productCumulative[productCumulative.length - 1]!.id;
   };
+  // True when the plan exists AND has no more units to emit.
+  const planExhausted = (): boolean =>
+    plan !== undefined && plan.length > 0 && planIdx >= plan.length;
 
   // Refill the input on-demand, ONE part at a time, stamped with the time
   // the source will pull it. This keeps W (time-in-system) at exit honest —
@@ -961,7 +991,11 @@ function* simulationStream(
   // mode and the on-completion-refill below is skipped.
   let nextPartId = 0;
   const pushPart = (timeMs: number): void => {
+    // VROL-158 — once the production plan is exhausted, stop pushing parts.
+    // Source station will starve naturally; chain drains via remaining WIP.
+    if (planExhausted()) return;
     const productId = pickProduct();
+    if (plan && plan.length > 0 && productId === undefined) return;
     inputBuffer.push({
       id: nextPartId++,
       enteredSystemAtMs: timeMs,
