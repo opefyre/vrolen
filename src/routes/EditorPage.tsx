@@ -118,6 +118,8 @@ import {
   validateScenario,
   type ValidationIssue,
 } from "@/lib/validate-scenario";
+import { CustomParamsField } from "@/components/editor/custom-params-field";
+import type { CustomParam } from "@/lib/custom-params";
 import { FieldErrorIndicator } from "@/components/editor/field-error-indicator";
 import { ValidationPanel } from "@/components/editor/validation-panel";
 import {
@@ -1878,6 +1880,18 @@ function EditorCanvas() {
                   />
                 </div>
               ) : null}
+              {/* VROL-286 — customParams editor. Always available. */}
+              <CustomParamsField
+                value={
+                  ((selectedNode.data as { customParams?: readonly CustomParam[] }).customParams ??
+                    []) as readonly CustomParam[]
+                }
+                onChange={(next) => {
+                  updateSelectedNodeData({
+                    customParams: next.length > 0 ? next : undefined,
+                  });
+                }}
+              />
             </CardContent>
             {/* VROL-633 — advanced settings collapsed by default. Power users
                 expand once; the toggle's open/closed state persists per
