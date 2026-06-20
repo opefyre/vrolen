@@ -8,11 +8,51 @@
  * Hand-rolled SVG hero. No new dependencies.
  */
 
-import { ArrowRight, Activity, GitBranch, Settings2 } from "lucide-react";
+import { ArrowRight, Activity, ExternalLink, GitBranch, Settings2 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { PRESETS, setPendingPreset } from "@/lib/presets";
 import { TopologyPreview } from "@/components/landing/topology-preview";
+
+/** VROL-707 — derive a coarse category from preset id so cards can show a tag. */
+function presetCategory(id: string): { label: string; tone: string } {
+  if (id.includes("bottling") || id.includes("pharma") || id.includes("bakery")) {
+    return { label: "Process", tone: "bg-sim-running/15 text-sim-running" };
+  }
+  if (id.includes("worker") || id.includes("labor")) {
+    return { label: "Labor", tone: "bg-sim-setup/15 text-sim-setup-foreground" };
+  }
+  if (id.includes("maintenance") || id.includes("breakdown")) {
+    return { label: "Reliability", tone: "bg-sim-down/15 text-sim-down-foreground" };
+  }
+  if (id.includes("changeover") || id.includes("job-shop") || id.includes("mixed")) {
+    return { label: "Mix", tone: "bg-sim-blocked/15 text-sim-blocked-foreground" };
+  }
+  if (id.includes("parallel") || id.includes("two-line") || id.includes("electronics")) {
+    return { label: "Topology", tone: "bg-sim-maintenance/15 text-sim-maintenance-foreground" };
+  }
+  return { label: "Demo", tone: "bg-muted text-muted-foreground" };
+}
+
+/** VROL-706 — count up to N over ~600ms. Lightweight CSS-free counter. */
+function useCountUp(target: number, durationMs = 600): number {
+  const [v, setV] = useState(0);
+  useEffect(() => {
+    let raf = 0;
+    const start = performance.now();
+    const tick = (t: number) => {
+      const k = Math.min(1, (t - start) / durationMs);
+      setV(Math.round(k * target));
+      if (k < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+    };
+  }, [target, durationMs]);
+  return v;
+}
 
 function HeroFlow() {
   // Three-station mini chain with two animated dots flowing along the bezier.
@@ -79,6 +119,30 @@ function HeroFlow() {
   );
 }
 
+function HeroStats() {
+  const presets = useCountUp(PRESETS.length);
+  const stations = useCountUp(10);
+  const runsPerMin = useCountUp(60);
+  return (
+    <div className="mx-auto grid max-w-md grid-cols-3 gap-3 text-center">
+      <Stat value={presets} label="presets" />
+      <Stat value={stations} label="station types" />
+      <Stat value={runsPerMin} label="sims/min" />
+    </div>
+  );
+}
+
+function Stat({ value, label }: { value: number; label: string }) {
+  return (
+    <div>
+      <div className="font-heading text-foreground text-2xl font-bold tabular-nums">
+        {value.toLocaleString()}
+      </div>
+      <div className="text-muted-foreground mt-0.5 text-xs tracking-wide uppercase">{label}</div>
+    </div>
+  );
+}
+
 function FeatureCard({
   icon: Icon,
   title,
@@ -122,6 +186,8 @@ export default function LandingPage() {
           where the constraint really is.
         </p>
         <HeroFlow />
+        {/* VROL-706 — animated stat counters anchored below the hero. */}
+        <HeroStats />
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Button
             size="lg"
@@ -191,16 +257,24 @@ export default function LandingPage() {
                 <span className="font-heading text-sm font-semibold">{preset.title}</span>
                 <ArrowRight className="text-muted-foreground group-hover:text-foreground h-4 w-4 transition-colors" />
               </div>
-              <span className="bg-sim-running/15 text-sim-running self-start rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide uppercase">
-                {preset.highlight}
-              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {/* VROL-707 — category badge. */}
+                <span
+                  className={`${presetCategory(preset.id).tone} rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide uppercase`}
+                >
+                  {presetCategory(preset.id).label}
+                </span>
+                <span className="bg-sim-running/15 text-sim-running rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide uppercase">
+                  {preset.highlight}
+                </span>
+              </div>
               <span className="text-muted-foreground text-xs leading-relaxed">{preset.blurb}</span>
             </button>
           ))}
         </div>
       </section>
 
-      {/* Footer */}
+      {/* Footer — VROL-708 */}
       <footer className="border-border text-muted-foreground flex flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t pt-6 text-xs">
         <a href="/editor" className="hover:text-foreground">
           /editor
@@ -208,11 +282,22 @@ export default function LandingPage() {
         <a href="/run" className="hover:text-foreground">
           /run
         </a>
+        <a href="/help" className="hover:text-foreground">
+          /help
+        </a>
         <a href="/design-tokens" className="hover:text-foreground">
           /design-tokens
         </a>
         <span>—</span>
         <span>Phase 0 portfolio build</span>
+        <a
+          href="https://github.com/opefyre/vrolen"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:text-foreground inline-flex items-center gap-1"
+        >
+          source <ExternalLink className="h-3 w-3" />
+        </a>
       </footer>
     </div>
   );

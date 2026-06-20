@@ -4,7 +4,7 @@
  * without leaving the app.
  */
 
-import { Activity, Award, Gauge, Layers, Timer, Wrench } from "lucide-react";
+import { Activity, Award, ExternalLink, Gauge, Layers, Timer, Wrench } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -13,6 +13,8 @@ interface Term {
   readonly title: string;
   readonly definition: string;
   readonly formula?: string;
+  /** VROL-709 — optional external link for users who want to read more. */
+  readonly learnMore?: string;
 }
 
 const KPI_TERMS: readonly Term[] = [
@@ -27,6 +29,7 @@ const KPI_TERMS: readonly Term[] = [
     title: "Throughput (λ)",
     definition: "Average parts produced per unit time. Reported per hour and per second.",
     formula: "completed / measurement window",
+    learnMore: "https://en.wikipedia.org/wiki/Throughput",
   },
   {
     icon: Activity,
@@ -39,6 +42,7 @@ const KPI_TERMS: readonly Term[] = [
     title: "Time-in-system (W)",
     definition:
       "Average time a finished part spent in the line, from arrival at the first station to exit. Little's Law: L = λW.",
+    learnMore: "https://en.wikipedia.org/wiki/Little%27s_law",
   },
   {
     icon: Award,
@@ -46,6 +50,7 @@ const KPI_TERMS: readonly Term[] = [
     definition:
       "Overall Equipment Effectiveness for the whole line. Actual throughput divided by the theoretical maximum, clamped to ≤ 100%.",
     formula: "actual throughput / theoretical max",
+    learnMore: "https://en.wikipedia.org/wiki/Overall_equipment_effectiveness",
   },
   {
     icon: Award,
@@ -59,6 +64,7 @@ const KPI_TERMS: readonly Term[] = [
     title: "Bottleneck",
     definition:
       "The station with the highest Running %. Its rate caps the entire line — speeding up any other station won't help.",
+    learnMore: "https://en.wikipedia.org/wiki/Theory_of_constraints",
   },
 ];
 
@@ -124,6 +130,17 @@ export default function HelpPage() {
                       <code className="bg-muted inline-block rounded px-1.5 py-0.5 text-xs">
                         {t.formula}
                       </code>
+                    ) : null}
+                    {t.learnMore ? (
+                      <a
+                        href={t.learnMore}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-muted-foreground hover:text-foreground ml-2 inline-flex items-center gap-0.5 text-[11px] underline-offset-2 hover:underline"
+                      >
+                        Learn more
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
                     ) : null}
                   </div>
                 </div>
