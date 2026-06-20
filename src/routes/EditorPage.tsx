@@ -688,6 +688,7 @@ import { useAlignmentGuides } from "@/components/canvas/use-alignment-guides";
 import { CanvasContextMenu, type ContextMenuTarget } from "@/components/canvas/context-menu";
 import { CommandPalette, type CommandAction } from "@/components/canvas/command-palette";
 import { AlignmentToolbar, type AlignOp } from "@/components/canvas/alignment-toolbar";
+import { QuickAddGhosts, type QuickAddStationType } from "@/components/canvas/quick-add-ghosts";
 import { applyAlignment } from "@/lib/align-nodes";
 import { FrameNode } from "@/components/canvas/frame-node";
 import { StickyNoteNode } from "@/components/canvas/sticky-note-node";
@@ -2656,6 +2657,60 @@ function EditorCanvas() {
     };
   }, [nodes, viewport.x, viewport.y, viewport.zoom]);
 
+  // Ghost quick-add anchor — right-mid edge of the selected node in
+  // wrapper-relative coords. Only renders when exactly ONE station node
+  // is selected (multi-select keeps the alignment toolbar instead).
+  const quickAddAnchor = useMemo<{ left: number; top: number } | null>(() => {
+    if (!selectedNodeId || selectedNodeIds.length > 1) return null;
+    const node = nodes.find((n) => n.id === selectedNodeId);
+    if (!node || node.type !== "station") return null;
+    const w = node.width ?? node.measured?.width ?? 180;
+    const h = node.height ?? node.measured?.height ?? 60;
+    const rightX = node.position.x + w;
+    const midY = node.position.y + h / 2;
+    return {
+      left: rightX * viewport.zoom + viewport.x,
+      top: midY * viewport.zoom + viewport.y,
+    };
+  }, [selectedNodeId, selectedNodeIds, nodes, viewport.x, viewport.y, viewport.zoom]);
+
+  // Quick-add handler — spawn a new station of the chosen type, positioned
+  // a comfortable distance to the right of the selected node, and wire an
+  // edge from selected → new. The new station inherits the selected node's
+  // y-position so the chain stays horizontal.
+  const handleQuickAdd = useCallback(
+    (stationType: QuickAddStationType): void => {
+      if (!selectedNodeId) return;
+      const source = nodes.find((n) => n.id === selectedNodeId);
+      if (!source) return;
+      const item = PALETTE.find((p) => p.stationType === stationType);
+      if (!item) return;
+      const newId = `n${String(nodeIdRef.current++)}`;
+      const w = source.width ?? source.measured?.width ?? 180;
+      const newNode: Node = {
+        id: newId,
+        type: "station",
+        position: { x: source.position.x + w + 80, y: source.position.y },
+        data: {
+          label: item.label,
+          stationType: item.stationType,
+          cycleDistribution: constant(100),
+          defectRate: 0,
+          stationKey: generateStationKey(),
+        },
+      };
+      const newEdge: Edge = {
+        id: `e${String(Date.now())}-${selectedNodeId}-${newId}`,
+        source: selectedNodeId,
+        target: newId,
+      };
+      setNodes((ns) => ns.concat(newNode));
+      setEdges((eds) => eds.concat(newEdge));
+      setSelectedNodeId(newId);
+    },
+    [selectedNodeId, nodes, setNodes, setEdges],
+  );
+
   return (
     <div className="space-y-3">
       {/* VROL-632 — first-run onboarding tour. Renders nothing when !tourOpen. */}
@@ -3279,6 +3334,7 @@ function EditorCanvas() {
             canDistribute={nodes.filter((n) => n.selected).length >= 3}
             onOp={onAlignmentOp}
           />
+          <QuickAddGhosts anchor={quickAddAnchor} onAdd={handleQuickAdd} />
         </div>
         {commandOpen ? (
           <CommandPalette

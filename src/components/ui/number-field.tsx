@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -71,12 +71,59 @@ export function NumberField({
     [value, min, max, onChange],
   );
 
+  // Figma-style scrubby input — drag the label horizontally to scrub the
+  // value. Shift = ×10. Cursor changes to ew-resize on hover.
+  const scrubStartRef = useRef<{
+    clientX: number;
+    valueAt: number;
+  } | null>(null);
+  const onLabelPointerDown = useCallback(
+    (e: React.PointerEvent): void => {
+      if (disabled) return;
+      // Only left button.
+      if (e.button !== 0) return;
+      e.preventDefault();
+      scrubStartRef.current = { clientX: e.clientX, valueAt: value };
+      (e.target as Element).setPointerCapture?.(e.pointerId);
+    },
+    [disabled, value],
+  );
+  const onLabelPointerMove = useCallback(
+    (e: React.PointerEvent): void => {
+      const start = scrubStartRef.current;
+      if (!start) return;
+      const dx = e.clientX - start.clientX;
+      // 1 px = 1 step; shift = 10 steps
+      const sensitivity = e.shiftKey ? step * 10 : step;
+      const raw = start.valueAt + dx * sensitivity;
+      // Snap to step grid
+      const snapped = Math.round(raw / step) * step;
+      let clamped = snapped;
+      if (typeof min === "number" && clamped < min) clamped = min;
+      if (typeof max === "number" && clamped > max) clamped = max;
+      if (clamped !== value) onChange(clamped);
+    },
+    [step, min, max, value, onChange],
+  );
+  const onLabelPointerUp = useCallback((e: React.PointerEvent): void => {
+    scrubStartRef.current = null;
+    (e.target as Element).releasePointerCapture?.(e.pointerId);
+  }, []);
+
   return (
     <div className={cn("flex flex-col gap-1", className)}>
       {label ? (
         <label
           htmlFor={id}
-          className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium"
+          className={cn(
+            "text-muted-foreground flex items-center gap-1.5 text-xs font-medium select-none",
+            disabled ? "" : "cursor-ew-resize",
+          )}
+          onPointerDown={onLabelPointerDown}
+          onPointerMove={onLabelPointerMove}
+          onPointerUp={onLabelPointerUp}
+          onPointerCancel={onLabelPointerUp}
+          title={disabled ? undefined : "Drag to scrub the value · Shift = ×10"}
         >
           {label}
           {labelSuffix}
