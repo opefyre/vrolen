@@ -50,6 +50,8 @@ interface ResultPanelProps {
   readonly runMeta: ResultPanelRunMeta;
   readonly horizonMs: number;
   readonly warmupMs: number;
+  /** VROL-690 — pan+zoom canvas to a station by chain-order index. */
+  readonly onFocusStation?: (stationIdx: number) => void;
 }
 
 /**
@@ -177,7 +179,15 @@ function InsightsBanner({ result }: { result: ChainResult }) {
   );
 }
 
-function BottleneckExplanationCard({ result }: { result: ChainResult }) {
+function BottleneckExplanationCard({
+  result,
+  bottleneckStationIdx,
+  onFocusStation,
+}: {
+  readonly result: ChainResult;
+  readonly bottleneckStationIdx?: number;
+  readonly onFocusStation?: (stationIdx: number) => void;
+}) {
   if (result.bottlenecks.length === 0) return null;
   const sorted = [...result.bottlenecks].sort((a, b) => b.runningPct - a.runningPct);
   const head = sorted[0];
@@ -188,7 +198,21 @@ function BottleneckExplanationCard({ result }: { result: ChainResult }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="font-heading text-base">Bottleneck analysis</CardTitle>
+        <CardTitle className="font-heading flex items-center justify-between gap-2 text-base">
+          <span>Bottleneck analysis</span>
+          {/* VROL-690 — click-to-zoom on the bottleneck station. */}
+          {onFocusStation && typeof bottleneckStationIdx === "number" ? (
+            <button
+              type="button"
+              onClick={() => {
+                onFocusStation(bottleneckStationIdx);
+              }}
+              className="text-muted-foreground hover:text-foreground text-xs underline-offset-2 hover:underline"
+            >
+              Locate on canvas
+            </button>
+          ) : null}
+        </CardTitle>
         <CardDescription>Where the line is constrained.</CardDescription>
       </CardHeader>
       <CardContent>
@@ -220,7 +244,13 @@ function BottleneckExplanationCard({ result }: { result: ChainResult }) {
   );
 }
 
-export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPanelProps) {
+export function ResultPanel({
+  result,
+  runMeta,
+  horizonMs,
+  warmupMs,
+  onFocusStation,
+}: ResultPanelProps) {
   const tile = (label: string, value: string, hint?: string) => (
     <div className="border-border bg-card rounded-md border p-3">
       <div className="text-muted-foreground text-xs tracking-wide uppercase">{label}</div>
@@ -320,7 +350,11 @@ export function ResultPanel({ result, runMeta, horizonMs, warmupMs }: ResultPane
         </div>
       </Accordion>
 
-      <BottleneckExplanationCard result={result} />
+      <BottleneckExplanationCard
+        result={result}
+        bottleneckStationIdx={result.bottleneckStationIdx}
+        {...(onFocusStation ? { onFocusStation } : {})}
+      />
 
       <Card id="recommendations">
         <CardHeader>

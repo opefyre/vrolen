@@ -145,6 +145,7 @@ import {
   listScenarios,
   loadScenario,
   saveScenario,
+  setScenarioNotes,
   type ScenarioSummary,
 } from "@/lib/scenario-store";
 import { toast } from "@/lib/toast";
@@ -435,6 +436,8 @@ function StationNode({ data, selected }: NodeProps) {
   // without coupling to validation state directly.
   const validationSeverity = (d as { _validationSeverity?: "error" | "warning" })
     ._validationSeverity;
+  // VROL-692 — bottleneck badge injected by EditorPage's nodesForFlow.
+  const isBottleneck = (d as { _isBottleneck?: boolean })._isBottleneck === true;
 
   return (
     <div
@@ -454,6 +457,16 @@ function StationNode({ data, selected }: NodeProps) {
           }`}
           aria-label={validationSeverity === "error" ? "Validation error" : "Validation warning"}
         />
+      ) : null}
+      {/* VROL-692 — bottleneck pulse badge. */}
+      {isBottleneck ? (
+        <span
+          className="bg-sim-blocked text-sim-blocked-foreground absolute -top-2 -left-2 z-10 animate-pulse rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase shadow-sm ring-2 ring-white"
+          aria-label="Bottleneck station"
+          title="This station capped the line in the last run."
+        >
+          Bottleneck
+        </span>
       ) : null}
       <Handle type="target" position={Position.Left} className="!h-3 !w-3" />
       <div className="flex items-center gap-2">
@@ -609,6 +622,8 @@ function EditorCanvas() {
   // VROL-682 — two slots for picking history runs to compare.
   const [historyCompareA, setHistoryCompareA] = useState<number | null>(null);
   const [historyCompareB, setHistoryCompareB] = useState<number | null>(null);
+  // VROL-691 — name → notes draft buffer for the open inline editor.
+  const [notesDraft, setNotesDraft] = useState<Record<string, string>>({});
   // VROL-304 — validation panel popover state.
   const [validationOpen, setValidationOpen] = useState<boolean>(false);
   // VROL-309 — undo/redo. The commit is debounced 400ms so rapid changes
@@ -1368,6 +1383,15 @@ function EditorCanvas() {
         delete stripped._validationSeverity;
         nextData = stripped;
       }
+      // VROL-692 — mark the bottleneck station so the renderer can show a pulse.
+      if (result && runMeta && stationIdx === result.bottleneckStationIdx) {
+        if (nextData === baseData) nextData = { ...baseData };
+        nextData = { ...nextData, _isBottleneck: true };
+      } else if ("_isBottleneck" in nextData) {
+        const stripped = { ...nextData };
+        delete stripped._isBottleneck;
+        nextData = stripped;
+      }
       if (nextData === baseData) return n;
       return { ...n, data: nextData };
     });
@@ -1408,12 +1432,16 @@ function EditorCanvas() {
         hasSamples && edgeIdx !== undefined
           ? result.samples.map((s) => s.perEdgeBufferFill[edgeIdx] ?? 0)
           : undefined;
+      // VROL-693 — peak fill summary appended to the edge label so users see
+      // "throughput/h · peak N" on each edge once a run has data.
+      const bufferPeak = bufferFillSeries ? Math.max(0, ...bufferFillSeries) : 0;
+      const labelWithPeak = bufferPeak > 0 ? `${label} · peak ${String(bufferPeak)}` : label;
       // Switch to AnimatedEdge whenever we have something to render on top of
       // the stock edge — dots (animateFlow on) OR a buffer-fill sparkline.
       const usesCustomEdge = (animateFlow && flowed > 0) || bufferFillSeries !== undefined;
       return {
         ...e,
-        label,
+        label: labelWithPeak,
         animated: !usesCustomEdge && flowed > 0,
         ...(usesCustomEdge
           ? {
@@ -2298,6 +2326,19 @@ function EditorCanvas() {
             runMeta={runMeta}
             horizonMs={settings.horizonMs}
             warmupMs={Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2))}
+            // VROL-690 — pan + zoom canvas to a station by chain-order index.
+            onFocusStation={(stationIdx) => {
+              if (!runMeta) return;
+              const nodeId = runMeta.chainNodeIds[stationIdx];
+              if (!nodeId) return;
+              const node = nodes.find((n) => n.id === nodeId);
+              if (!node) return;
+              flow.setCenter(node.position.x + 75, node.position.y + 40, {
+                zoom: 1.2,
+                duration: 400,
+              });
+              setSelectedNodeId(nodeId);
+            }}
           />
         </Suspense>
       ) : null}
@@ -2696,6 +2737,24 @@ function EditorCanvas() {
                               {s.nodeCount} node{s.nodeCount === 1 ? "" : "s"} · {s.edgeCount} edge
                               {s.edgeCount === 1 ? "" : "s"}
                             </div>
+                            {/* VROL-691 — scenario notes inline editor. */}
+                            <textarea
+                              aria-label={`Notes for ${s.name}`}
+                              placeholder="Add notes…"
+                              className="border-border bg-background focus-visible:ring-ring/40 mt-1.5 block w-full resize-y rounded-md border px-2 py-1 text-xs focus-visible:ring-2 focus-visible:outline-none"
+                              rows={2}
+                              value={notesDraft[s.name] ?? s.notes ?? ""}
+                              onChange={(e) => {
+                                setNotesDraft((d) => ({ ...d, [s.name]: e.target.value }));
+                              }}
+                              onBlur={(e) => {
+                                const next = e.target.value;
+                                if (next === (s.notes ?? "")) return;
+                                if (setScenarioNotes(s.name, next)) {
+                                  setScenarios(listScenarios());
+                                }
+                              }}
+                            />
                           </div>
                           <div className="flex gap-1">
                             {confirmAction && confirmAction.scenario === s.name ? (

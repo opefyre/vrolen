@@ -20,6 +20,8 @@ export interface ScenarioPayload {
   readonly graph: { nodes: Node[]; edges: Edge[] };
   readonly settings: RunSettings;
   readonly savedAtMs: number;
+  /** VROL-691 — freeform user notes attached to this scenario. */
+  readonly notes?: string;
 }
 
 export interface ScenarioSummary {
@@ -27,6 +29,7 @@ export interface ScenarioSummary {
   readonly savedAtMs: number;
   readonly nodeCount: number;
   readonly edgeCount: number;
+  readonly notes?: string;
 }
 
 type Store = Record<string, ScenarioPayload>;
@@ -75,8 +78,24 @@ export function listScenarios(): ScenarioSummary[] {
       savedAtMs: p.savedAtMs,
       nodeCount: p.graph.nodes.length,
       edgeCount: p.graph.edges.length,
+      ...(p.notes !== undefined ? { notes: p.notes } : {}),
     }))
     .sort((a, b) => b.savedAtMs - a.savedAtMs);
+}
+
+/** VROL-691 — update notes without touching the graph or settings. */
+export function setScenarioNotes(name: string, notes: string): boolean {
+  const store = readStore();
+  const existing = store[name];
+  if (!existing) return false;
+  const next = { ...store };
+  const trimmed = notes.trim();
+  next[name] =
+    trimmed === ""
+      ? { graph: existing.graph, settings: existing.settings, savedAtMs: existing.savedAtMs }
+      : { ...existing, notes: trimmed };
+  writeStore(next);
+  return true;
 }
 
 export function loadScenario(name: string): ScenarioPayload | null {
@@ -93,10 +112,17 @@ export function saveScenario(
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Scenario name cannot be empty");
   const store = readStore();
+  const prevNotes = store[trimmed]?.notes;
   store[trimmed] = {
     graph: payload.graph,
     settings: payload.settings,
     savedAtMs: payload.savedAtMs ?? performance.now(),
+    // VROL-691 — preserve notes across re-saves; explicit notes in payload override.
+    ...(payload.notes !== undefined
+      ? { notes: payload.notes }
+      : prevNotes !== undefined
+        ? { notes: prevNotes }
+        : {}),
   };
   writeStore(store);
 }
