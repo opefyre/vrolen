@@ -1833,6 +1833,33 @@ function EditorCanvas() {
                   updateSelectedNodeData({ capacity: v === 1 ? undefined : v });
                 }}
               />
+              {/* VROL-662 — CustomStation description. Only shown when the
+                  station is a "custom" type. */}
+              {(selectedNode.data as { stationType?: string }).stationType === "custom" ? (
+                <div className="flex flex-col gap-1">
+                  <label
+                    htmlFor="inspector-custom-description"
+                    className="text-muted-foreground text-xs font-medium"
+                  >
+                    What does this represent?
+                  </label>
+                  <textarea
+                    id="inspector-custom-description"
+                    rows={2}
+                    placeholder="e.g. Decanter, Mixing tank, Drying oven"
+                    value={
+                      (selectedNode.data as { customDescription?: string }).customDescription ?? ""
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      updateSelectedNodeData({
+                        customDescription: v.length > 0 ? v : undefined,
+                      });
+                    }}
+                    className="border-input bg-background rounded-md border px-2 py-1.5 text-sm"
+                  />
+                </div>
+              ) : null}
             </CardContent>
             {/* VROL-633 — advanced settings collapsed by default. Power users
                 expand once; the toggle's open/closed state persists per
