@@ -8,8 +8,8 @@ describe("LandingPage (VROL-629)", () => {
     render(<LandingPage />);
     expect(screen.getByText(/Model your line, find the bottleneck/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open the editor/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "/editor" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "/run" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Editor$/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Run logs$/ })).toBeInTheDocument();
   });
 
   it("renders one preset chip per PRESETS entry", async () => {

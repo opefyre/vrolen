@@ -954,6 +954,7 @@ function EditorCanvas() {
     if (initial.nodes.length === 0) return;
     toast.message("Restored last session", {
       description: `${String(initial.nodes.length)} stations · ${String(initial.edges.length)} edges`,
+      duration: 4000,
       action: {
         label: "Start fresh",
         onClick: () => {
@@ -6016,14 +6017,9 @@ function SetupTimeEditor({
 
 export default function EditorPage() {
   return (
-    <div className="space-y-4 p-6">
-      <header className="space-y-1">
+    <div className="space-y-3 p-6">
+      <header className="flex items-center justify-between gap-3">
         <h1 className="font-heading text-2xl font-bold tracking-tight">Editor</h1>
-        <p className="text-muted-foreground max-w-2xl text-sm">
-          Drag stations from the palette onto the canvas. Click a node to edit its parameters in the
-          inspector. Open <strong>Run settings</strong> for horizon / materials / breakdowns, then
-          click <strong>Run simulation</strong>.
-        </p>
       </header>
       <ReactFlowProvider>
         <EditorCanvas />

@@ -91,9 +91,9 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
     );
     // Rework tile in the bottom KPI row (lives on Overview).
     expect(screen.getByText(/^Rework$/i)).toBeInTheDocument();
-    // Per-station completed lives on the Stations tab — switch + expand.
+    // Per-station completed lives on the Stations tab — switch and the
+    // per-station rows render directly (no accordion toggle).
     fireEvent.click(screen.getByRole("tab", { name: /Stations/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Per-station completed/i }));
     expect(screen.getByText(/· 7 rework/)).toBeInTheDocument();
   });
 
@@ -141,12 +141,12 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
         warmupMs={0}
       />,
     );
-    // Rework-over-time lives on the Quality tab.
+    // Rework-over-time lives on the Quality tab as a plain card.
     fireEvent.click(screen.getByRole("tab", { name: /Quality/i }));
-    expect(screen.getByRole("button", { name: /Rework over time/i })).toBeInTheDocument();
+    expect(screen.getByText(/Rework over time/i)).toBeInTheDocument();
   });
 
-  it("hides the rework-over-time accordion when no station has rework", () => {
+  it("hides the rework-over-time card when no station has rework", () => {
     render(
       <ResultPanel
         result={fakeResult()}
@@ -156,7 +156,7 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
       />,
     );
     fireEvent.click(screen.getByRole("tab", { name: /Quality/i }));
-    expect(screen.queryByRole("button", { name: /Rework over time/i })).toBeNull();
+    expect(screen.queryByText(/Rework over time/i)).toBeNull();
   });
 
   it("ComparisonTable: KPI delta tiles always visible + scalar table behind accordion (VROL-653)", () => {
@@ -185,7 +185,7 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
     expect(screen.getByText(/^Avg time-in-system \(ms\)$/)).toBeInTheDocument();
   });
 
-  it("Per-station completed lives in Stations tab and is collapsed by default (VROL-636)", () => {
+  it("Per-station detail renders directly inside its tab (no useless toggle)", () => {
     render(
       <ResultPanel
         result={fakeResult()}
@@ -194,13 +194,11 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
         warmupMs={0}
       />,
     );
-    // Stations tab holds the per-station completed accordion.
+    // Stations tab → per-station completed card visible without expanding.
     fireEvent.click(screen.getByRole("tab", { name: /Stations/i }));
-    expect(screen.getByRole("button", { name: /Per-station completed/i })).toBeInTheDocument();
-    // States tab holds the per-station state breakdown accordion.
+    expect(screen.getByText(/Per-station completed/i)).toBeInTheDocument();
+    // States tab → per-station state breakdown card visible without expanding.
     fireEvent.click(screen.getByRole("tab", { name: /States/i }));
-    expect(
-      screen.getByRole("button", { name: /Per-station state breakdown/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Per-station state breakdown/i)).toBeInTheDocument();
   });
 });

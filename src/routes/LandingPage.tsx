@@ -122,12 +122,10 @@ function HeroFlow() {
 function HeroStats() {
   const presets = useCountUp(PRESETS.length);
   const stations = useCountUp(10);
-  const runsPerMin = useCountUp(60);
   return (
-    <div className="mx-auto grid max-w-md grid-cols-3 gap-3 text-center">
+    <div className="mx-auto grid max-w-xs grid-cols-2 gap-3 text-center">
       <Stat value={presets} label="presets" />
       <Stat value={stations} label="station types" />
-      <Stat value={runsPerMin} label="sims/min" />
     </div>
   );
 }
@@ -290,29 +288,26 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Footer — VROL-708 */}
       <footer className="border-border text-muted-foreground flex flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t pt-6 text-xs">
         <a href="/editor" className="hover:text-foreground">
-          /editor
+          Editor
         </a>
         <a href="/run" className="hover:text-foreground">
-          /run
+          Run logs
         </a>
         <a href="/help" className="hover:text-foreground">
-          /help
+          Help &amp; shortcuts
         </a>
         <a href="/design-tokens" className="hover:text-foreground">
-          /design-tokens
+          Design tokens
         </a>
-        <span>—</span>
-        <span>Phase 0 portfolio build</span>
         <a
           href="https://github.com/opefyre/vrolen"
           target="_blank"
           rel="noopener noreferrer"
           className="hover:text-foreground inline-flex items-center gap-1"
         >
-          source <ExternalLink className="h-3 w-3" />
+          Source <ExternalLink className="h-3 w-3" />
         </a>
       </footer>
     </div>

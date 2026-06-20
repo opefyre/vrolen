@@ -305,50 +305,10 @@ export function ResultPanel({
   const totalScrapped = result.perStationScrapped.reduce((a, b) => a + b, 0);
   const totalReworked = result.perStationReworked.reduce((a, b) => a + b, 0);
   const totalBreakdowns = (result.perStationBreakdowns ?? []).reduce((a, b) => a + b, 0);
-  // VROL-636 — Per-station completed / state breakdown / product mix start
-  // collapsed. KPI tiles + Bottleneck card + Throughput + OEE charts stay
-  // visible as the primary read.
-  // VROL-717 — persist open/closed state across runs and reloads.
-  const OPEN_SECTIONS_KEY = "vrolen.result-open-sections";
-  type OpenSections = {
-    perStation: boolean;
-    stateBreakdown: boolean;
-    productMix: boolean;
-    rework: boolean;
-  };
-  const [openSections, setOpenSections] = useState<OpenSections>(() => {
-    const defaults: OpenSections = {
-      perStation: false,
-      stateBreakdown: false,
-      productMix: false,
-      rework: false,
-    };
-    if (typeof window === "undefined") return defaults;
-    try {
-      const raw = window.localStorage?.getItem?.(OPEN_SECTIONS_KEY);
-      if (!raw) return defaults;
-      const parsed = JSON.parse(raw) as Partial<OpenSections>;
-      return { ...defaults, ...parsed };
-    } catch {
-      return defaults;
-    }
-  });
-  const toggleSection = (key: keyof OpenSections): void => {
-    setOpenSections((s) => {
-      const next = { ...s, [key]: !s[key] };
-      if (typeof window !== "undefined") {
-        try {
-          window.localStorage?.setItem?.(OPEN_SECTIONS_KEY, JSON.stringify(next));
-        } catch {
-          // ignore quota
-        }
-      }
-      return next;
-    });
-  };
-  // VROL-641 — Only show the rework-over-time accordion when at least one
-  // station had rework AND the sampler ran. Otherwise the section is
-  // pointless noise. Count active stations for the status chip.
+  // Per-tab content is shown directly — each tab is single-topic, so an
+  // outer accordion would be a redundant toggle layer.
+  // Only show the rework chart when at least one station had rework AND the
+  // sampler ran. Otherwise the section is pointless noise.
   const reworkActiveStationCount = result.perStationReworked.reduce(
     (n, c) => n + (c > 0 ? 1 : 0),
     0,
@@ -438,21 +398,16 @@ export function ResultPanel({
           })()
         : null}
       {activeTab === "stations" ? (
-        <Accordion
-          title="Per-station completed"
-          status={
-            <AccordionStatus tone="configured">
-              {`${String(result.perStationCompleted.length)} station${
-                result.perStationCompleted.length === 1 ? "" : "s"
-              }`}
-            </AccordionStatus>
-          }
-          expanded={openSections.perStation}
-          onToggle={() => {
-            toggleSection("perStation");
-          }}
-        >
-          <div className="space-y-2">
+        <Card id="per-station-completed">
+          <CardHeader>
+            <CardTitle className="font-heading text-base">
+              <AnchorTitle anchorId="per-station-completed">Per-station completed</AnchorTitle>
+            </CardTitle>
+            <CardDescription>{`${String(result.perStationCompleted.length)} station${
+              result.perStationCompleted.length === 1 ? "" : "s"
+            } during the measurement window.`}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
             {result.perStationCompleted.map((count, i) => {
               const label = runMeta.stationLabels[i] ?? `Station ${String(i + 1)}`;
               const max = Math.max(...result.perStationCompleted, 1);
@@ -486,8 +441,8 @@ export function ResultPanel({
                 </div>
               );
             })}
-          </div>
-        </Accordion>
+          </CardContent>
+        </Card>
       ) : null}
 
       {activeTab === "overview" ? (
@@ -616,89 +571,88 @@ export function ResultPanel({
       ) : null}
 
       {activeTab === "quality" && showReworkChart ? (
-        <Accordion
-          title="Rework over time"
-          status={
-            <AccordionStatus tone="configured">
-              {`${String(reworkActiveStationCount)} station${
-                reworkActiveStationCount === 1 ? "" : "s"
-              } · rework`}
-            </AccordionStatus>
-          }
-          expanded={openSections.rework}
-          onToggle={() => {
-            toggleSection("rework");
-          }}
-        >
-          <ReworkOverTimeChart
-            samples={result.samples}
-            stationLabels={runMeta.stationLabels}
-            horizonMs={horizonMs}
-            warmupMs={warmupMs}
-          />
-        </Accordion>
+        <Card id="rework-over-time">
+          <CardHeader>
+            <CardTitle className="font-heading text-base">
+              <AnchorTitle anchorId="rework-over-time">Rework over time</AnchorTitle>
+            </CardTitle>
+            <CardDescription>{`Cumulative rework across ${String(reworkActiveStationCount)} station${
+              reworkActiveStationCount === 1 ? "" : "s"
+            }.`}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ReworkOverTimeChart
+              samples={result.samples}
+              stationLabels={runMeta.stationLabels}
+              horizonMs={horizonMs}
+              warmupMs={warmupMs}
+            />
+          </CardContent>
+        </Card>
       ) : null}
 
       {activeTab === "stations" &&
       result.perProductCompleted &&
       result.perProductCompleted.size > 0 ? (
-        <Accordion
-          title="Product mix at sink"
-          status={
-            <AccordionStatus tone="configured">
-              {`${String(result.perProductCompleted.size)} product${
-                result.perProductCompleted.size === 1 ? "" : "s"
-              }`}
-            </AccordionStatus>
-          }
-          expanded={openSections.productMix}
-          onToggle={() => {
-            toggleSection("productMix");
-          }}
-        >
-          <ProductMixBody result={result} />
-        </Accordion>
+        <Card id="product-mix">
+          <CardHeader>
+            <CardTitle className="font-heading text-base">
+              <AnchorTitle anchorId="product-mix">Product mix at sink</AnchorTitle>
+            </CardTitle>
+            <CardDescription>{`${String(result.perProductCompleted.size)} product${
+              result.perProductCompleted.size === 1 ? "" : "s"
+            } completed during the run.`}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ProductMixBody result={result} />
+          </CardContent>
+        </Card>
       ) : null}
 
       {activeTab === "states" ? (
-        <Accordion
-          title="Per-station state breakdown"
-          status={<AccordionStatus tone="configured">Time-weighted %</AccordionStatus>}
-          expanded={openSections.stateBreakdown}
-          onToggle={() => {
-            toggleSection("stateBreakdown");
-          }}
-        >
-          <div className="space-y-3">
-            {result.bottlenecks.map((b) => (
-              <div key={String(b.stationId)} className="space-y-1">
-                <div className="text-foreground/80 text-sm">{b.label ?? String(b.stationId)}</div>
-                <div className="bg-muted flex h-2 overflow-hidden rounded-full">
-                  {b.breakdown
-                    .filter((seg) => seg.pct > 0.001)
-                    .map((seg) => (
-                      <div
-                        key={seg.state}
-                        title={`${seg.state}: ${(seg.pct * 100).toFixed(1)}%`}
-                        className={`h-full ${stateColor(seg.state)}`}
-                        style={{ width: `${String(seg.pct * 100)}%` }}
-                      />
-                    ))}
+        <Card id="per-station-state-breakdown">
+          <CardHeader>
+            <CardTitle className="font-heading text-base">
+              <AnchorTitle anchorId="per-station-state-breakdown">
+                Per-station state breakdown
+              </AnchorTitle>
+            </CardTitle>
+            <CardDescription>
+              Time-weighted % per station across the measurement window.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {result.bottlenecks.map((b) => (
+                <div key={String(b.stationId)} className="space-y-1">
+                  <div className="text-foreground/80 text-sm">{b.label ?? String(b.stationId)}</div>
+                  <div className="bg-muted flex h-2 overflow-hidden rounded-full">
+                    {b.breakdown
+                      .filter((seg) => seg.pct > 0.001)
+                      .map((seg) => (
+                        <div
+                          key={seg.state}
+                          title={`${seg.state}: ${(seg.pct * 100).toFixed(1)}%`}
+                          className={`h-full ${stateColor(seg.state)}`}
+                          style={{ width: `${String(seg.pct * 100)}%` }}
+                        />
+                      ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-          <div className="text-muted-foreground mt-3 flex flex-wrap gap-2 text-xs">
-            {["Running", "Setup", "Maintenance", "Down", "BlockedOut", "Starved", "Idle"].map(
-              (state) => (
-                <span key={state} className="flex items-center gap-1.5">
-                  <span className={`h-2.5 w-2.5 rounded-sm ${stateColor(state)}`} />
-                  {state}
-                </span>
-              ),
-            )}
-          </div>
-        </Accordion>
+              ))}
+            </div>
+            <div className="text-muted-foreground mt-3 flex flex-wrap gap-2 text-xs">
+              {["Running", "Setup", "Maintenance", "Down", "BlockedOut", "Starved", "Idle"].map(
+                (state) => (
+                  <span key={state} className="flex items-center gap-1.5">
+                    <span className={`h-2.5 w-2.5 rounded-sm ${stateColor(state)}`} />
+                    {state}
+                  </span>
+                ),
+              )}
+            </div>
+          </CardContent>
+        </Card>
       ) : null}
       {activeTab === "overview" &&
       (hasMaterials || hasBreakdowns || hasLabor || totalScrapped > 0 || totalReworked > 0) ? (
@@ -745,7 +699,7 @@ export function ResultPanel({
             ? tile(
                 "Rework",
                 totalReworked.toLocaleString(),
-                `${fmt(result.lineReworkRate * 100, 1)}% rerouted vs scrapped (VROL-628)`,
+                `${fmt(result.lineReworkRate * 100, 1)}% rerouted vs scrapped`,
               )
             : null}
         </div>

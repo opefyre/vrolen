@@ -15,7 +15,9 @@ describe("App", () => {
 
   it("renders the bottom-of-page footer links", () => {
     render(<App />);
-    expect(screen.getByRole("link", { name: "/editor" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "/run" })).toBeInTheDocument();
+    // Run logs link only appears in the page footer (sidebar uses different label).
+    expect(screen.getByRole("link", { name: /^Run logs$/ })).toBeInTheDocument();
+    // Footer also surfaces a Help & shortcuts link.
+    expect(screen.getByRole("link", { name: /Help & shortcuts/i })).toBeInTheDocument();
   });
 });
