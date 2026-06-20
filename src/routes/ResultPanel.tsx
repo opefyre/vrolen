@@ -37,6 +37,7 @@ import { QualityLosses } from "./QualityLosses";
 import { RecommendationsCard } from "./RecommendationsCard";
 import { StatePareto } from "./StatePareto";
 import { ThroughputChart } from "./ThroughputChart";
+import { VerificationCard } from "./VerificationCard";
 
 const BOTTLES_ID = asMaterialId("bottles");
 const CAPS_ID = asMaterialId("caps");
@@ -472,6 +473,7 @@ export function ResultPanel({
               <FinalStateCard result={result} stationLabels={runMeta.stationLabels} />
             </CardContent>
           </Card>
+          <VerificationCard result={result} horizonMs={horizonMs} />
         </>
       ) : null}
 

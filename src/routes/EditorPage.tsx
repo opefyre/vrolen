@@ -36,6 +36,7 @@ import {
   applyNodeChanges,
   reconnectEdge,
   useReactFlow,
+  useViewport,
 } from "@xyflow/react";
 import {
   Boxes,
@@ -643,6 +644,9 @@ function StationNode({ data, selected, id }: NodeProps) {
 import { AlignmentGuidesOverlay } from "@/components/canvas/alignment-guides";
 import { useAlignmentGuides } from "@/components/canvas/use-alignment-guides";
 import { CanvasContextMenu, type ContextMenuTarget } from "@/components/canvas/context-menu";
+import { CommandPalette, type CommandAction } from "@/components/canvas/command-palette";
+import { AlignmentToolbar, type AlignOp } from "@/components/canvas/alignment-toolbar";
+import { applyAlignment } from "@/lib/align-nodes";
 import { StickyNoteNode } from "@/components/canvas/sticky-note-node";
 
 const NODE_TYPES = { station: StationNode, sticky: StickyNoteNode };
@@ -912,6 +916,9 @@ function EditorCanvas() {
   }, []);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flow = useReactFlow();
+  // Subscribe to the live canvas viewport so the floating alignment
+  // toolbar repositions on pan / zoom.
+  const viewport = useViewport();
   // Alignment guides + Shift axis-lock fire on every ReactFlow node drag.
   const alignmentGuides = useAlignmentGuides();
   // VROL-432 — offline mode signal. Cloud-sync flows (none yet) and AI
@@ -939,6 +946,15 @@ function EditorCanvas() {
   const [contextMenu, setContextMenu] = useState<ContextMenuTarget | null>(null);
   // Save the right-click client position so we can paste at the cursor.
   const lastRightClickRef = useRef<{ clientX: number; clientY: number } | null>(null);
+  // Cmd+K command palette.
+  const [commandOpen, setCommandOpen] = useState<boolean>(false);
+  // Drag-from-handle to create connected node. onConnectStart caches the
+  // source handle; onConnectEnd creates the target node + edge when the
+  // drag ended on empty canvas (no valid target).
+  const connectingHandleRef = useRef<{
+    nodeId: string;
+    handleType: "source" | "target" | null;
+  } | null>(null);
 
   // VROL-738 — autosave indicator flash. Drives off the same effect as the
   // saveGraph call so the chip pulses 'Saving…' for ~250ms after each change.
@@ -1081,6 +1097,75 @@ function EditorCanvas() {
       setEdges((eds) => addEdge(connection, eds));
     },
     [setEdges],
+  );
+
+  // Drag-from-handle to create connected node (tldraw / Lucidchart style).
+  // onConnectStart captures the originating handle; onConnectEnd checks if
+  // the drag ended on empty canvas — if so, drop a new station at the
+  // cursor and wire the edge automatically.
+  const onConnectStart = useCallback(
+    (
+      _event: React.MouseEvent | React.TouchEvent | MouseEvent | TouchEvent,
+      params: { nodeId: string | null; handleType: "source" | "target" | null },
+    ) => {
+      if (!params.nodeId) {
+        connectingHandleRef.current = null;
+        return;
+      }
+      connectingHandleRef.current = {
+        nodeId: params.nodeId,
+        handleType: params.handleType,
+      };
+    },
+    [],
+  );
+  const onConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent) => {
+      const handle = connectingHandleRef.current;
+      connectingHandleRef.current = null;
+      if (!handle) return;
+      // Was the drop on the canvas pane (i.e. not on another handle)?
+      const target = event.target as HTMLElement | null;
+      const droppedOnPane = !!target?.classList?.contains?.("react-flow__pane");
+      if (!droppedOnPane) return;
+      const ev = "clientX" in event ? event : event.changedTouches?.[0];
+      if (!ev) return;
+      const flowPos = flow.screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
+      const newId = `n${String(nodeIdRef.current++)}`;
+      const newNode: Node = {
+        id: newId,
+        type: "station",
+        position: { x: flowPos.x - 90, y: flowPos.y - 30 },
+        data: {
+          label: "Machine",
+          stationType: "machine",
+          cycleDistribution: constant(100),
+          defectRate: 0,
+          stationKey: generateStationKey(),
+        },
+      };
+      const isReverse = handle.handleType === "target";
+      const newEdge: Edge = {
+        id: `e${String(Date.now())}-${handle.nodeId}-${newId}`,
+        source: isReverse ? newId : handle.nodeId,
+        target: isReverse ? handle.nodeId : newId,
+      };
+      setNodes((ns) => ns.concat(newNode));
+      setEdges((eds) => eds.concat(newEdge));
+      setSelectedNodeId(newId);
+    },
+    [flow, setNodes, setEdges],
+  );
+
+  // Multi-select alignment toolbar. Anchor = top-mid of the selection bbox
+  // in screen coords. Recomputed each render from the current selection.
+  const onAlignmentOp = useCallback(
+    (op: AlignOp) => {
+      const ids = nodes.filter((n) => n.selected).map((n) => n.id);
+      if (ids.length === 0) return;
+      setNodes((ns) => applyAlignment(ns, ids, op));
+    },
+    [nodes, setNodes],
   );
 
   // Edge reconnection — drag the end of a connection and drop on a
@@ -1315,7 +1400,7 @@ function EditorCanvas() {
     [flow, setNodes],
   );
 
-  const handleReset = (): void => {
+  const handleReset = useCallback((): void => {
     setNodes(INITIAL_NODES);
     setEdges(INITIAL_EDGES);
     setSelectedNodeId(null);
@@ -1324,7 +1409,40 @@ function EditorCanvas() {
     setActiveScenarioName(null);
     nodeIdRef.current = INITIAL_NODES.length + 1;
     toast.info("Editor reset");
-  };
+  }, [setNodes, setEdges]);
+
+  // Spawn a fresh station at the canvas center for the command palette
+  // 'Insert' actions. Wrapped in useCallback so the closure that touches
+  // wrapperRef + nodeIdRef is statically known to the linter — those refs
+  // are only read at invocation time, not during render.
+  const insertStationFromCenter = useCallback(
+    (item: PaletteItem) => {
+      const center = wrapperRef.current?.getBoundingClientRect();
+      const pos = center
+        ? flow.screenToFlowPosition({
+            x: center.left + center.width / 2,
+            y: center.top + center.height / 2,
+          })
+        : { x: 200, y: 200 };
+      const id = `n${String(nodeIdRef.current++)}`;
+      setNodes((ns) =>
+        ns.concat({
+          id,
+          type: "station",
+          position: { x: pos.x - 90, y: pos.y - 30 },
+          data: {
+            label: item.label,
+            stationType: item.stationType,
+            cycleDistribution: constant(100),
+            defectRate: 0,
+            stationKey: generateStationKey(),
+          },
+        }),
+      );
+      setSelectedNodeId(id);
+    },
+    [flow, setNodes],
+  );
 
   const handleRun = useCallback((): void => {
     // VROL-86 — scenario validation. Errors block; warnings surface as a
@@ -1686,7 +1804,11 @@ function EditorCanvas() {
         return;
       }
       const key = e.key.toLowerCase();
-      if (key === "z") {
+      if (key === "k") {
+        // Cmd/Ctrl+K — open the command palette.
+        e.preventDefault();
+        setCommandOpen(true);
+      } else if (key === "z") {
         e.preventDefault();
         if (e.shiftKey) handleRedo();
         else handleUndo();
@@ -2194,6 +2316,172 @@ function EditorCanvas() {
     setMoreOpen(false);
   }, [result, runMeta]);
 
+  // Command-palette actions — derived from the toolbar handlers so labels and
+  // behavior stay in sync with the menus. NOT memoed: the closures capture
+  // live refs (wrapperRef, nodeIdRef, flow) that mustn't be touched during
+  // render; building a fresh array per render keeps the refs strictly inside
+  // closures.
+  const commandActions: readonly CommandAction[] = (() => {
+    const list: CommandAction[] = [];
+    // Insert any station from the palette. The closure body calls a
+    // useCallback so no refs are touched here at render time — the
+    // react-hooks/refs lint rule is over-eager about useCallback
+    // boundaries, hence the disable.
+    for (const p of PALETTE) {
+      // eslint-disable-next-line react-hooks/refs
+      list.push({
+        id: `insert:${p.stationType}`,
+        label: `Insert ${p.label}`,
+        hint: p.summary,
+        group: "Insert",
+        run: () => {
+          insertStationFromCenter(p);
+        },
+      });
+    }
+    list.push(
+      {
+        id: "run",
+        label: isRunning ? "Running…" : "Run simulation",
+        hint: "Execute the current chain",
+        group: "Run",
+        shortcut: "⌘↵",
+        disabled: isRunning,
+        run: () => {
+          if (!isRunning) handleRun();
+        },
+      },
+      {
+        id: "new-seed",
+        label: "Run with new seed",
+        hint: "Re-roll the PRNG and re-run",
+        group: "Run",
+        run: () => {
+          const next = Math.floor(Math.random() * 2_147_483_647);
+          setSettings((s) => ({ ...s, seed: next }));
+          setTimeout(() => {
+            if (!isRunning) handleRun();
+          }, 0);
+        },
+      },
+      {
+        id: "run-settings",
+        label: "Open Run settings",
+        hint: "Horizon, materials, breakdowns, workers",
+        group: "Run",
+        run: () => {
+          setSettingsOpen(true);
+        },
+      },
+      {
+        id: "fit-view",
+        label: "Fit canvas to view",
+        group: "View",
+        shortcut: "F",
+        run: () => {
+          flow.fitView({ duration: 400, padding: 0.2 });
+        },
+      },
+      {
+        id: "zoom-in",
+        label: "Zoom in",
+        group: "View",
+        run: () => {
+          flow.zoomIn();
+        },
+      },
+      {
+        id: "zoom-out",
+        label: "Zoom out",
+        group: "View",
+        run: () => {
+          flow.zoomOut();
+        },
+      },
+      {
+        id: "auto-layout",
+        label: "Auto-layout chain",
+        hint: "Arrange the graph by depth",
+        group: "Edit",
+        run: () => {
+          runAutoLayout();
+        },
+      },
+      {
+        id: "select-all",
+        label: "Select all nodes",
+        group: "Edit",
+        shortcut: "⌘A",
+        run: () => {
+          setNodes((ns) => ns.map((n) => ({ ...n, selected: true })));
+        },
+      },
+      {
+        id: "scenarios",
+        label: "Open Scenarios",
+        hint: "Save, load, compare, manage presets",
+        group: "Scenarios",
+        run: () => {
+          setScenariosOpen(true);
+        },
+      },
+      // eslint-disable-next-line react-hooks/refs
+      {
+        id: "reset-canvas",
+        label: "Reset to the default bottling line",
+        group: "Edit",
+        run: () => {
+          handleReset();
+        },
+      },
+      // eslint-disable-next-line react-hooks/refs
+      {
+        id: "undo",
+        label: "Undo",
+        group: "Edit",
+        shortcut: "⌘Z",
+        run: () => {
+          handleUndo();
+        },
+      },
+      // eslint-disable-next-line react-hooks/refs
+      {
+        id: "redo",
+        label: "Redo",
+        group: "Edit",
+        shortcut: "⌘⇧Z",
+        run: () => {
+          handleRedo();
+        },
+      },
+    );
+    return list;
+  })();
+
+  // Alignment toolbar anchor — top-mid of the selection bbox, expressed in
+  // wrapper-relative coords so the toolbar mounts as position:absolute inside
+  // the canvas wrapper (no viewport-rect ref reads during render needed).
+  const alignmentAnchor = useMemo<{ left: number; top: number } | null>(() => {
+    const selected = nodes.filter((n) => n.selected);
+    if (selected.length < 2) return null;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    for (const n of selected) {
+      const w = n.width ?? n.measured?.width ?? 180;
+      const r = n.position.x + w;
+      if (n.position.x < minX) minX = n.position.x;
+      if (n.position.y < minY) minY = n.position.y;
+      if (r > maxX) maxX = r;
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX)) return null;
+    const midX = (minX + maxX) / 2;
+    return {
+      left: midX * viewport.zoom + viewport.x,
+      top: minY * viewport.zoom + viewport.y,
+    };
+  }, [nodes, viewport.x, viewport.y, viewport.zoom]);
+
   return (
     <div className="space-y-3">
       {/* VROL-632 — first-run onboarding tour. Renders nothing when !tourOpen. */}
@@ -2693,6 +2981,8 @@ function EditorCanvas() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onConnectStart={onConnectStart}
+            onConnectEnd={onConnectEnd}
             onReconnectStart={onReconnectStart}
             onReconnect={onReconnect}
             onReconnectEnd={onReconnectEnd}
@@ -2791,7 +3081,21 @@ function EditorCanvas() {
               hasClipboard={clipboardCount > 0}
             />
           ) : null}
+          <AlignmentToolbar
+            anchor={alignmentAnchor}
+            selectedCount={nodes.filter((n) => n.selected).length}
+            canDistribute={nodes.filter((n) => n.selected).length >= 3}
+            onOp={onAlignmentOp}
+          />
         </div>
+        {commandOpen ? (
+          <CommandPalette
+            onClose={() => {
+              setCommandOpen(false);
+            }}
+            actions={commandActions}
+          />
+        ) : null}
 
         {selectedNodeIds.length > 1 ? (
           // VROL-663 — bulk panel when 2+ stations are selected.
