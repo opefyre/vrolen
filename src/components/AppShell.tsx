@@ -15,6 +15,7 @@ import { KeyboardShortcutsOverlay } from "@/components/editor/keyboard-shortcuts
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useOnlineStatus } from "@/lib/online-status";
 import { useSidebarCollapsed, toggleSidebar } from "@/lib/sidebar";
 
 interface NavItem {
@@ -40,6 +41,7 @@ interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   const collapsed = useSidebarCollapsed();
   const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
+  const online = useOnlineStatus();
 
   return (
     <div
@@ -81,7 +83,19 @@ export function AppShell({ children }: AppShellProps) {
           production-line simulator
         </span>
 
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-2">
+          {/* VROL-428 — offline indicator. Hidden when online. */}
+          {!online ? (
+            <span
+              className="bg-sim-down/15 text-sim-down-foreground inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+              title="Offline — saves persist locally; cloud sync paused"
+              aria-live="polite"
+              data-testid="offline-indicator"
+            >
+              <span className="bg-sim-down h-1.5 w-1.5 rounded-full" aria-hidden />
+              Offline
+            </span>
+          ) : null}
           <ThemeToggle />
         </div>
       </header>

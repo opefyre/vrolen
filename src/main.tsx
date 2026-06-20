@@ -1,13 +1,23 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "@/App";
-import "@/config/env";
+import { env } from "@/config/env";
 import { initTheme } from "@/lib/theme";
 import "./index.css";
 
 // Apply persisted theme to <html> before React mounts so there's no flash of
 // the wrong scheme.
 initTheme();
+
+// VROL-421 — register the service worker after the first paint so it doesn't
+// compete with the initial app bootstrap. No-op in dev (HMR + SW don't mix).
+if (env.MODE === "production" && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      // Best-effort — failing to register the SW shouldn't break the app.
+    });
+  });
+}
 
 const root = document.getElementById("root");
 if (!root) {

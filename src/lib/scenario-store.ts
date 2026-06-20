@@ -13,6 +13,7 @@
 import type { Edge, Node } from "@xyflow/react";
 
 import type { RunSettings } from "@/routes/editor-run-settings";
+import { saveSnapshot as idbSaveSnapshot } from "./scenario-idb";
 
 const STORAGE_KEY = "vrolen.scenarios";
 
@@ -68,6 +69,9 @@ function writeStore(store: Store): void {
   } catch {
     // Persistence unavailable; in-memory is fine.
   }
+  // VROL-425 — mirror to IndexedDB so the durable backup keeps up.
+  // Fire-and-forget; LS is canonical hot path.
+  void idbSaveSnapshot(store);
 }
 
 export function listScenarios(): ScenarioSummary[] {

@@ -150,6 +150,7 @@ import {
 } from "@/lib/scenario-store";
 import { buildBundle, importBundle, isBundle, stringifyBundle } from "@/lib/scenario-bundle";
 import { cycleStats } from "@/lib/cycle-stats";
+import { useOnlineStatus } from "@/lib/online-status";
 import { toast } from "@/lib/toast";
 import {
   DEFAULT_RUN_SETTINGS,
@@ -841,6 +842,10 @@ function EditorCanvas() {
   }, []);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flow = useReactFlow();
+  // VROL-432 — offline mode signal. Cloud-sync flows (none yet) and AI
+  // assistance (when shipped) gate off this. Until then it drives a small
+  // banner so the user knows what's degraded.
+  const isOnline = useOnlineStatus();
   const nodeIdRef = useRef<number>(
     initial.nodes.reduce((max, n) => Math.max(max, parseInt(n.id.replace(/\D/g, ""), 10) || 0), 0) +
       1,
@@ -1831,6 +1836,18 @@ function EditorCanvas() {
           setTourOpen(false);
         }}
       />
+      {/* VROL-432 — offline banner: appears above the toolbar when the
+          browser reports offline. Run + edits stay enabled (everything is
+          local-first); only flags cloud-sync / AI as paused. */}
+      {!isOnline ? (
+        <div
+          className="border-sim-down/40 bg-sim-down/5 text-sim-down-foreground -mx-6 border-b px-6 py-1.5 text-xs"
+          role="status"
+        >
+          <strong>Offline</strong> — edits + runs continue locally. Cloud sync and AI assistance are
+          paused.
+        </div>
+      ) : null}
       {/* VROL-634 — sticky top bar: scenario name + status pill + primary
           actions. Replaces the 9-button stack that used to live in the left
           column with a horizontal action hierarchy. */}
