@@ -118,9 +118,11 @@ import { ValidationPanel } from "@/components/editor/validation-panel";
 import {
   canRedo,
   canUndo,
+  deserializeHistory,
   EMPTY_HISTORY,
   recordChange,
   redo as historyRedo,
+  serializeHistory,
   undo as historyUndo,
   type EditorHistory,
   type EditorSnapshot,
@@ -547,7 +549,17 @@ function EditorCanvas() {
   // lastCommittedRef caches the last snapshot pushed to history; the
   // debounce checks this to skip no-ops + cooperate with undo/redo
   // applying snapshots back to live state.
-  const [history, setHistory] = useState<EditorHistory>(EMPTY_HISTORY);
+  // VROL-659 — hydrate history from sessionStorage so a reload doesn't
+  // lose past/future stacks. sessionStorage clears on tab close, which is
+  // the right scope for "session" editor work.
+  const [history, setHistory] = useState<EditorHistory>(() => {
+    if (typeof window === "undefined") return EMPTY_HISTORY;
+    try {
+      return deserializeHistory(window.sessionStorage.getItem("vrolen.editor-history"));
+    } catch {
+      return EMPTY_HISTORY;
+    }
+  });
   const lastCommittedRef = useRef<EditorSnapshot>({ nodes, edges, settings });
   const debouncedCommitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -560,6 +572,15 @@ function EditorCanvas() {
       lastCommittedRef.current = { nodes, edges, settings };
     }, 400);
   }, [nodes, edges, settings]);
+  // VROL-659 — persist history to sessionStorage whenever it changes.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.sessionStorage.setItem("vrolen.editor-history", serializeHistory(history));
+    } catch {
+      // sessionStorage may be unavailable / full; in-memory still works.
+    }
+  }, [history]);
   const handleUndo = useCallback(() => {
     const current: EditorSnapshot = { nodes, edges, settings };
     const result = historyUndo(history, current);

@@ -90,3 +90,36 @@ export function canUndo(history: EditorHistory): boolean {
 export function canRedo(history: EditorHistory): boolean {
   return history.future.length > 0;
 }
+
+/**
+ * VROL-659 — JSON-safe serialization of history for sessionStorage. Nodes
+ * + edges + settings are already plain-object shapes; no custom types or
+ * Maps to worry about. Returns a string the caller stores under whatever
+ * key they like.
+ */
+export function serializeHistory(h: EditorHistory): string {
+  return JSON.stringify({ past: h.past, future: h.future });
+}
+
+/**
+ * Parse a previously-serialized history. Returns EMPTY_HISTORY on bad
+ * input so a corrupt sessionStorage payload never breaks the editor.
+ */
+export function deserializeHistory(raw: string | null): EditorHistory {
+  if (!raw) return EMPTY_HISTORY;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return EMPTY_HISTORY;
+    const obj = parsed as { past?: unknown; future?: unknown };
+    const past = Array.isArray(obj.past) ? (obj.past as EditorSnapshot[]) : [];
+    const future = Array.isArray(obj.future) ? (obj.future as EditorSnapshot[]) : [];
+    // Apply the same cap on hydrate so a malformed payload with thousands
+    // of snapshots can't blow up memory.
+    return {
+      past: past.length > MAX_HISTORY ? past.slice(past.length - MAX_HISTORY) : past,
+      future: future.length > MAX_HISTORY ? future.slice(future.length - MAX_HISTORY) : future,
+    };
+  } catch {
+    return EMPTY_HISTORY;
+  }
+}

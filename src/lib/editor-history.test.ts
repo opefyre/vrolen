@@ -6,10 +6,12 @@ import { DEFAULT_RUN_SETTINGS } from "@/routes/editor-run-settings";
 import {
   canRedo,
   canUndo,
+  deserializeHistory,
   EMPTY_HISTORY,
   MAX_HISTORY,
   recordChange,
   redo,
+  serializeHistory,
   undo,
   type EditorSnapshot,
 } from "./editor-history";
@@ -78,6 +80,22 @@ describe("editor-history (VROL-309)", () => {
     // Oldest dropped: first entry should be the 6th one we pushed (s5).
     expect(h.past[0]?.nodes[0]?.id).toBe("s5");
     expect(h.past[h.past.length - 1]?.nodes[0]?.id).toBe(`s${String(MAX_HISTORY + 4)}`);
+  });
+
+  it("serializeHistory + deserializeHistory round-trip (VROL-659)", () => {
+    let h = EMPTY_HISTORY;
+    h = recordChange(h, snap("a"));
+    h = recordChange(h, snap("b"));
+    const round = deserializeHistory(serializeHistory(h));
+    expect(round.past).toHaveLength(2);
+    expect(round.past[0]?.nodes[0]?.id).toBe("a");
+    expect(round.future).toEqual([]);
+  });
+
+  it("deserializeHistory returns EMPTY_HISTORY on null / corrupt input (VROL-659)", () => {
+    expect(deserializeHistory(null)).toEqual(EMPTY_HISTORY);
+    expect(deserializeHistory("{not-json")).toEqual(EMPTY_HISTORY);
+    expect(deserializeHistory("[]")).toEqual(EMPTY_HISTORY);
   });
 
   it("canUndo / canRedo reflect stack contents", () => {
