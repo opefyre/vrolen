@@ -38,6 +38,7 @@ import { RecommendationsCard } from "./RecommendationsCard";
 import { StatePareto } from "./StatePareto";
 import { ThroughputChart } from "./ThroughputChart";
 import { CostCard } from "./CostCard";
+import { OptimizationCard } from "./OptimizationCard";
 import { ReplicationsCard } from "./ReplicationsCard";
 import { SensitivityCard } from "./SensitivityCard";
 import { VerificationCard } from "./VerificationCard";
@@ -86,6 +87,11 @@ interface ResultPanelProps {
   readonly wipCurveRunning?: boolean;
   readonly onRunWipCurve?: () => void;
   readonly onApplyWipCapacity?: (capacity: number) => void;
+  /** Optimization grid-search summary. */
+  readonly optimizationSummary?: import("@/lib/optimization-search").OptimizationSummary | null;
+  readonly optimizationRunning?: boolean;
+  readonly onRunOptimization?: () => void;
+  readonly onApplyOptimizationCapacity?: (capacity: number) => void;
 }
 
 /**
@@ -294,6 +300,10 @@ export function ResultPanel({
   wipCurveRunning,
   onRunWipCurve,
   onApplyWipCapacity,
+  optimizationSummary,
+  optimizationRunning,
+  onRunOptimization,
+  onApplyOptimizationCapacity,
 }: ResultPanelProps) {
   // VROL-720 — help-link anchor mapping. Routes to /help (same-tab) with a
   // hash so the matching definition scrolls into view.
@@ -524,6 +534,14 @@ export function ResultPanel({
               running={wipCurveRunning === true}
               onRun={onRunWipCurve}
               {...(onApplyWipCapacity ? { onApplyCapacity: onApplyWipCapacity } : {})}
+            />
+          ) : null}
+          {onRunOptimization ? (
+            <OptimizationCard
+              summary={optimizationSummary ?? null}
+              running={optimizationRunning === true}
+              onRun={onRunOptimization}
+              {...(onApplyOptimizationCapacity ? { onApply: onApplyOptimizationCapacity } : {})}
             />
           ) : null}
           {costSummary ? <CostCard summary={costSummary} /> : null}

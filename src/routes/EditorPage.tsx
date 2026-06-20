@@ -696,6 +696,7 @@ import { summarizeReplications, type ReplicationSummary } from "@/lib/replicatio
 import { summarizeCosts } from "@/lib/cost-economics";
 import { runSensitivitySweep, type SensitivitySummary } from "@/lib/sensitivity-sweep";
 import { runWipCurve, type WipCurveSummary } from "@/lib/wip-curve";
+import { runOptimizationSearch, type OptimizationSummary } from "@/lib/optimization-search";
 
 const NODE_TYPES = { station: StationNode, sticky: StickyNoteNode, frame: FrameNode };
 
@@ -786,6 +787,9 @@ function EditorCanvas() {
   // Throughput-vs-WIP scan — fires on demand from the Results panel.
   const [wipCurveSummary, setWipCurveSummary] = useState<WipCurveSummary | null>(null);
   const [wipCurveRunning, setWipCurveRunning] = useState<boolean>(false);
+  // Optimization grid search — fires on demand from the Results panel.
+  const [optimizationSummary, setOptimizationSummary] = useState<OptimizationSummary | null>(null);
+  const [optimizationRunning, setOptimizationRunning] = useState<boolean>(false);
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [settings, setSettings] = useState<RunSettings>(() => initial.settings);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
@@ -1821,6 +1825,48 @@ function EditorCanvas() {
         toast.error("WIP scan failed", { description: message });
       } finally {
         setWipCurveRunning(false);
+      }
+    }, 0);
+  }, [nodes, edges, settings]);
+
+  // Optimization grid search — looks for the best-throughput buffer cap
+  // averaged over 3 seeds per level (~21 engine runs total).
+  const handleOptimizationSearch = useCallback((): void => {
+    const translation = graphToChainOptions(nodes, edges);
+    if (translation.error) {
+      toast.error("Can't search", { description: translation.error });
+      return;
+    }
+    setOptimizationRunning(true);
+    setTimeout(() => {
+      try {
+        const horizonMs = settings.horizonMs;
+        const warmupMs = Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2));
+        const buildBaseOptions = () =>
+          ({
+            ...(translation.topology
+              ? { topology: translation.topology }
+              : {
+                  stationCycleTimes: [...translation.cycleDistributions],
+                  stationLabels: [...translation.stationLabels],
+                }),
+          }) as ChainOptions;
+        const summary = runOptimizationSearch({
+          horizonMs,
+          warmupMs,
+          seed: settings.seed,
+          currentCapacity: settings.interStationBufferCapacity,
+          buildBaseOptions,
+        });
+        setOptimizationSummary(summary);
+        toast.success(
+          `Optimization · ${String(summary.searchSize)} runs · best WIP ${String(summary.best.bufferCapacity)}`,
+        );
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        toast.error("Search failed", { description: message });
+      } finally {
+        setOptimizationRunning(false);
       }
     }, 0);
   }, [nodes, edges, settings]);
@@ -3072,10 +3118,12 @@ function EditorCanvas() {
                 ) : (
                   <AlertTriangle className="h-3.5 w-3.5" />
                 )}
-                {validation.errors.length > 0 ? `${String(validation.errors.length)} err` : null}
+                {validation.errors.length > 0
+                  ? `${String(validation.errors.length)} ${validation.errors.length === 1 ? "error" : "errors"}`
+                  : null}
                 {validation.errors.length > 0 && validation.warnings.length > 0 ? " · " : null}
                 {validation.warnings.length > 0
-                  ? `${String(validation.warnings.length)} warn`
+                  ? `${String(validation.warnings.length)} ${validation.warnings.length === 1 ? "warning" : "warnings"}`
                   : null}
               </button>
               {validationOpen ? (
@@ -3941,6 +3989,15 @@ function EditorCanvas() {
             wipCurveRunning={wipCurveRunning}
             onRunWipCurve={handleWipCurveScan}
             onApplyWipCapacity={(capacity) => {
+              setSettings((s) => ({ ...s, interStationBufferCapacity: capacity }));
+              setTimeout(() => {
+                if (!isRunning) handleRun();
+              }, 0);
+            }}
+            optimizationSummary={optimizationSummary}
+            optimizationRunning={optimizationRunning}
+            onRunOptimization={handleOptimizationSearch}
+            onApplyOptimizationCapacity={(capacity) => {
               setSettings((s) => ({ ...s, interStationBufferCapacity: capacity }));
               setTimeout(() => {
                 if (!isRunning) handleRun();
