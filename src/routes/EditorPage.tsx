@@ -637,6 +637,8 @@ function EditorCanvas() {
   const [scenariosOpen, setScenariosOpen] = useState<boolean>(false);
   // VROL-685 — case-insensitive search filter for the scenarios list.
   const [scenarioSearch, setScenarioSearch] = useState<string>("");
+  // VROL-726 — palette search input state.
+  const [paletteSearch, setPaletteSearch] = useState<string>("");
   // VROL-695 — sort dropdown state.
   const [scenarioSort, setScenarioSort] = useState<"date" | "name" | "nodes">("date");
   // VROL-682 — two slots for picking history runs to compare.
@@ -1248,10 +1250,11 @@ function EditorCanvas() {
   );
 
   // VROL-309 — keyboard shortcuts. Cmd/Ctrl+Z = undo, +Shift = redo.
+  // VROL-727 — Cmd/Ctrl+D = duplicate the currently selected station.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const mod = e.metaKey || e.ctrlKey;
-      if (!mod || e.key.toLowerCase() !== "z") return;
+      if (!mod) return;
       // Skip if the user is typing in an input / textarea / contenteditable.
       const t = e.target as HTMLElement | null;
       if (
@@ -1263,15 +1266,33 @@ function EditorCanvas() {
       ) {
         return;
       }
-      e.preventDefault();
-      if (e.shiftKey) handleRedo();
-      else handleUndo();
+      const key = e.key.toLowerCase();
+      if (key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+      } else if (key === "d" && selectedNodeId) {
+        e.preventDefault();
+        const original = nodes.find((n) => n.id === selectedNodeId);
+        if (!original) return;
+        const newId = `n${String(nodeIdRef.current++)}`;
+        const copy: Node = {
+          ...original,
+          id: newId,
+          position: { x: original.position.x + 60, y: original.position.y + 60 },
+          selected: false,
+          data: { ...(original.data as Record<string, unknown>) },
+        };
+        setNodes((ns) => [...ns, copy]);
+        setSelectedNodeId(newId);
+        toast.success(`Duplicated ${(original.data as { label?: string }).label ?? "station"}`);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
     };
-  }, [handleUndo, handleRedo]);
+  }, [handleUndo, handleRedo, selectedNodeId, nodes, setNodes]);
 
   // VROL-304 — click a validation issue → pan + zoom the canvas to its node.
   const focusValidationIssue = useCallback(
@@ -1720,6 +1741,63 @@ function EditorCanvas() {
           )}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          {/* VROL-728 — auto-layout: arrange nodes left-to-right by topological depth. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              if (nodes.length === 0) {
+                toast.info("Canvas is empty");
+                return;
+              }
+              const depth = new Map<string, number>();
+              const idToNode = new Map(nodes.map((n) => [n.id, n]));
+              const order = [...nodes].map((n) => n.id);
+              for (const id of order) {
+                if (!depth.has(id)) depth.set(id, 0);
+              }
+              let changed = true;
+              let iters = 0;
+              while (changed && iters < 100) {
+                changed = false;
+                iters++;
+                for (const e of edges) {
+                  const s = depth.get(e.source) ?? 0;
+                  const t = depth.get(e.target) ?? 0;
+                  if (t < s + 1) {
+                    depth.set(e.target, s + 1);
+                    changed = true;
+                  }
+                }
+              }
+              const cols = new Map<number, string[]>();
+              for (const id of order) {
+                const d = depth.get(id) ?? 0;
+                const arr = cols.get(d) ?? [];
+                arr.push(id);
+                cols.set(d, arr);
+              }
+              const NX = 220;
+              const NY = 120;
+              setNodes((ns) =>
+                ns.map((n) => {
+                  const d = depth.get(n.id) ?? 0;
+                  const colIds = cols.get(d) ?? [];
+                  const rank = colIds.indexOf(n.id);
+                  const original = idToNode.get(n.id);
+                  if (!original) return n;
+                  return {
+                    ...n,
+                    position: { x: 40 + d * NX, y: 40 + rank * NY },
+                  };
+                }),
+              );
+              toast.success("Auto-layout applied");
+            }}
+            title="Arrange nodes left-to-right by depth"
+          >
+            Auto-layout
+          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -1989,9 +2067,25 @@ function EditorCanvas() {
           <CardHeader>
             <CardTitle className="font-heading text-base">Stations</CardTitle>
             <CardDescription>Drag onto the canvas</CardDescription>
+            {/* VROL-726 — palette search. */}
+            <Input
+              type="search"
+              value={paletteSearch}
+              placeholder="Search…"
+              onChange={(e) => {
+                setPaletteSearch(e.target.value);
+              }}
+              data-testid="palette-search"
+              className="h-7 text-xs"
+            />
           </CardHeader>
           <CardContent className="space-y-2">
-            {PALETTE.map((p) => (
+            {PALETTE.filter(
+              (p) =>
+                paletteSearch.trim() === "" ||
+                p.label.toLowerCase().includes(paletteSearch.trim().toLowerCase()) ||
+                p.summary.toLowerCase().includes(paletteSearch.trim().toLowerCase()),
+            ).map((p) => (
               <div
                 key={p.stationType}
                 draggable
@@ -2089,7 +2183,17 @@ function EditorCanvas() {
             <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
               <div className="space-y-1">
                 <CardTitle className="font-heading text-base">Inspector</CardTitle>
-                <CardDescription className="text-xs">Editing {selectedNode.id}</CardDescription>
+                {/* VROL-729 — breadcrumb: scenario › station label · station type. */}
+                <CardDescription className="text-xs">
+                  <span className="text-foreground/70">{activeScenarioName ?? "Untitled"}</span>
+                  <span className="mx-1">›</span>
+                  <span className="font-medium">
+                    {(selectedNode.data as { label?: string }).label ?? selectedNode.id}
+                  </span>
+                  <span className="text-muted-foreground ml-1.5 font-mono text-[10px]">
+                    {(selectedNode.data as { stationType?: string }).stationType ?? ""}
+                  </span>
+                </CardDescription>
               </div>
               <Button
                 variant="ghost"
