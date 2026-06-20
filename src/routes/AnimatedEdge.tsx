@@ -23,10 +23,16 @@ export function AnimatedEdge(props: EdgeProps) {
     dotColorClass?: string;
     bufferFillSeries?: number[];
     bufferCapacity?: number;
+    /** Live buffer fill at current playback time. */
+    playbackFillNow?: number;
+    /** Run peak fill — used to normalise the live width. */
+    playbackPeak?: number;
   };
   const flowRate = data.flowRate ?? 0;
   const dotColorClass = data.dotColorClass ?? "text-sim-running";
   const series = data.bufferFillSeries;
+  const playbackFillNow = data.playbackFillNow;
+  const playbackPeak = data.playbackPeak;
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -37,11 +43,36 @@ export function AnimatedEdge(props: EdgeProps) {
   });
   const pathId = `edge-path-${useId()}`;
 
+  // Live playback — fatten the edge by current buffer fill so the user
+  // sees congestion in real time. Stroke color shifts toward the
+  // bottleneck reason at the same time (carried by dotColorClass).
+  const playbackStrokeWidth =
+    typeof playbackFillNow === "number" && typeof playbackPeak === "number" && playbackPeak > 0
+      ? 1.5 + 4 * Math.min(1, playbackFillNow / playbackPeak)
+      : undefined;
+  const playbackStrokeColor =
+    typeof playbackFillNow === "number" && typeof playbackPeak === "number" && playbackPeak > 0
+      ? // High fill → blocked-ish color; low fill → running.
+        playbackFillNow / playbackPeak > 0.7
+        ? "var(--sim-blocked)"
+        : playbackFillNow / playbackPeak > 0.3
+          ? "var(--sim-setup)"
+          : "var(--sim-running)"
+      : undefined;
+
   const baseEdgeProps: Parameters<typeof BaseEdge>[0] = {
     id: props.id,
     path: edgePath,
     ...(markerEnd ? { markerEnd } : {}),
-    ...(style ? { style } : {}),
+    ...(style || playbackStrokeWidth
+      ? {
+          style: {
+            ...(style ?? {}),
+            ...(playbackStrokeWidth ? { strokeWidth: playbackStrokeWidth } : {}),
+            ...(playbackStrokeColor ? { stroke: playbackStrokeColor } : {}),
+          },
+        }
+      : {}),
   };
   // VROL-615 — render the buffer-fill sparkline above the edge midpoint when
   // the run carried a sampler. Stays visible even when animation / flow dots

@@ -150,8 +150,10 @@ import {
 } from "@/lib/scenario-store";
 import { buildBundle, importBundle, isBundle, stringifyBundle } from "@/lib/scenario-bundle";
 import { cycleStats } from "@/lib/cycle-stats";
+import { derivePlayback } from "@/lib/derive-playback";
 import { useOnlineStatus } from "@/lib/online-status";
 import { toast } from "@/lib/toast";
+import { PlaybackController } from "@/components/editor/playback-controller";
 import {
   DEFAULT_RUN_SETTINGS,
   loadRunSettings,
@@ -460,6 +462,40 @@ function StationNode({ data, selected, id }: NodeProps) {
     ._validationSeverity;
   // VROL-692 — bottleneck badge injected by EditorPage's nodesForFlow.
   const isBottleneck = (d as { _isBottleneck?: boolean })._isBottleneck === true;
+  // Live playback — when EditorPage is playing back a finished run, it
+  // injects the station's current dominant state. Drives the body tint
+  // + the pulsing dot so the canvas reads like a live simulation.
+  const playbackState = (d as { _playbackState?: string })._playbackState;
+  const playbackTint =
+    playbackState === "Running"
+      ? "bg-sim-running/10 ring-sim-running/40"
+      : playbackState === "Starved"
+        ? "bg-sim-starved/15 ring-sim-starved/40"
+        : playbackState === "BlockedOut"
+          ? "bg-sim-blocked/15 ring-sim-blocked/40"
+          : playbackState === "Down"
+            ? "bg-sim-down/15 ring-sim-down/40"
+            : playbackState === "Setup"
+              ? "bg-sim-setup/15 ring-sim-setup/40"
+              : playbackState === "Maintenance"
+                ? "bg-sim-maintenance/15 ring-sim-maintenance/40"
+                : playbackState
+                  ? "bg-sim-idle/20 ring-sim-idle/40"
+                  : "";
+  const playbackDotColor =
+    playbackState === "Running"
+      ? "bg-sim-running"
+      : playbackState === "Starved"
+        ? "bg-sim-starved"
+        : playbackState === "BlockedOut"
+          ? "bg-sim-blocked"
+          : playbackState === "Down"
+            ? "bg-sim-down"
+            : playbackState === "Setup"
+              ? "bg-sim-setup"
+              : playbackState === "Maintenance"
+                ? "bg-sim-maintenance"
+                : "bg-sim-idle";
 
   return (
     <div
@@ -469,8 +505,20 @@ function StationNode({ data, selected, id }: NodeProps) {
         selected
           ? "ring-foreground/40 border-foreground/30 shadow-md ring-2"
           : "border-border hover:shadow-md"
-      }`}
+      } ${playbackTint ? `ring-2 ${playbackTint}` : ""}`}
     >
+      {playbackState ? (
+        <span
+          className={`absolute -top-1 right-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${playbackDotColor} text-white shadow-sm`}
+          aria-label={`Currently ${playbackState}`}
+        >
+          <span
+            className={`h-1.5 w-1.5 rounded-full bg-white/90 ${playbackState === "Running" ? "animate-pulse" : ""}`}
+            aria-hidden
+          />
+          {playbackState === "BlockedOut" ? "Blocked" : playbackState}
+        </span>
+      ) : null}
       {/* VROL-304 — validation severity indicator. Errors red, warnings yellow. */}
       {validationSeverity ? (
         <span
@@ -575,7 +623,9 @@ function StationNode({ data, selected, id }: NodeProps) {
   );
 }
 
-const NODE_TYPES = { station: StationNode };
+import { StickyNoteNode } from "@/components/canvas/sticky-note-node";
+
+const NODE_TYPES = { station: StationNode, sticky: StickyNoteNode };
 
 // Lazy-import AnimatedEdge so its react-flow getBezierPath dependency doesn't
 // bloat the first non-editor route. It's used inside this lazy-loaded file,
@@ -846,6 +896,14 @@ function EditorCanvas() {
   // assistance (when shipped) gate off this. Until then it drives a small
   // banner so the user knows what's degraded.
   const isOnline = useOnlineStatus();
+  // Live simulation playback state. When a finished run has samples, the
+  // PlaybackController owns this and the canvas paints stations + edges
+  // accordingly. `null` = no playback active (canvas stays static).
+  const [playbackMs, setPlaybackMs] = useState<number | null>(null);
+  const playbackSnapshot = useMemo(() => {
+    if (playbackMs === null || !result || result.samples.length < 2) return null;
+    return derivePlayback(result, playbackMs);
+  }, [playbackMs, result]);
   const nodeIdRef = useRef<number>(
     initial.nodes.reduce((max, n) => Math.max(max, parseInt(n.id.replace(/\D/g, ""), 10) || 0), 0) +
       1,
@@ -1001,16 +1059,31 @@ function EditorCanvas() {
   const onDrop = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
       event.preventDefault();
-      const stationType = event.dataTransfer.getData("application/vrolen-station");
-      if (!stationType) return;
-      const item = PALETTE.find((p) => p.stationType === stationType);
-      if (!item) return;
-
       const bounds = wrapperRef.current?.getBoundingClientRect();
       const position = flow.screenToFlowPosition({
         x: event.clientX - (bounds?.left ?? 0),
         y: event.clientY - (bounds?.top ?? 0),
       });
+      // Sticky-note drop branch — palette emits a dedicated MIME so the
+      // drop dispatches a sticky instead of a station.
+      const sticky = event.dataTransfer.getData("application/vrolen-sticky");
+      if (sticky) {
+        const id = `n${String(nodeIdRef.current++)}`;
+        const newNode: Node = {
+          id,
+          type: "sticky",
+          position,
+          data: { text: "", color: "yellow" },
+        };
+        setNodes((nds) => nds.concat(newNode));
+        return;
+      }
+
+      const stationType = event.dataTransfer.getData("application/vrolen-station");
+      if (!stationType) return;
+      const item = PALETTE.find((p) => p.stationType === stationType);
+      if (!item) return;
+
       const id = `n${String(nodeIdRef.current++)}`;
       const newNode: Node = {
         id,
@@ -1212,6 +1285,10 @@ function EditorCanvas() {
         }
         desc += ` · ${wallMs.toFixed(0)}ms`;
         setResult(r);
+        // Auto-arm the playback scrubber at warmup so the canvas can replay
+        // the run; if the sampler was off, leave playback null.
+        const warmup = Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2));
+        setPlaybackMs(r.samples.length >= 2 ? warmup : null);
         toast.success("Simulation complete", { description: desc });
         // If a scenario is active, push a compact summary to history.
         if (activeScenarioName) {
@@ -1691,10 +1768,26 @@ function EditorCanvas() {
         delete stripped._isBottleneck;
         nextData = stripped;
       }
+      // Live playback — paint the station with its current dominant state.
+      if (
+        playbackSnapshot &&
+        stationIdx !== undefined &&
+        stationIdx < playbackSnapshot.perStationState.length
+      ) {
+        if (nextData === baseData) nextData = { ...baseData };
+        nextData = {
+          ...nextData,
+          _playbackState: playbackSnapshot.perStationState[stationIdx],
+        };
+      } else if ("_playbackState" in nextData) {
+        const stripped = { ...nextData };
+        delete stripped._playbackState;
+        nextData = stripped;
+      }
       if (nextData === baseData) return n;
       return { ...n, data: nextData };
     });
-  }, [nodes, result, runMeta, severityByNodeId]);
+  }, [nodes, result, runMeta, severityByNodeId, playbackSnapshot]);
 
   const edgesForFlow = useMemo<Edge[]>(() => {
     if (!result || !runMeta || result.elapsedMs <= 0) return edges;
@@ -1735,9 +1828,17 @@ function EditorCanvas() {
       // "throughput/h · peak N" on each edge once a run has data.
       const bufferPeak = bufferFillSeries ? Math.max(0, ...bufferFillSeries) : 0;
       const labelWithPeak = bufferPeak > 0 ? `${label} · peak ${String(bufferPeak)}` : label;
+      // Live playback — current buffer fill drives both edge stroke width
+      // and dot color so the canvas reads like a live simulation.
+      const playbackFillNow =
+        playbackSnapshot && edgeIdx !== undefined
+          ? (playbackSnapshot.perEdgeFill[edgeIdx] ?? 0)
+          : 0;
       // Switch to AnimatedEdge whenever we have something to render on top of
-      // the stock edge — dots (animateFlow on) OR a buffer-fill sparkline.
-      const usesCustomEdge = (animateFlow && flowed > 0) || bufferFillSeries !== undefined;
+      // the stock edge — dots (animateFlow on) OR a buffer-fill sparkline OR
+      // a live playback fill.
+      const usesCustomEdge =
+        (animateFlow && flowed > 0) || bufferFillSeries !== undefined || playbackSnapshot !== null;
       return {
         ...e,
         label: labelWithPeak,
@@ -1750,12 +1851,13 @@ function EditorCanvas() {
                 flowRate: animateFlow ? flowRate : 0,
                 dotColorClass,
                 ...(bufferFillSeries ? { bufferFillSeries } : {}),
+                ...(playbackSnapshot ? { playbackFillNow, playbackPeak: bufferPeak } : {}),
               },
             }
           : {}),
       };
     });
-  }, [edges, result, runMeta, animateFlow]);
+  }, [edges, result, runMeta, animateFlow, playbackSnapshot]);
 
   // VROL-634 — derive top-bar status pill state. Idle until first run; pulses
   // while a run is in flight; stays "Done at HH:MM:SS" after completion.
@@ -2268,6 +2370,24 @@ function EditorCanvas() {
             />
           </CardHeader>
           <CardContent className="space-y-2">
+            {/* Sticky note — separate from PALETTE because it's not a station. */}
+            <div
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData("application/vrolen-sticky", "1");
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              className="flex cursor-grab items-center gap-2 rounded-md border border-amber-300 bg-amber-100 p-2 text-amber-900 hover:border-amber-500 active:cursor-grabbing"
+              title="Free-text annotation. Double-click to edit after dropping."
+            >
+              <span className="text-base" aria-hidden>
+                ✎
+              </span>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium">Sticky note</div>
+                <div className="truncate text-xs opacity-70">Annotation / comment</div>
+              </div>
+            </div>
             {PALETTE.filter(
               (p) =>
                 paletteSearch.trim() === "" ||
@@ -2298,7 +2418,7 @@ function EditorCanvas() {
           ref={wrapperRef}
           onDragOver={onDragOver}
           onDrop={onDrop}
-          className="border-border bg-background overflow-hidden rounded-md border"
+          className="border-border bg-background relative overflow-hidden rounded-md border"
         >
           <ReactFlow
             nodes={nodesForFlow}
@@ -2320,6 +2440,12 @@ function EditorCanvas() {
             // node's Handle styles.
             connectionRadius={30}
             connectionLineStyle={{ strokeWidth: 2 }}
+            // Miro-style snap-to-grid + multi-select rectangle.
+            snapToGrid
+            snapGrid={[16, 16]}
+            selectionOnDrag
+            panOnDrag={[1, 2]}
+            multiSelectionKeyCode="Shift"
           >
             <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
             <Controls />
@@ -2339,6 +2465,19 @@ function EditorCanvas() {
               </div>
             ) : null}
           </ReactFlow>
+          {/* Live simulation playback overlay — sits above the canvas, below
+              the toolbar. Hidden until a sampled run finishes. */}
+          {result && playbackMs !== null && result.samples.length >= 2 ? (
+            <div className="absolute right-3 bottom-3 left-3 z-10">
+              <PlaybackController
+                result={result}
+                horizonMs={settings.horizonMs}
+                warmupMs={Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2))}
+                playbackMs={playbackMs}
+                onPlaybackChange={setPlaybackMs}
+              />
+            </div>
+          ) : null}
         </div>
 
         {selectedNodeIds.length > 1 ? (
