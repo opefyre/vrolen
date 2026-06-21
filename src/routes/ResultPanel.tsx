@@ -45,6 +45,7 @@ import { ReplicationsCard } from "./ReplicationsCard";
 import { SensitivityCard } from "./SensitivityCard";
 import { VerificationCard } from "./VerificationCard";
 import { WipCurveCard } from "./WipCurveCard";
+import { RepsCalculator } from "@/components/results/RepsCalculator";
 
 const BOTTLES_ID = asMaterialId("bottles");
 const CAPS_ID = asMaterialId("caps");
@@ -431,6 +432,57 @@ function BottleneckExplanationCard({
   );
 }
 
+/**
+ * VROL-844 — thin horizontal 95% CI band rendered below a KPI tile's big
+ * number. The band's left/right map to [min(values), max(values)] so the
+ * reader sees where the CI sits within the run's full spread. A filled
+ * segment marks [low95, high95]; tick marks indicate the mean and (when
+ * inside the plotted range) the value 0.
+ */
+function KpiCiBand({ kpi }: { readonly kpi: import("@/lib/replications").ReplicationKpi }) {
+  const lo = Math.min(...kpi.values);
+  const hi = Math.max(...kpi.values);
+  const span = hi - lo;
+  if (!Number.isFinite(span) || span <= 0) return null;
+  const project = (v: number): number => ((v - lo) / span) * 100;
+  const lowPct = Math.max(0, Math.min(100, project(kpi.low95)));
+  const highPct = Math.max(0, Math.min(100, project(kpi.high95)));
+  const meanPct = Math.max(0, Math.min(100, project(kpi.mean)));
+  const fillLeftPct = Math.min(lowPct, highPct);
+  const fillWidthPct = Math.abs(highPct - lowPct);
+  const zeroInRange = lo <= 0 && hi >= 0;
+  const zeroPct = zeroInRange ? project(0) : null;
+  const n = kpi.values.length;
+  return (
+    <div className="mt-1.5 space-y-1">
+      <div
+        className="bg-muted relative h-1.5 w-full overflow-hidden rounded-sm"
+        role="img"
+        aria-label={`95% confidence interval: ${kpi.format(kpi.low95)} to ${kpi.format(kpi.high95)}, mean ${kpi.format(kpi.mean)}, n=${String(n)}`}
+      >
+        <div
+          className="bg-primary/30 absolute top-0 bottom-0"
+          style={{ left: `${String(fillLeftPct)}%`, width: `${String(fillWidthPct)}%` }}
+        />
+        <div
+          className="bg-primary absolute top-0 bottom-0 w-[2px]"
+          style={{ left: `calc(${String(meanPct)}% - 1px)` }}
+        />
+        {zeroPct !== null ? (
+          <div
+            className="bg-primary absolute top-0 bottom-0 w-[2px]"
+            style={{ left: `calc(${String(zeroPct)}% - 1px)` }}
+          />
+        ) : null}
+      </div>
+      <div className="text-muted-foreground font-mono text-[10px] tabular-nums">
+        95% CI: [{kpi.format(kpi.low95)}, {kpi.format(kpi.high95)}] (±{kpi.format(kpi.halfWidth95)},
+        n={n})
+      </div>
+    </div>
+  );
+}
+
 export function ResultPanel({
   result,
   runMeta,
@@ -514,6 +566,8 @@ export function ResultPanel({
           ) : null}
         </div>
         <div className="font-mono text-xl font-semibold tabular-nums">{value}</div>
+        {/* VROL-844 — 95% CI band + caption, only when ≥2 replications. */}
+        {repKpi && repKpi.values.length > 1 ? <KpiCiBand kpi={repKpi} /> : null}
         {hint ? <div className="text-muted-foreground mt-0.5 text-xs">{hint}</div> : null}
         {clickable ? (
           <div className="text-muted-foreground mt-1 text-[9px] tracking-wide uppercase">
@@ -759,6 +813,21 @@ export function ResultPanel({
             currentWarmupMs={warmupMs}
             {...(onApplyWarmup ? { onApplyWarmup } : {})}
           />
+          {/* VROL-844 — replications planner. Only renders when we have a
+              multi-rep run to read mean+stddev from. Throughput is the
+              KPI we plan against (it's what users tune the line for). */}
+          {(() => {
+            const throughputKpi = replicationSummary?.kpis.find((k) => k.label === "Throughput");
+            if (!throughputKpi || throughputKpi.values.length < 2) return null;
+            return (
+              <RepsCalculator
+                kpiLabel="throughput"
+                mean={throughputKpi.mean}
+                stddev={throughputKpi.stddev}
+                currentReps={throughputKpi.values.length}
+              />
+            );
+          })()}
           {replicationSummary ? (
             <ReplicationsCard
               summary={replicationSummary}
