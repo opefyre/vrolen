@@ -5,7 +5,6 @@ import {
   LayoutGrid,
   Layers,
   Network,
-  Palette,
   PanelLeftClose,
   PanelLeftOpen,
   Play,
@@ -23,20 +22,23 @@ interface NavItem {
   readonly href: string;
   readonly label: string;
   readonly icon: typeof Factory;
+  /** VROL-826 — keyboard shortcut hint shown in the sidebar tooltip. */
+  readonly shortcut?: string;
 }
 
 const NAV_ITEMS: readonly NavItem[] = [
-  { href: "/", label: "Home", icon: LayoutGrid },
-  { href: "/editor", label: "Editor", icon: Network },
-  { href: "/run", label: "Run demo", icon: Play },
+  { href: "/", label: "Home", icon: LayoutGrid, shortcut: "g h" },
+  { href: "/editor", label: "Editor", icon: Network, shortcut: "g e" },
+  { href: "/run", label: "Engine playground", icon: Play, shortcut: "g r" },
   // VROL-442 — /templates entry in the primary nav.
-  { href: "/templates", label: "Templates", icon: Layers },
+  { href: "/templates", label: "Templates", icon: Layers, shortcut: "g t" },
   // VROL-852 — iso renderer sandbox. Surfaced in primary nav while E06 is
   // active so the work is one click away; expected to graduate into /editor
   // once VROL-203/207 land.
   { href: "/iso-demo", label: "Iso demo", icon: Boxes },
-  { href: "/help", label: "Glossary", icon: BookOpen },
-  { href: "/design-tokens", label: "Design tokens", icon: Palette },
+  { href: "/help", label: "Glossary", icon: BookOpen, shortcut: "g g" },
+  // VROL-825 — Design tokens moved out of the primary nav. It's a debug
+  // surface, not a user-facing route. Reachable via Cmd+K and the footer.
 ];
 
 interface AppShellProps {
@@ -128,11 +130,15 @@ export function AppShell({ children }: AppShellProps) {
         {NAV_ITEMS.map((item) => {
           const active = item.href === pathname;
           const Icon = item.icon;
-          return (
+          // VROL-826 — Tooltip on every nav item with the keyboard shortcut.
+          // Replaces the native `title` attr so we get consistent styling +
+          // dismiss-on-Esc + reduced-motion respect from shadcn.
+          const link = (
             <a
               key={item.href}
               href={item.href}
               aria-current={active ? "page" : undefined}
+              aria-label={item.shortcut ? `${item.label} (${item.shortcut})` : item.label}
               className={[
                 "flex items-center gap-2 rounded-md px-2 py-2 text-sm font-medium transition-colors",
                 active
@@ -140,11 +146,25 @@ export function AppShell({ children }: AppShellProps) {
                   : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
                 collapsed ? "justify-center" : "",
               ].join(" ")}
-              title={collapsed ? item.label : undefined}
             >
               <Icon className="h-4 w-4 shrink-0" />
               {!collapsed && <span>{item.label}</span>}
             </a>
+          );
+          return (
+            <Tooltip key={item.href}>
+              <TooltipTrigger render={link} />
+              <TooltipContent>
+                <span className="inline-flex items-center gap-2">
+                  {item.label}
+                  {item.shortcut ? (
+                    <kbd className="border-border bg-card text-foreground rounded-sm border px-1 font-mono text-[10px]">
+                      {item.shortcut}
+                    </kbd>
+                  ) : null}
+                </span>
+              </TooltipContent>
+            </Tooltip>
           );
         })}
       </aside>
