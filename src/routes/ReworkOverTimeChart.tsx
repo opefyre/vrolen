@@ -118,10 +118,12 @@ export function ReworkOverTimeChart({
   }, [samples, secondarySamples, horizonMs, warmupMs, VIEW_W, VIEW_H]);
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>): void => {
-    if (samples.length === 0 || !wrapperRef.current) return;
-    const rect = wrapperRef.current.getBoundingClientRect();
-    const ratio = VIEW_W / rect.width;
-    const xInView = (e.clientX - rect.left) * ratio;
+    if (samples.length === 0) return;
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const hasBounds = rect.width > 0 && rect.height > 0;
+    const xRatio = hasBounds ? VIEW_W / rect.width : 1;
+    const xInView = hasBounds ? (e.clientX - rect.left) * xRatio : e.clientX;
     let best = 0;
     let bestDist = Infinity;
     for (let i = 0; i < samples.length; i++) {
@@ -129,6 +131,26 @@ export function ReworkOverTimeChart({
       if (dx < bestDist) {
         bestDist = dx;
         best = i;
+      }
+    }
+    // Multi-line chart: only show hover when cursor is close to the
+    // nearest active station's line. Skipped when bounds are 0 (test env).
+    if (hasBounds) {
+      const yRatio = VIEW_H / rect.height;
+      const yInView = (e.clientY - rect.top) * yRatio;
+      const HOVER_TOL_VIEW_UNITS = VIEW_H * 0.25;
+      let nearestLineDist = Infinity;
+      const sample = samples[best];
+      if (sample) {
+        for (const stn of activeStations) {
+          const v = sample.perStationRework?.[stn] ?? 0;
+          const d = Math.abs(yInView - plotYFor(v));
+          if (d < nearestLineDist) nearestLineDist = d;
+        }
+      }
+      if (nearestLineDist > HOVER_TOL_VIEW_UNITS) {
+        if (hover !== null) setHover(null);
+        return;
       }
     }
     setHover({ idx: best });

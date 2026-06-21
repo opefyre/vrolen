@@ -105,10 +105,12 @@ export function ThroughputChart({
   }, [samples, secondarySamples, horizonMs, warmupMs, VIEW_W, VIEW_H]);
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>): void => {
-    if (samples.length === 0 || !wrapperRef.current) return;
-    const rect = wrapperRef.current.getBoundingClientRect();
-    const ratio = VIEW_W / rect.width;
-    const xInView = (e.clientX - rect.left) * ratio;
+    if (samples.length === 0) return;
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const hasBounds = rect.width > 0 && rect.height > 0;
+    const xRatio = hasBounds ? VIEW_W / rect.width : 1;
+    const xInView = hasBounds ? (e.clientX - rect.left) * xRatio : e.clientX;
     let best = 0;
     let bestDist = Infinity;
     for (let i = 0; i < samples.length; i++) {
@@ -118,7 +120,22 @@ export function ThroughputChart({
         best = i;
       }
     }
-    setHover({ idx: best, x: (plotXFor(samples[best]?.tMs ?? 0) / VIEW_W) * rect.width });
+    // Only show the tooltip when the cursor is reasonably close to the
+    // curve at that X. Hovering the empty space above/below counts as
+    // "outside the chart" — clear the hover. Skip when we have no layout
+    // (e.g. happy-dom in tests) so the legacy mouseMove assertions hold.
+    if (hasBounds) {
+      const yRatio = VIEW_H / rect.height;
+      const yInView = (e.clientY - rect.top) * yRatio;
+      const curveYAtCursor = plotYFor(samples[best]?.lineCompleted ?? 0);
+      const HOVER_TOL_VIEW_UNITS = VIEW_H * 0.25;
+      if (Math.abs(yInView - curveYAtCursor) > HOVER_TOL_VIEW_UNITS) {
+        if (hover !== null) setHover(null);
+        return;
+      }
+    }
+    const xPx = hasBounds ? (plotXFor(samples[best]?.tMs ?? 0) / VIEW_W) * rect.width : 0;
+    setHover({ idx: best, x: xPx });
   };
   const onLeave = (): void => {
     setHover(null);

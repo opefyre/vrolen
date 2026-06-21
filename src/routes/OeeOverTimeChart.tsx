@@ -228,10 +228,12 @@ export function OeeOverTimeChart({
           Station: <strong className="text-foreground">{stationLabel}</strong>
         </p>
       )}
-      <div ref={wrapperRef} className="relative w-full" onMouseMove={onMove} onMouseLeave={onLeave}>
+      <div ref={wrapperRef} className="relative w-full">
         <svg
           viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
           className="block h-44 w-full"
+          onMouseMove={onMove}
+          onMouseLeave={onLeave}
           role="img"
           aria-label={`State-mix over time for ${stationLabel}`}
         >
