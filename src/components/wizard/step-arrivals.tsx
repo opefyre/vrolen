@@ -1,5 +1,6 @@
 import { Input } from "@/components/ui/input";
 
+import { FieldError } from "./field-error";
 import type { WizardDraft } from "./wizard-types";
 
 const HORIZON_PRESETS: readonly { label: string; ms: number }[] = [
@@ -12,10 +13,14 @@ const HORIZON_PRESETS: readonly { label: string; ms: number }[] = [
 export function StepArrivals({
   draft,
   update,
+  errors,
 }: {
   readonly draft: WizardDraft;
   readonly update: (patch: Partial<WizardDraft>) => void;
+  readonly errors?: Readonly<Record<string, string>>;
 }) {
+  const arrivalsError = errors?.["arrivalsPerMin"];
+  const horizonError = errors?.["horizonMs"];
   return (
     <div className="space-y-4">
       <div className="space-y-2">
@@ -29,11 +34,15 @@ export function StepArrivals({
             min={1}
             value={draft.arrivalsPerMin}
             onChange={(e) => {
+              // VROL-820 — accept any finite number so the validator can
+              // surface the "must be > 0" error. The previous guard
+              // silently swallowed zero / negative input.
               const n = Number(e.target.value);
-              if (Number.isFinite(n) && n > 0) update({ arrivalsPerMin: n });
+              if (Number.isFinite(n)) update({ arrivalsPerMin: n });
             }}
             className="w-28 text-right font-mono tabular-nums"
             aria-label="Arrivals per minute"
+            aria-invalid={arrivalsError ? true : undefined}
           />
           <span className="text-muted-foreground text-sm">items per minute</span>
         </div>
@@ -41,16 +50,24 @@ export function StepArrivals({
           Roughly 60/min ≈ one new item every second. The line will queue if your stations
           can&rsquo;t keep up.
         </p>
+        <FieldError message={arrivalsError} />
       </div>
       <div className="space-y-2">
         <div className="text-foreground/90 text-sm font-medium">How long should it run?</div>
-        <div className="flex flex-wrap gap-1.5">
+        <div
+          className="flex flex-wrap gap-1.5"
+          role="radiogroup"
+          aria-label="Run length"
+          aria-invalid={horizonError ? true : undefined}
+        >
           {HORIZON_PRESETS.map((p) => {
             const isSelected = draft.horizonMs === p.ms;
             return (
               <button
                 key={p.label}
                 type="button"
+                role="radio"
+                aria-checked={isSelected}
                 onClick={() => {
                   update({ horizonMs: p.ms });
                 }}
@@ -59,7 +76,6 @@ export function StepArrivals({
                     ? "border-sim-running bg-sim-running/15 text-sim-running"
                     : "border-border bg-card text-muted-foreground hover:text-foreground"
                 }`}
-                aria-pressed={isSelected}
               >
                 {p.label}
               </button>
@@ -69,6 +85,7 @@ export function StepArrivals({
         <p className="text-muted-foreground text-xs">
           We toss the first few minutes so startup quirks don&rsquo;t skew the numbers.
         </p>
+        <FieldError message={horizonError} />
       </div>
     </div>
   );

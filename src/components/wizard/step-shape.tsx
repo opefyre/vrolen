@@ -1,6 +1,7 @@
 import { Check, Factory, GitBranch, Layers, Square } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
+import { FieldError } from "./field-error";
 import { SHAPE_OPTIONS, type WizardDraft } from "./wizard-types";
 
 const SHAPE_ICONS: Record<string, LucideIcon> = {
@@ -13,16 +14,24 @@ const SHAPE_ICONS: Record<string, LucideIcon> = {
 export function StepShape({
   draft,
   update,
+  errors,
 }: {
   readonly draft: WizardDraft;
   readonly update: (patch: Partial<WizardDraft>) => void;
+  readonly errors?: Readonly<Record<string, string>>;
 }) {
+  const presetError = errors?.["presetId"];
   return (
     <div className="space-y-3">
       <p className="text-foreground/80 text-sm">
         Pick the shape closest to your line. You can rename and reshape everything later.
       </p>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <div
+        className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+        role="radiogroup"
+        aria-label="Starting shape"
+        aria-invalid={presetError ? true : undefined}
+      >
         {SHAPE_OPTIONS.map((opt) => {
           const Icon = SHAPE_ICONS[opt.id] ?? Square;
           const isSelected = draft.presetId === opt.id;
@@ -30,6 +39,8 @@ export function StepShape({
             <button
               key={opt.id}
               type="button"
+              role="radio"
+              aria-checked={isSelected}
               onClick={() => {
                 update({ presetId: opt.id, stations: opt.stations });
               }}
@@ -38,7 +49,6 @@ export function StepShape({
                   ? "border-sim-running bg-sim-running/5 ring-sim-running/30 ring-2"
                   : "border-border bg-card hover:border-foreground/30"
               }`}
-              aria-pressed={isSelected}
             >
               <div className="flex items-center justify-between">
                 <span
@@ -68,6 +78,7 @@ export function StepShape({
           );
         })}
       </div>
+      <FieldError message={presetError} />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { Check, Flame, Sparkles, Wrench } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
+import { FieldError } from "./field-error";
 import type { RealismLevel, WizardDraft } from "./wizard-types";
 
 const OPTIONS: readonly {
@@ -36,16 +37,24 @@ const OPTIONS: readonly {
 export function StepRealism({
   draft,
   setRealism,
+  errors,
 }: {
   readonly draft: WizardDraft;
   readonly setRealism: (level: RealismLevel) => void;
+  readonly errors?: Readonly<Record<string, string>>;
 }) {
+  const realismError = errors?.["realism"];
   return (
     <div className="space-y-3">
       <p className="text-foreground/80 text-sm">
         You&rsquo;re picking how messy the world is. Realistic is the default for production lines.
       </p>
-      <div className="space-y-2">
+      <div
+        className="space-y-2"
+        role="radiogroup"
+        aria-label="Realism level"
+        aria-invalid={realismError ? true : undefined}
+      >
         {OPTIONS.map((opt) => {
           const Icon = opt.icon;
           const isSelected = draft.realism === opt.id;
@@ -53,6 +62,8 @@ export function StepRealism({
             <button
               key={opt.id}
               type="button"
+              role="radio"
+              aria-checked={isSelected}
               onClick={() => {
                 setRealism(opt.id);
               }}
@@ -61,7 +72,6 @@ export function StepRealism({
                   ? "border-sim-running bg-sim-running/5 ring-sim-running/30 ring-2"
                   : "border-border bg-card hover:border-foreground/30"
               }`}
-              aria-pressed={isSelected}
             >
               <span
                 className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${
@@ -98,6 +108,7 @@ export function StepRealism({
           );
         })}
       </div>
+      <FieldError message={realismError} />
     </div>
   );
 }

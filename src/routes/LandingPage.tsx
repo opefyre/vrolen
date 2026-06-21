@@ -9,13 +9,15 @@
  */
 
 import { ArrowRight, Activity, ExternalLink, GitBranch, Settings2, Wand2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { commitDraft } from "@/components/wizard/commit-draft";
 import { WizardShell } from "@/components/wizard/wizard-shell";
+import type { WizardDraft } from "@/components/wizard/wizard-types";
 import { PRESETS, setPendingPreset } from "@/lib/presets";
 import { setPendingWizardCommit } from "@/lib/wizard-handoff";
+import { clearWizardDraft, hasWizardDraft, loadWizardDraft } from "@/lib/wizard-draft-storage";
 import { TopologyPreview } from "@/components/landing/topology-preview";
 
 /** VROL-707 — derive a coarse category from preset id so cards can show a tag. */
@@ -150,6 +152,43 @@ function FeatureCard({
 
 export default function LandingPage() {
   const [wizardOpen, setWizardOpen] = useState<boolean>(false);
+  /** VROL-820 — initial draft to seed the wizard with. `null` = fresh
+   *  start; populated means the user clicked "Resume draft" or hit
+   *  Undo on the Save & exit toast. */
+  const [resumedDraft, setResumedDraft] = useState<WizardDraft | null>(null);
+  /** VROL-820 — re-evaluated on mount and whenever the wizard closes so
+   *  the "Resume draft" CTA appears the moment the user saves & exits. */
+  const [hasDraft, setHasDraft] = useState<boolean>(() => hasWizardDraft());
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onResume = () => {
+      const saved = loadWizardDraft();
+      if (saved) {
+        setResumedDraft(saved);
+        setWizardOpen(true);
+      }
+    };
+    window.addEventListener("vrolen:resume-wizard-draft", onResume);
+    return () => {
+      window.removeEventListener("vrolen:resume-wizard-draft", onResume);
+    };
+  }, []);
+  const openWizardFresh = () => {
+    clearWizardDraft();
+    setHasDraft(false);
+    setResumedDraft(null);
+    setWizardOpen(true);
+  };
+  const openWizardResumed = () => {
+    const saved = loadWizardDraft();
+    setResumedDraft(saved);
+    setWizardOpen(true);
+  };
+  const onWizardClose = () => {
+    setWizardOpen(false);
+    setResumedDraft(null);
+    setHasDraft(hasWizardDraft());
+  };
   // VROL-816 — demo CTA autoruns the simulation. The pending-preset handoff
   // carries `autorun: true` so the editor fires its first run on mount.
   const goToEditor = (presetId?: string, opts?: { autorun?: boolean }) => {
@@ -180,16 +219,22 @@ export default function LandingPage() {
             Primary = wizard (30s time-to-first-run). Outline = demo (autoruns).
             Link = templates browser for users who want to shop around first. */}
         <div className="flex flex-wrap items-center justify-center gap-3">
-          <Button
-            size="lg"
-            className="gap-2"
-            onClick={() => {
-              setWizardOpen(true);
-            }}
-          >
-            <Wand2 className="h-4 w-4" />
-            Create scenario — 30s
-          </Button>
+          {hasDraft ? (
+            <>
+              <Button size="lg" className="gap-2" onClick={openWizardResumed}>
+                <Wand2 className="h-4 w-4" />
+                Resume draft
+              </Button>
+              <Button size="lg" variant="outline" onClick={openWizardFresh} className="gap-2">
+                Start new
+              </Button>
+            </>
+          ) : (
+            <Button size="lg" className="gap-2" onClick={openWizardFresh}>
+              <Wand2 className="h-4 w-4" />
+              Create scenario — 30s
+            </Button>
+          )}
           <Button
             size="lg"
             variant="outline"
@@ -303,10 +348,12 @@ export default function LandingPage() {
       </footer>
       <WizardShell
         open={wizardOpen}
-        onClose={() => {
-          setWizardOpen(false);
-        }}
+        onClose={onWizardClose}
+        initialDraft={resumedDraft ?? undefined}
         onFinish={(draft, mode) => {
+          // VROL-820 — a completed wizard run consumes the saved draft.
+          clearWizardDraft();
+          setHasDraft(false);
           const commit = commitDraft(draft);
           setPendingWizardCommit({
             nodes: commit.nodes,

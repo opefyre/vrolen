@@ -7,6 +7,9 @@
  * Commit-time the host transforms the draft into:
  *   - canvas nodes + edges (via shape preset + per-station cycle edits)
  *   - RunSettings (horizon, source rate, realism toggles)
+ *
+ * VROL-820 — exposes per-step validation predicates so the shell can
+ * gate the Next button and steps can render inline error messages.
  */
 
 import type { Edge, Node } from "@xyflow/react";
@@ -81,6 +84,115 @@ export interface ShapeOption {
   /** Default station list for this shape. */
   readonly stations: readonly WizardStation[];
 }
+
+/**
+ * VROL-820 — per-step validation. Each entry maps the wizard step index
+ * to a struct that knows whether the step is valid, plus a per-field map
+ * of error messages keyed by an opaque field id the step component knows
+ * how to render under the offending input.
+ *
+ * Discriminated by the literal `step` so callers narrow on the index.
+ */
+export interface WizardStepValidation {
+  readonly step: 0 | 1 | 2 | 3 | 4;
+  readonly valid: boolean;
+  /** field-id → human-readable error message; empty when valid. */
+  readonly errors: Readonly<Record<string, string>>;
+}
+
+function isFiniteNumber(n: number): boolean {
+  return typeof n === "number" && Number.isFinite(n);
+}
+
+/**
+ * Validate the shape step (step 0). The user must pick a preset.
+ */
+export function validateShape(draft: WizardDraft): WizardStepValidation {
+  const errors: Record<string, string> = {};
+  if (draft.presetId === null || draft.presetId === "") {
+    errors["presetId"] = "Pick a starting shape to continue.";
+  }
+  return { step: 0, valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * Validate the stations step (step 1). At least one station, every
+ * station must have a label and a positive cycle time.
+ */
+export function validateStations(draft: WizardDraft): WizardStepValidation {
+  const errors: Record<string, string> = {};
+  if (draft.stations.length < 1) {
+    errors["count"] = "Add at least one station.";
+  }
+  draft.stations.forEach((s, i) => {
+    if (s.label.trim() === "") {
+      errors[`station-${String(i)}-label`] = "Station name can't be empty.";
+    }
+    if (!isFiniteNumber(s.cycleMs) || s.cycleMs <= 0) {
+      errors[`station-${String(i)}-cycle`] = "Cycle time must be greater than 0 ms.";
+    }
+  });
+  return { step: 1, valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * Validate the arrivals step (step 2). Source rate and run length both
+ * must be positive finite numbers.
+ */
+export function validateArrivals(draft: WizardDraft): WizardStepValidation {
+  const errors: Record<string, string> = {};
+  if (!isFiniteNumber(draft.arrivalsPerMin) || draft.arrivalsPerMin <= 0) {
+    errors["arrivalsPerMin"] = "Arrival rate must be greater than 0 items per minute.";
+  }
+  if (!isFiniteNumber(draft.horizonMs) || draft.horizonMs <= 0) {
+    errors["horizonMs"] = "Pick a run length.";
+  }
+  return { step: 2, valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * Validate the realism step (step 3). The realism level is a discriminated
+ * union so it is always valid once defaulted, but we still expose the
+ * predicate so the shell's gating loop is uniform.
+ */
+export function validateRealism(draft: WizardDraft): WizardStepValidation {
+  const errors: Record<string, string> = {};
+  if (draft.realism !== "simple" && draft.realism !== "realistic" && draft.realism !== "stress") {
+    errors["realism"] = "Pick a realism level.";
+  }
+  return { step: 3, valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * Review step is read-only — always valid as long as the upstream
+ * steps were valid. The shell still calls this to keep the indexing
+ * consistent.
+ */
+export function validateReview(draft: WizardDraft): WizardStepValidation {
+  const upstream = [
+    validateShape(draft),
+    validateStations(draft),
+    validateArrivals(draft),
+    validateRealism(draft),
+  ];
+  const errors: Record<string, string> = {};
+  upstream.forEach((v) => {
+    if (!v.valid) {
+      errors[`step-${String(v.step)}`] = `Step ${String(v.step + 1)} has unresolved errors.`;
+    }
+  });
+  return { step: 4, valid: Object.keys(errors).length === 0, errors };
+}
+
+export type WizardStepValidator = (draft: WizardDraft) => WizardStepValidation;
+
+export const STEP_VALIDATORS: readonly WizardStepValidator[] = [
+  validateShape,
+  validateStations,
+  validateArrivals,
+  validateRealism,
+  validateReview,
+];
 
 export const SHAPE_OPTIONS: readonly ShapeOption[] = [
   {
