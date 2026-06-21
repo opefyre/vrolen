@@ -56,10 +56,10 @@ export function ReworkOverTimeChart({
   secondaryLabel,
 }: ReworkOverTimeChartProps) {
   const {
-    containerRef: wrapperRef,
+    containerRef: svgRef,
     width: measuredW,
     height: measuredH,
-  } = useChartDimensions<HTMLDivElement>({ width: 240, height: 80 });
+  } = useChartDimensions<SVGSVGElement>({ width: 240, height: 80 });
   const VIEW_W = Math.max(160, measuredW);
   const VIEW_H = Math.max(120, measuredH);
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -173,7 +173,7 @@ export function ReworkOverTimeChart({
   }
 
   return (
-    <div ref={wrapperRef} className="relative w-full">
+    <div className="relative w-full">
       <div className="text-muted-foreground mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
         {activeStations.map((stn, i) => {
           const colorClass = STATION_COLORS[i % STATION_COLORS.length] ?? STATION_COLORS[0]!;
@@ -201,7 +201,9 @@ export function ReworkOverTimeChart({
         ) : null}
       </div>
       <svg
+        ref={svgRef}
         viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
+        preserveAspectRatio="none"
         className="block h-44 w-full"
         onMouseMove={onMove}
         onMouseLeave={onLeave}

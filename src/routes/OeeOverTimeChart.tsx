@@ -67,10 +67,10 @@ export function OeeOverTimeChart({
   const stationLabel = stationLabels[safeIdx] ?? `Station ${String(safeIdx + 1)}`;
 
   const {
-    containerRef: wrapperRef,
+    containerRef: svgRef,
     width: measuredW,
     height: measuredH,
-  } = useChartDimensions<HTMLDivElement>({ width: 240, height: 80 });
+  } = useChartDimensions<SVGSVGElement>({ width: 240, height: 80 });
   const VIEW_W = Math.max(160, measuredW);
   const VIEW_H = Math.max(120, measuredH);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -164,9 +164,10 @@ export function OeeOverTimeChart({
     return STATE_ORDER.map((s) => ({ state: s, pct: ((deltas[s] ?? 0) / total) * 100 }));
   }, [hoverIdx, samples, safeIdx]);
 
-  const onMove = (e: React.MouseEvent<HTMLDivElement>): void => {
-    if (samples.length === 0 || !wrapperRef.current) return;
-    const rect = wrapperRef.current.getBoundingClientRect();
+  const onMove = (e: React.MouseEvent<SVGSVGElement>): void => {
+    if (samples.length === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return;
     const xRatio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     let best = 0;
     let bestDist = Infinity;
@@ -228,9 +229,11 @@ export function OeeOverTimeChart({
           Station: <strong className="text-foreground">{stationLabel}</strong>
         </p>
       )}
-      <div ref={wrapperRef} className="relative w-full">
+      <div className="relative w-full">
         <svg
+          ref={svgRef}
           viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
+          preserveAspectRatio="none"
           className="block h-44 w-full"
           onMouseMove={onMove}
           onMouseLeave={onLeave}

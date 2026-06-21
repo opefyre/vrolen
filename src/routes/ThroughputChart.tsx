@@ -45,13 +45,15 @@ export function ThroughputChart({
   primaryLabel,
   secondaryLabel,
 }: ThroughputChartProps) {
-  // Track real container size so the SVG viewBox matches the rendered
-  // pixels 1:1 — no stretching or letterboxing.
+  // Track the SVG's actual pixel size so its viewBox matches 1:1 — no
+  // stretching, no letterboxing, no aspect mismatch. The ref must point
+  // at the SVG itself (not the wrapper div, which is taller because of
+  // the legend + axis-label rows).
   const {
-    containerRef: wrapperRef,
+    containerRef: svgRef,
     width: measuredW,
     height: measuredH,
-  } = useChartDimensions<HTMLDivElement>({ width: 240, height: 80 });
+  } = useChartDimensions<SVGSVGElement>({ width: 240, height: 80 });
   const VIEW_W = Math.max(160, measuredW);
   const VIEW_H = Math.max(120, measuredH);
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -153,7 +155,7 @@ export function ThroughputChart({
   }
 
   return (
-    <div ref={wrapperRef} className="relative w-full">
+    <div className="relative w-full">
       {/* VROL-680 — always-on legend: line color + warmup shading. */}
       <div className="text-muted-foreground mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
         <span className="flex items-center gap-1.5">
@@ -182,7 +184,9 @@ export function ThroughputChart({
         ) : null}
       </div>
       <svg
+        ref={svgRef}
         viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
+        preserveAspectRatio="none"
         className="text-sim-running block h-44 w-full"
         onMouseMove={onMove}
         onMouseLeave={onLeave}
