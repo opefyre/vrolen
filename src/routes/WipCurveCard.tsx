@@ -9,7 +9,7 @@
  * Annotates the knee + current capacity + best-throughput points.
  */
 
-import { Activity, Play } from "lucide-react";
+import { Play, TrendingUp } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,7 +28,7 @@ export function WipCurveCard({ summary, running, onRun, onApplyCapacity }: WipCu
       <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
         <div className="space-y-1">
           <CardTitle className="font-heading flex items-center gap-2 text-base">
-            <Activity className="h-4 w-4" aria-hidden /> Throughput vs WIP
+            <TrendingUp className="h-4 w-4" aria-hidden /> Throughput vs WIP
           </CardTitle>
           <CardDescription>
             Sweep inter-station buffer capacity and find the throughput knee. More WIP past the knee

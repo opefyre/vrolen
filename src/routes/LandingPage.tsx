@@ -8,11 +8,14 @@
  * Hand-rolled SVG hero. No new dependencies.
  */
 
-import { ArrowRight, Activity, ExternalLink, GitBranch, Settings2 } from "lucide-react";
+import { ArrowRight, Activity, ExternalLink, GitBranch, Settings2, Wand2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { commitDraft } from "@/components/wizard/commit-draft";
+import { WizardShell } from "@/components/wizard/wizard-shell";
 import { PRESETS, setPendingPreset } from "@/lib/presets";
+import { setPendingWizardCommit } from "@/lib/wizard-handoff";
 import { TopologyPreview } from "@/components/landing/topology-preview";
 
 /** VROL-707 — derive a coarse category from preset id so cards can show a tag. */
@@ -162,6 +165,7 @@ function FeatureCard({
 }
 
 export default function LandingPage() {
+  const [wizardOpen, setWizardOpen] = useState<boolean>(false);
   const goToEditor = (presetId?: string) => {
     if (presetId) setPendingPreset(presetId);
     if (typeof window !== "undefined") window.location.href = "/editor";
@@ -191,15 +195,26 @@ export default function LandingPage() {
             size="lg"
             className="gap-2"
             onClick={() => {
+              setWizardOpen(true);
+            }}
+          >
+            <Wand2 className="h-4 w-4" />
+            Create scenario
+          </Button>
+          <Button
+            size="lg"
+            variant="outline"
+            onClick={() => {
               goToEditor();
             }}
+            className="gap-2"
           >
             Open the editor
             <ArrowRight className="h-4 w-4" />
           </Button>
           <Button
             size="lg"
-            variant="outline"
+            variant="ghost"
             onClick={() => {
               goToEditor("bottling-line");
             }}
@@ -310,6 +325,22 @@ export default function LandingPage() {
           Source <ExternalLink className="h-3 w-3" />
         </a>
       </footer>
+      <WizardShell
+        open={wizardOpen}
+        onClose={() => {
+          setWizardOpen(false);
+        }}
+        onFinish={(draft, mode) => {
+          const commit = commitDraft(draft);
+          setPendingWizardCommit({
+            nodes: commit.nodes,
+            edges: commit.edges,
+            settingsPatch: commit.settingsPatch,
+            autorun: mode === "run",
+          });
+          if (typeof window !== "undefined") window.location.href = "/editor";
+        }}
+      />
     </div>
   );
 }

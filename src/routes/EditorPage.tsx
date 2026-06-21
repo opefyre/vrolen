@@ -121,6 +121,7 @@ import {
   type RunHistoryEntryWithScenario,
 } from "@/lib/run-history";
 import { consumePendingPreset, PRESETS, type Preset } from "@/lib/presets";
+import { takePendingWizardCommit } from "@/lib/wizard-handoff";
 import { runScenario, type ScenarioRunOutcome } from "@/lib/run-scenario";
 import {
   findIssuesForField,
@@ -729,6 +730,30 @@ function EditorCanvas() {
   // sanctioned spot for one-shot side effects (vs useMemo, which the React
   // Compiler treats as a pure-value cache).
   const [initial] = useState(() => {
+    // Wizard handoff wins over preset wins over persisted graph.
+    const wizard = takePendingWizardCommit();
+    if (wizard) {
+      const baseSettings = loadRunSettings();
+      const settings = {
+        ...baseSettings,
+        horizonMs: wizard.settingsPatch.horizonMs,
+        interStationBufferCapacity: wizard.settingsPatch.interStationBufferCapacity,
+        source: { ...baseSettings.source, ...wizard.settingsPatch.source },
+        breakdowns: wizard.settingsPatch.breakdowns
+          ? { ...baseSettings.breakdowns, ...wizard.settingsPatch.breakdowns }
+          : baseSettings.breakdowns,
+        samplerIntervalMs: wizard.settingsPatch.samplerIntervalMs,
+      };
+      const nodesCopy = wizard.nodes.map((n) => ({ ...n, data: { ...n.data } }));
+      const edgesCopy = wizard.edges.map((e) => ({ ...e }));
+      return {
+        nodes: ensureStationKeys(nodesCopy),
+        edges: edgesCopy,
+        settings,
+        presetTitle: "New scenario" as string | undefined,
+        autorun: wizard.autorun,
+      };
+    }
     const preset = consumePendingPreset();
     if (preset) {
       const nodesCopy = preset.graph.nodes.map((n) => ({ ...n, data: { ...n.data } }));
@@ -738,6 +763,7 @@ function EditorCanvas() {
         edges: edgesCopy,
         settings: { ...preset.settings },
         presetTitle: preset.title as string | undefined,
+        autorun: false,
       };
     }
     const g = loadGraph();
@@ -746,6 +772,7 @@ function EditorCanvas() {
       edges: g.edges,
       settings: loadRunSettings(),
       presetTitle: undefined as string | undefined,
+      autorun: false,
     };
   });
   const [nodes, setNodes] = useState<Node[]>(initial.nodes);
@@ -1525,6 +1552,10 @@ function EditorCanvas() {
     [flow, setNodes],
   );
 
+  // Wizard handoff autorun — declared just below handleRun so the
+  // useEffect can reference it after declaration. Ref + bare effect.
+  const autorunFiredRef = useRef<boolean>(false);
+
   const handleRun = useCallback((): void => {
     // VROL-86 — scenario validation. Errors block; warnings surface as a
     // softer toast but don't block.
@@ -1750,6 +1781,23 @@ function EditorCanvas() {
       }
     }, 0);
   }, [nodes, edges, selectedNodeId, settings, activeScenarioName]);
+
+  // Wizard handoff autorun — fires once after mount if the wizard
+  // asked for an immediate run. handleRun is captured from above; the
+  // ref guard prevents double-fire under React strict-mode.
+  useEffect(() => {
+    if (!initial.autorun) return;
+    if (autorunFiredRef.current) return;
+    autorunFiredRef.current = true;
+    const id = setTimeout(() => {
+      handleRun();
+    }, 250);
+    return () => {
+      clearTimeout(id);
+    };
+    // handleRun intentionally omitted — fire-once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial.autorun]);
 
   // Sensitivity sweep — fires 2N engine runs perturbing each station's
   // cycle time ±20%. Defers to a setTimeout so the UI updates the

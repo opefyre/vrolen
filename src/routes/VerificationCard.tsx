@@ -8,7 +8,7 @@
  * card so it sits near the headline narrative.
  */
 
-import { CheckCircle2, Hourglass, Info, XCircle } from "lucide-react";
+import { CheckCircle2, Hourglass, Info, ShieldCheck, XCircle } from "lucide-react";
 
 import type { ChainResult } from "@/engine";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,9 @@ export function VerificationCard({
   return (
     <Card id="verification">
       <CardHeader>
-        <CardTitle className="font-heading text-base">Verification</CardTitle>
+        <CardTitle className="font-heading flex items-center gap-2 text-base">
+          <ShieldCheck className="h-4 w-4" aria-hidden /> Verification
+        </CardTitle>
         <CardDescription>
           Conservation laws the engine should respect — a credibility check.
         </CardDescription>

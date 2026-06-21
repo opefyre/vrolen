@@ -9,7 +9,7 @@
  * fire the sweep, `running` for the spinner state.
  */
 
-import { Activity, Play } from "lucide-react";
+import { Play, Tornado } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,7 +27,7 @@ export function SensitivityCard({ summary, running, onRun }: SensitivityCardProp
       <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
         <div className="space-y-1">
           <CardTitle className="font-heading flex items-center gap-2 text-base">
-            <Activity className="h-4 w-4" aria-hidden /> Sensitivity · tornado
+            <Tornado className="h-4 w-4" aria-hidden /> Sensitivity · tornado
           </CardTitle>
           <CardDescription>
             Vary each station&rsquo;s cycle time ±20% and rank by throughput swing. Widest bar =
