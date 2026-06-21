@@ -20,6 +20,7 @@
 
 import { Application, Container, Graphics, Text } from "pixi.js";
 
+import { depthKey, worldToScreen } from "./isometric";
 import {
   isMainToWorker,
   type MainToWorker,
@@ -77,6 +78,11 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
     edgeLayer.label = "edges";
     stationLayer = new Container();
     stationLayer.label = "stations";
+    // VROL-191 — enable PixiJS auto-sort so containers respect zIndex.
+    // Each station container gets a zIndex derived from depthKey(world),
+    // which keeps closer-to-camera sprites in front of those behind them.
+    stationLayer.sortableChildren = true;
+    edgeLayer.sortableChildren = true;
     // Edges below stations so connections don't draw over node faces.
     world.addChild(edgeLayer);
     world.addChild(stationLayer);
@@ -159,11 +165,15 @@ function drawStation(s: RenderStation): Container {
   });
   label.anchor.set(0.5);
   c.addChild(label);
-  // Position via isometric projection (placeholder — VROL-191 will swap in
-  // the real helper). For now: 1:1 world→pixel so smoke tests can verify
-  // the scene-update pipe end-to-end.
-  c.x = s.x;
-  c.y = s.y;
+  // Project world tile coords → screen px via the isometric helper
+  // (VROL-191). The world container's own transform handles camera pan/zoom,
+  // so per-sprite math uses the IDENTITY camera here.
+  const screen = worldToScreen({ x: s.x, y: s.y, z: s.z });
+  c.x = screen.sx;
+  c.y = screen.sy;
+  // Depth-sort key carried on the container so the parent layer can
+  // sortChildren() to resolve occlusion.
+  c.zIndex = depthKey({ x: s.x, y: s.y, z: s.z }) * 1000;
   return c;
 }
 
@@ -186,16 +196,20 @@ function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
     const placeholder = app.stage.getChildByLabel("placeholder", true);
     if (placeholder) placeholder.removeFromParent();
 
+    // Cache projected screen positions so the edge pass can connect line
+    // endpoints without re-projecting (and so we never disagree about
+    // where a station "is" between the two passes).
     const positions = new Map<string, { x: number; y: number }>();
-    // Rebuild station layer — diff-by-id, mutate existing where possible.
     const seenStations = new Set<string>();
     for (const s of msg.stations) {
-      positions.set(s.id, { x: s.x, y: s.y });
+      const screen = worldToScreen({ x: s.x, y: s.y, z: s.z });
+      positions.set(s.id, { x: screen.sx, y: screen.sy });
       seenStations.add(s.id);
       const existing = stationNodes.get(s.id);
       if (existing && existing.lastState === s.state) {
-        existing.container.x = s.x;
-        existing.container.y = s.y;
+        existing.container.x = screen.sx;
+        existing.container.y = screen.sy;
+        existing.container.zIndex = depthKey({ x: s.x, y: s.y, z: s.z }) * 1000;
       } else {
         existing?.container.removeFromParent();
         const container = drawStation(s);
