@@ -15,11 +15,17 @@
  * VROL-820 — per-step validation (Next is disabled until the active
  * step is valid), save-to-draft exits, and a Tweak-section jump from
  * the review step.
+ *
+ * VROL-783 — accessibility focus management: focus trap on Tab/Shift+Tab,
+ * auto-focus first interactive on open + step change, restore focus on
+ * close, Escape closes (preserving draft), aria-labelledby pointing at
+ * the step title, and `inert` applied to background siblings so screen
+ * readers ignore content behind the modal.
  */
 
 import { ArrowLeft, ArrowRight, Check, Play, Save, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { saveWizardDraft } from "@/lib/wizard-draft-storage";
@@ -65,6 +71,48 @@ export function WizardShell(props: WizardShellProps) {
   return props.open ? <WizardInner {...props} /> : null;
 }
 
+/**
+ * VROL-783 — CSS selector for elements treated as focusable inside the
+ * wizard. Matches the tabbable npm package's heuristic minus shadow-DOM
+ * edge cases we don't need. Filtered further at runtime to skip nodes
+ * that are disabled, hidden, `tabIndex={-1}`, or inside an `inert`
+ * ancestor.
+ */
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled]):not([type='hidden'])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+  "audio[controls]",
+  "video[controls]",
+  "details > summary:first-of-type",
+].join(",");
+
+function getTabbable(root: HTMLElement): readonly HTMLElement[] {
+  const nodes = root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
+  const out: HTMLElement[] = [];
+  nodes.forEach((node) => {
+    if (node.hasAttribute("disabled")) return;
+    if (node.getAttribute("aria-hidden") === "true") return;
+    // happy-dom returns 0/0 for everything; skip the visibility check
+    // when offsetParent is unavailable so jsdom-style envs still work.
+    if (typeof node.offsetParent !== "undefined" && node.offsetParent === null) {
+      // Fixed-positioned elements have null offsetParent but are still
+      // visible. The dialog is `position: fixed inset-0`, so allow nodes
+      // whose computed style says they're not hidden.
+      const style =
+        typeof window !== "undefined" && typeof window.getComputedStyle === "function"
+          ? window.getComputedStyle(node)
+          : null;
+      if (style && (style.display === "none" || style.visibility === "hidden")) return;
+    }
+    out.push(node);
+  });
+  return out;
+}
+
 function WizardInner({ onClose, onFinish, initialDraft }: WizardShellProps) {
   const [draft, setDraft] = useState<WizardDraft>(() => initialDraft ?? defaultDraft());
   const [stepIdx, setStepIdx] = useState<number>(0);
@@ -80,6 +128,16 @@ function WizardInner({ onClose, onFinish, initialDraft }: WizardShellProps) {
     : { step: 0, valid: true, errors: {} };
   const showErrors = attemptedAdvance && !validation.valid;
   const stepErrors = showErrors ? validation.errors : ({} as Readonly<Record<string, string>>);
+  /** VROL-783 — id wired to the step-title <div> via aria-labelledby. */
+  const titleId = useId();
+  /** VROL-783 — dialog root + body container refs. The body ref is used
+   *  to find the first focusable element on step change so keyboard
+   *  users land in the step content, not back at the close button. */
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  /** VROL-783 — element that had focus when the wizard opened. Captured
+   *  once on mount and restored on unmount. */
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   const updateDraft = (patch: Partial<WizardDraft>) => {
     setDraft((d) => ({ ...d, ...patch }));
   };
@@ -109,7 +167,7 @@ function WizardInner({ onClose, onFinish, initialDraft }: WizardShellProps) {
   };
   /** VROL-820 — persist the draft and bail. Sonner shows an Undo action
    *  that re-opens the wizard at the same step. */
-  const onSaveAndExit = () => {
+  const onSaveAndExit = useCallback(() => {
     const ok = saveWizardDraft(draft);
     if (ok) {
       toast.success("Draft saved", {
@@ -127,20 +185,137 @@ function WizardInner({ onClose, onFinish, initialDraft }: WizardShellProps) {
       });
     }
     onClose();
+  }, [draft, onClose]);
+
+  /**
+   * VROL-783 — capture the previously-focused element on mount and
+   * restore focus on unmount. The shell mounts fresh each time the
+   * wizard opens (see WizardShell), so this effect runs exactly once
+   * per open/close cycle. Restoration happens regardless of which close
+   * path was taken (X button, Esc, Save & exit, Run simulation).
+   */
+  useEffect(() => {
+    const previous =
+      typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    previouslyFocusedRef.current = previous;
+    return () => {
+      const target = previouslyFocusedRef.current;
+      if (!target || typeof target.focus !== "function" || !target.isConnected) return;
+      // Defer one microtask so the inert-sibling cleanup (registered
+      // after this effect) has already run; otherwise the trigger may
+      // still be inert and focus() would silently no-op.
+      queueMicrotask(() => {
+        if (!target.isConnected) return;
+        try {
+          target.focus();
+        } catch {
+          // Restoration is best-effort — swallow errors silently.
+        }
+      });
+    };
+  }, []);
+
+  /**
+   * VROL-783 — focus the first interactive element each time the step
+   * changes (and on initial mount). Falls back to the dialog root if
+   * the body has no tabbable nodes yet.
+   */
+  useEffect(() => {
+    const body = bodyRef.current;
+    const dialog = dialogRef.current;
+    if (!body || !dialog) return;
+    const tabbables = getTabbable(body);
+    const target = tabbables[0] ?? dialog;
+    // Microtask defer so the new step DOM is wired up before we focus.
+    queueMicrotask(() => {
+      if (typeof target.focus === "function") {
+        target.focus();
+      }
+    });
+  }, [stepIdx]);
+
+  /**
+   * VROL-783 — mark every direct child of <body> except the dialog's
+   * own root as `inert` while the wizard is open. `inert` is supported
+   * natively in all evergreen browsers and removes the subtree from
+   * focus order + accessibility tree.
+   */
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const inerted: HTMLElement[] = [];
+    document.body.childNodes.forEach((node) => {
+      if (!(node instanceof HTMLElement)) return;
+      if (node.contains(dialog)) return;
+      if (node.hasAttribute("inert")) return;
+      node.setAttribute("inert", "");
+      inerted.push(node);
+    });
+    return () => {
+      inerted.forEach((node) => {
+        node.removeAttribute("inert");
+      });
+    };
+  }, []);
+
+  /**
+   * VROL-783 — focus trap. Tab from the last focusable wraps to the
+   * first; Shift+Tab from the first wraps to the last. Escape closes
+   * with the Save & exit semantics (preserve draft, restore focus).
+   */
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      onSaveAndExit();
+      return;
+    }
+    if (e.key === "ArrowLeft") {
+      goBack();
+      return;
+    }
+    if (e.key === "ArrowRight" && !isLast && validation.valid) {
+      goNext();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const tabbables = getTabbable(dialog);
+    if (tabbables.length === 0) {
+      e.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const first = tabbables[0];
+    const last = tabbables[tabbables.length - 1];
+    if (!first || !last) return;
+    const active = document.activeElement;
+    if (e.shiftKey) {
+      if (active === first || !dialog.contains(active)) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      if (active === last || !dialog.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
   };
+
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
-      aria-label="New scenario wizard"
+      aria-labelledby={titleId}
       tabIndex={-1}
       className="fixed inset-0 z-[60] flex items-center justify-center p-4 outline-none"
-      onKeyDown={(e) => {
-        if (e.key === "Escape") onClose();
-        if (e.key === "ArrowLeft") goBack();
-        if (e.key === "ArrowRight" && !isLast && validation.valid) goNext();
-      }}
+      onKeyDown={onKeyDown}
     >
       {/* Backdrop is intentionally NOT click-to-dismiss — too easy to bump
           a misplaced footer-Next click outside the modal and lose
@@ -150,12 +325,13 @@ function WizardInner({ onClose, onFinish, initialDraft }: WizardShellProps) {
         <Header
           stepIdx={stepIdx}
           steps={STEPS}
+          titleId={titleId}
           onJump={(i) => {
             if (i < stepIdx) jumpToStep(i);
           }}
           onClose={onClose}
         />
-        <div className="flex-1 overflow-y-auto p-5">
+        <div ref={bodyRef} className="flex-1 overflow-y-auto p-5">
           <StepBody
             stepIdx={stepIdx}
             draft={draft}
@@ -185,11 +361,13 @@ function WizardInner({ onClose, onFinish, initialDraft }: WizardShellProps) {
 function Header({
   stepIdx,
   steps,
+  titleId,
   onJump,
   onClose,
 }: {
   readonly stepIdx: number;
   readonly steps: readonly { readonly title: string; readonly subtitle: string }[];
+  readonly titleId: string;
   readonly onJump: (idx: number) => void;
   readonly onClose: () => void;
 }) {
@@ -200,7 +378,9 @@ function Header({
           <div className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
             Step {stepIdx + 1} of {steps.length}
           </div>
-          <div className="font-heading text-base font-semibold">{steps[stepIdx]!.title}</div>
+          <div id={titleId} className="font-heading text-base font-semibold">
+            {steps[stepIdx]!.title}
+          </div>
           <div className="text-muted-foreground text-xs">{steps[stepIdx]!.subtitle}</div>
         </div>
         <button
