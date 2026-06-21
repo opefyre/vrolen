@@ -4097,7 +4097,7 @@ function EditorCanvas() {
         }}
       >
         <SheetContent side="right" className="w-[28rem] sm:max-w-lg">
-          <SheetHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
+          <SheetHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pr-7">
             <div className="space-y-1">
               <SheetTitle>Comparison</SheetTitle>
               <SheetDescription>
@@ -4197,15 +4197,14 @@ function EditorCanvas() {
 
       <Sheet open={scenariosOpen} onOpenChange={setScenariosOpen}>
         <SheetContent side="right" className="w-[24rem] sm:max-w-md">
-          <SheetHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
+          <SheetHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pr-7">
             <div className="space-y-1">
               <SheetTitle>Scenarios</SheetTitle>
               <SheetDescription>
-                Save and restore named scenarios. Persisted locally in your browser; cloud sync
-                lands later (E10).
+                Save and restore named scenarios. Persisted locally in your browser.
               </SheetDescription>
             </div>
-            {/* VROL-698 / VROL-699 — JSON bundle export + import. */}
+            {/* JSON bundle export + import. */}
             <div className="flex shrink-0 gap-1">
               <Button
                 variant="outline"
@@ -4919,7 +4918,7 @@ function EditorCanvas() {
 
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
         <SheetContent side="right" className="w-[24rem] sm:max-w-md">
-          <SheetHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
+          <SheetHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pr-7">
             <div className="space-y-1">
               <SheetTitle>Run settings</SheetTitle>
               <SheetDescription>Applied to every Run. Persisted across reloads.</SheetDescription>
