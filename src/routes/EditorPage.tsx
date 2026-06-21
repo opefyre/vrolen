@@ -64,6 +64,7 @@ import {
   Settings2,
   Trash2,
   Truck,
+  Wand2,
   Wrench,
   X,
   Zap,
@@ -122,6 +123,8 @@ import {
 } from "@/lib/run-history";
 import { consumePendingPreset, PRESETS, type Preset } from "@/lib/presets";
 import { takePendingWizardCommit } from "@/lib/wizard-handoff";
+import { commitDraft as commitWizardDraft } from "@/components/wizard/commit-draft";
+import { WizardShell } from "@/components/wizard/wizard-shell";
 import { runScenario, type ScenarioRunOutcome } from "@/lib/run-scenario";
 import {
   findIssuesForField,
@@ -142,6 +145,7 @@ import {
   recordChange,
   redo as historyRedo,
   serializeHistory,
+  snapshotKey,
   undo as historyUndo,
   type EditorHistory,
   type EditorSnapshot,
@@ -563,10 +567,22 @@ function StationNode({ data, selected, id }: NodeProps) {
           </span>
         </span>
       ) : null}
+      {/* Four side handles — Miro-like. ConnectionMode.Loose lets each
+          source handle also accept incoming connections, so the user can
+          start a connection from any side of any node and drop it onto
+          any side of any other node. The edge's underlying direction is
+          still determined by (source, target) on the resulting edge. */}
       <Handle
-        type="target"
+        id="t"
+        type="source"
+        position={Position.Top}
+        className="vrolen-handle vrolen-handle--top"
+      />
+      <Handle
+        id="l"
+        type="source"
         position={Position.Left}
-        className="!bg-sim-running hover:!ring-sim-running/40 !h-3 !w-3 hover:!h-4 hover:!w-4 hover:!ring-2"
+        className="vrolen-handle vrolen-handle--left"
       />
       <div className="flex items-center gap-2">
         <span
@@ -676,9 +692,16 @@ function StationNode({ data, selected, id }: NodeProps) {
         </div>
       ) : null}
       <Handle
+        id="r"
         type="source"
         position={Position.Right}
-        className="!bg-sim-running hover:!ring-sim-running/40 !h-3 !w-3 hover:!h-4 hover:!w-4 hover:!ring-2"
+        className="vrolen-handle vrolen-handle--right"
+      />
+      <Handle
+        id="b"
+        type="source"
+        position={Position.Bottom}
+        className="vrolen-handle vrolen-handle--bottom"
       />
     </div>
   );
@@ -690,7 +713,12 @@ import { CanvasContextMenu, type ContextMenuTarget } from "@/components/canvas/c
 import { InputAnalyzerModal } from "@/components/editor/input-analyzer-modal";
 import { CommandPalette, type CommandAction } from "@/components/canvas/command-palette";
 import { AlignmentToolbar, type AlignOp } from "@/components/canvas/alignment-toolbar";
-import { QuickAddGhosts, type QuickAddStationType } from "@/components/canvas/quick-add-ghosts";
+import {
+  EdgeFloatingToolbar,
+  type EdgeToolbarState,
+} from "@/components/canvas/edge-floating-toolbar";
+import type { EdgeArrowMode, EdgeLineShape } from "./AnimatedEdge";
+// Sprint 85: QuickAddGhosts retired (ghost quick-add suggestion tiles removed).
 import { applyAlignment } from "@/lib/align-nodes";
 import { FrameNode } from "@/components/canvas/frame-node";
 import { StickyNoteNode } from "@/components/canvas/sticky-note-node";
@@ -698,7 +726,12 @@ import { summarizeReplications, type ReplicationSummary } from "@/lib/replicatio
 import { summarizeCosts } from "@/lib/cost-economics";
 import { runSensitivitySweep, type SensitivitySummary } from "@/lib/sensitivity-sweep";
 import { runWipCurve, type WipCurveSummary } from "@/lib/wip-curve";
-import { runOptimizationSearch, type OptimizationSummary } from "@/lib/optimization-search";
+import {
+  runOptimizationSearch,
+  type OptimizationCandidate,
+  type OptimizationSummary,
+} from "@/lib/optimization-search";
+import { isDistribution, meanOfDistribution, scaleDistribution } from "@/lib/scale-distribution";
 
 const NODE_TYPES = { station: StationNode, sticky: StickyNoteNode, frame: FrameNode };
 
@@ -781,11 +814,16 @@ function EditorCanvas() {
   // VROL-663 — bulk-select state. Single click → length 1; shift-click or
   // box-select → length > 1; pane click → length 0.
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
-  const onSelectionChange = useCallback(({ nodes: sel }: { nodes: Node[]; edges: Edge[] }) => {
-    const ids = sel.map((n) => n.id);
-    setSelectedNodeIds(ids);
-    setSelectedNodeId(ids.length === 1 ? (ids[0] ?? null) : null);
-  }, []);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const onSelectionChange = useCallback(
+    ({ nodes: sel, edges: edgeSel }: { nodes: Node[]; edges: Edge[] }) => {
+      const ids = sel.map((n) => n.id);
+      setSelectedNodeIds(ids);
+      setSelectedNodeId(ids.length === 1 ? (ids[0] ?? null) : null);
+      setSelectedEdgeId(edgeSel.length === 1 ? (edgeSel[0]?.id ?? null) : null);
+    },
+    [],
+  );
   const bulkPatch = useCallback(
     (patch: Record<string, unknown>) => {
       const idSet = new Set(selectedNodeIds);
@@ -821,9 +859,15 @@ function EditorCanvas() {
   // Optimization grid search — fires on demand from the Results panel.
   const [optimizationSummary, setOptimizationSummary] = useState<OptimizationSummary | null>(null);
   const [optimizationRunning, setOptimizationRunning] = useState<boolean>(false);
+  const [optimizationTargetKey, setOptimizationTargetKey] = useState<string | null>(null);
+  // Bumped whenever an "apply" mutates nodes/settings and wants a re-run on
+  // the NEXT render — using a useEffect avoids the setNodes-then-handleRun
+  // race where handleRun's closure still has the old nodes.
+  const [applyAndRunTick, setApplyAndRunTick] = useState<number>(0);
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [settings, setSettings] = useState<RunSettings>(() => initial.settings);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  const [wizardOpen, setWizardOpen] = useState<boolean>(false);
   const [scenariosOpen, setScenariosOpen] = useState<boolean>(false);
   // VROL-685 — case-insensitive search filter for the scenarios list.
   const [scenarioSearch, setScenarioSearch] = useState<string>("");
@@ -855,6 +899,7 @@ function EditorCanvas() {
     }
   });
   const lastCommittedRef = useRef<EditorSnapshot>({ nodes, edges, settings });
+  const lastCommittedKeyRef = useRef<string>(snapshotKey({ nodes, edges, settings }));
   const debouncedCommitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (debouncedCommitRef.current !== null) clearTimeout(debouncedCommitRef.current);
@@ -862,8 +907,19 @@ function EditorCanvas() {
       debouncedCommitRef.current = null;
       const last = lastCommittedRef.current;
       if (last.nodes === nodes && last.edges === edges && last.settings === settings) return;
+      // Sprint 86 — only record when the USER-meaningful state changes.
+      // Selection toggles, react-flow's internal measurements, and the
+      // simulator writing sparklines back into node.data all bump the
+      // nodes reference without representing an action worth undoing.
+      // snapshotKey() strips those fields so we dedupe silently.
+      const nextKey = snapshotKey({ nodes, edges, settings });
+      if (nextKey === lastCommittedKeyRef.current) {
+        lastCommittedRef.current = { nodes, edges, settings };
+        return;
+      }
       setHistory((h) => recordChange(h, last));
       lastCommittedRef.current = { nodes, edges, settings };
+      lastCommittedKeyRef.current = nextKey;
     }, 400);
   }, [nodes, edges, settings]);
   // VROL-659 — persist history to sessionStorage whenever it changes.
@@ -884,6 +940,7 @@ function EditorCanvas() {
     setEdges([...result.applied.edges]);
     setSettings(result.applied.settings);
     lastCommittedRef.current = result.applied;
+    lastCommittedKeyRef.current = snapshotKey(result.applied);
   }, [history, nodes, edges, settings, setNodes, setEdges]);
   const handleRedo = useCallback(() => {
     const current: EditorSnapshot = { nodes, edges, settings };
@@ -894,6 +951,7 @@ function EditorCanvas() {
     setEdges([...result.applied.edges]);
     setSettings(result.applied.settings);
     lastCommittedRef.current = result.applied;
+    lastCommittedKeyRef.current = snapshotKey(result.applied);
   }, [history, nodes, edges, settings, setNodes, setEdges]);
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>(() => listScenarios());
   const [saveNameDraft, setSaveNameDraft] = useState<string>("");
@@ -1006,6 +1064,38 @@ function EditorCanvas() {
     };
   }, []);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  // Sprint 90 — track Space-to-pan so the wrapper gets a `data-pan-mode`
+  // attribute and the CSS shows a grab cursor. React-flow does the actual
+  // panning via panActivationKeyCode="Space"; we just mirror the state.
+  const [spacePanning, setSpacePanning] = useState<boolean>(false);
+  useEffect(() => {
+    const isEditableTarget = (el: EventTarget | null): boolean => {
+      const t = el as HTMLElement | null;
+      if (!t) return false;
+      const tag = t.tagName;
+      return (
+        tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable === true
+      );
+    };
+    const onDown = (e: KeyboardEvent): void => {
+      if (e.code !== "Space") return;
+      if (isEditableTarget(e.target)) return;
+      setSpacePanning(true);
+    };
+    const onUp = (e: KeyboardEvent): void => {
+      if (e.code !== "Space") return;
+      setSpacePanning(false);
+    };
+    const onBlur = (): void => setSpacePanning(false);
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
   const flow = useReactFlow();
   // Subscribe to the live canvas viewport so the floating alignment
   // toolbar repositions on pan / zoom.
@@ -1214,6 +1304,45 @@ function EditorCanvas() {
       const ev = "clientX" in event ? event : event.changedTouches?.[0];
       if (!ev) return;
       const flowPos = flow.screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
+      // SNAP-TO-EXISTING — if the drop is close to an existing node (within a
+      // generous radius), connect to THAT node instead of creating a new one.
+      // Beats the old behaviour where releasing slightly off a target node
+      // dropped a stray "Machine" between the source and the intended target.
+      const SNAP_RADIUS_PX = 90;
+      const nearbyNode = nodes
+        .filter((n) => n.id !== handle.nodeId && n.type !== "sticky" && n.type !== "frame")
+        .map((n) => {
+          const w = n.width ?? n.measured?.width ?? 180;
+          const h = n.height ?? n.measured?.height ?? 60;
+          const cx = n.position.x + w / 2;
+          const cy = n.position.y + h / 2;
+          const dx = flowPos.x - cx;
+          const dy = flowPos.y - cy;
+          // distance to bbox edge (negative if inside)
+          const halfW = w / 2;
+          const halfH = h / 2;
+          const insideX = Math.max(0, Math.abs(dx) - halfW);
+          const insideY = Math.max(0, Math.abs(dy) - halfH);
+          return { node: n, dist: Math.hypot(insideX, insideY) };
+        })
+        .sort((a, b) => a.dist - b.dist)[0];
+      if (nearbyNode && nearbyNode.dist <= SNAP_RADIUS_PX) {
+        // Connect to the nearby existing node — don't create a stray Machine.
+        const isReverse = handle.handleType === "target";
+        const edgeId = `e${String(Date.now())}-${handle.nodeId}-${nearbyNode.node.id}`;
+        const newEdge: Edge = {
+          id: edgeId,
+          source: isReverse ? nearbyNode.node.id : handle.nodeId,
+          target: isReverse ? handle.nodeId : nearbyNode.node.id,
+        };
+        // Don't add duplicate edges between the same pair in the same direction.
+        setEdges((eds) =>
+          eds.some((e) => e.source === newEdge.source && e.target === newEdge.target)
+            ? eds
+            : eds.concat(newEdge),
+        );
+        return;
+      }
       const newId = `n${String(nodeIdRef.current++)}`;
       const newNode: Node = {
         id: newId,
@@ -1237,7 +1366,7 @@ function EditorCanvas() {
       setEdges((eds) => eds.concat(newEdge));
       setSelectedNodeId(newId);
     },
-    [flow, setNodes, setEdges],
+    [flow, nodes, setNodes, setEdges],
   );
 
   // Multi-select alignment toolbar. Anchor = top-mid of the selection bbox
@@ -1281,20 +1410,61 @@ function EditorCanvas() {
     e.preventDefault();
     lastRightClickRef.current = { clientX: e.clientX, clientY: e.clientY };
     const isLocked = node.draggable === false;
+    const data = node.data as { label?: unknown; stationType?: unknown } | undefined;
+    const labelStr = typeof data?.label === "string" ? data.label : "";
+    const typeStr = typeof data?.stationType === "string" ? data.stationType : "";
     setContextMenu({
       kind: "node",
       nodeId: node.id,
       isLocked,
+      headerTitle: labelStr || node.id,
+      headerSubtitle: typeStr ? `${typeStr} station` : undefined,
       clientX: e.clientX,
       clientY: e.clientY,
     });
   }, []);
-  const onPaneContextMenu = useCallback((e: React.MouseEvent | MouseEvent) => {
-    e.preventDefault();
-    const ev = e as React.MouseEvent;
-    lastRightClickRef.current = { clientX: ev.clientX, clientY: ev.clientY };
-    setContextMenu({ kind: "pane", clientX: ev.clientX, clientY: ev.clientY });
-  }, []);
+  const onPaneContextMenu = useCallback(
+    (e: React.MouseEvent | MouseEvent) => {
+      e.preventDefault();
+      const ev = e as React.MouseEvent;
+      lastRightClickRef.current = { clientX: ev.clientX, clientY: ev.clientY };
+      const selectedCount = nodes.filter((n) => n.selected).length;
+      setContextMenu({
+        kind: "pane",
+        headerTitle: `${String(nodes.length)} node${nodes.length === 1 ? "" : "s"}`,
+        headerSubtitle: selectedCount > 0 ? `${String(selectedCount)} selected` : undefined,
+        clientX: ev.clientX,
+        clientY: ev.clientY,
+      });
+    },
+    [nodes],
+  );
+  const onEdgeContextMenu = useCallback(
+    (e: React.MouseEvent, edge: Edge) => {
+      e.preventDefault();
+      lastRightClickRef.current = { clientX: e.clientX, clientY: e.clientY };
+      const labelFor = (id: string): string => {
+        const n = nodes.find((m) => m.id === id);
+        const d = n?.data as { label?: unknown } | undefined;
+        return typeof d?.label === "string" && d.label.length > 0 ? d.label : id;
+      };
+      setContextMenu({
+        kind: "edge",
+        edgeId: edge.id,
+        headerTitle: `${labelFor(edge.source)} → ${labelFor(edge.target)}`,
+        headerSubtitle: undefined,
+        clientX: e.clientX,
+        clientY: e.clientY,
+      });
+      // Also select the edge so the floating style toolbar shows up above
+      // it — the user is clearly interested in this edge.
+      setSelectedEdgeId(edge.id);
+      setEdges((es) => es.map((ed) => ({ ...ed, selected: ed.id === edge.id })));
+      setSelectedNodeId(null);
+      setSelectedNodeIds([]);
+    },
+    [nodes, setEdges],
+  );
 
   // Shared auto-layout — same algorithm the toolbar button runs, broken
   // out so the pane context menu can call it too.
@@ -1791,6 +1961,25 @@ function EditorCanvas() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial.autorun]);
 
+  // Apply-and-run effect — fires handleRun on the render AFTER an apply
+  // bumps the tick. By then setNodes/setSettings have committed, so
+  // handleRun's closure sees the new nodes (avoids the stale-closure race).
+  const applyAndRunTickSeenRef = useRef<number>(0);
+  useEffect(() => {
+    if (applyAndRunTick === 0) return;
+    if (applyAndRunTickSeenRef.current === applyAndRunTick) return;
+    applyAndRunTickSeenRef.current = applyAndRunTick;
+    if (isRunning) return;
+    // handleRun synchronously mutates state to start the simulation; that's
+    // the intended effect of an Apply action and there's no observable
+    // cascading-render issue here. The tick ref guards against double-fire.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    handleRun();
+    // handleRun intentionally omitted to avoid retriggering when its
+    // identity changes; the tick guard ensures we fire at most once per bump.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyAndRunTick, isRunning]);
+
   // Sensitivity sweep — fires 2N engine runs perturbing each station's
   // cycle time ±20%. Defers to a setTimeout so the UI updates the
   // 'Sweeping…' label before the loop blocks the thread.
@@ -1881,38 +2070,66 @@ function EditorCanvas() {
     }, 0);
   }, [nodes, edges, settings]);
 
-  // Optimization grid search — looks for the best-throughput buffer cap
-  // averaged over 3 seeds per level (~21 engine runs total).
+  // Optimization grid search — 2-D sweep over (buffer cap × cycle multiplier
+  // on the bottleneck station). 5 caps × 3 multipliers × 3 reps = 45 runs.
   const handleOptimizationSearch = useCallback((): void => {
     const translation = graphToChainOptions(nodes, edges);
     if (translation.error) {
       toast.error("Can't search", { description: translation.error });
       return;
     }
+    if (translation.cycleDistributions.length === 0) {
+      toast.error("Can't search", { description: "No stations in chain" });
+      return;
+    }
+    let targetIdx = 0;
+    let maxMean = -Infinity;
+    translation.cycleDistributions.forEach((d, i) => {
+      const m = meanOfDistribution(d);
+      if (m > maxMean) {
+        maxMean = m;
+        targetIdx = i;
+      }
+    });
+    const targetLabel = translation.stationLabels[targetIdx] ?? `Station ${String(targetIdx + 1)}`;
+    const targetStationKey = translation.stationKeys[targetIdx];
     setOptimizationRunning(true);
     setTimeout(() => {
       try {
         const horizonMs = settings.horizonMs;
         const warmupMs = Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2));
-        const buildBaseOptions = () =>
-          ({
-            ...(translation.topology
-              ? { topology: translation.topology }
-              : {
-                  stationCycleTimes: [...translation.cycleDistributions],
-                  stationLabels: [...translation.stationLabels],
-                }),
-          }) as ChainOptions;
+        const buildBaseOptions = (cycleMultiplier: number): ChainOptions => {
+          if (translation.topology) {
+            const scaledTopology = {
+              ...translation.topology,
+              nodes: translation.topology.nodes.map((n, i) =>
+                i === targetIdx
+                  ? { ...n, cycleTimeMs: scaleDistribution(n.cycleTimeMs, cycleMultiplier) }
+                  : n,
+              ),
+            };
+            return { topology: scaledTopology } as ChainOptions;
+          }
+          return {
+            stationCycleTimes: translation.cycleDistributions.map((d, i) =>
+              i === targetIdx ? scaleDistribution(d, cycleMultiplier) : d,
+            ),
+            stationLabels: [...translation.stationLabels],
+          } as ChainOptions;
+        };
         const summary = runOptimizationSearch({
           horizonMs,
           warmupMs,
           seed: settings.seed,
           currentCapacity: settings.interStationBufferCapacity,
+          targetStationIdx: targetIdx,
+          targetStationLabel: targetLabel,
           buildBaseOptions,
         });
         setOptimizationSummary(summary);
+        setOptimizationTargetKey(targetStationKey ?? null);
         toast.success(
-          `Optimization · ${String(summary.searchSize)} runs · best WIP ${String(summary.best.bufferCapacity)}`,
+          `Optimization · ${String(summary.searchSize)} runs · best WIP ${String(summary.best.bufferCapacity)} · ${targetLabel} @${summary.best.cycleMultiplier.toFixed(2)}×`,
         );
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
@@ -1922,6 +2139,34 @@ function EditorCanvas() {
       }
     }, 0);
   }, [nodes, edges, settings]);
+
+  // Apply both the best buffer capacity AND scale the target station's cycle
+  // distribution by the best multiplier. Stations are identified by stationKey
+  // (stable across renumbering), so the apply still works after edits.
+  const handleApplyOptimization = useCallback(
+    (candidate: OptimizationCandidate): void => {
+      const stationKey = optimizationTargetKey;
+      if (candidate.cycleMultiplier !== 1 && stationKey) {
+        setNodes((ns) =>
+          ns.map((n) => {
+            const data = n.data as
+              | { stationKey?: unknown; cycleDistribution?: unknown }
+              | undefined;
+            if (!data || data.stationKey !== stationKey) return n;
+            if (!isDistribution(data.cycleDistribution)) return n;
+            const scaled = scaleDistribution(data.cycleDistribution, candidate.cycleMultiplier);
+            return {
+              ...n,
+              data: { ...(n.data as Record<string, unknown>), cycleDistribution: scaled },
+            };
+          }),
+        );
+      }
+      setSettings((s) => ({ ...s, interStationBufferCapacity: candidate.bufferCapacity }));
+      setApplyAndRunTick((x) => x + 1);
+    },
+    [optimizationTargetKey, setNodes],
+  );
 
   const handleCompare = useCallback(
     (savedName: string): void => {
@@ -2519,6 +2764,19 @@ function EditorCanvas() {
     });
   }, [edges, result, runMeta, animateFlow, playbackSnapshot]);
 
+  // Sprint 90 — Raise the selected edge to the end of the array so its
+  // SVG renders LAST (on top). Two edges converging on the same handle
+  // would otherwise share a hit zone and the click always picks the same
+  // one regardless of where the user is hovering.
+  const edgesForFlowOrdered = useMemo<Edge[]>(() => {
+    if (!selectedEdgeId) return edgesForFlow;
+    const idx = edgesForFlow.findIndex((e) => e.id === selectedEdgeId);
+    if (idx < 0) return edgesForFlow;
+    const front = edgesForFlow[idx];
+    if (!front) return edgesForFlow;
+    return [...edgesForFlow.slice(0, idx), ...edgesForFlow.slice(idx + 1), front];
+  }, [edgesForFlow, selectedEdgeId]);
+
   // VROL-634 — derive top-bar status pill state. Idle until first run; pulses
   // while a run is in flight; stays "Done at HH:MM:SS" after completion.
   // Uses the same render-time compare-and-set pattern as VROL-621 to capture
@@ -2647,6 +2905,15 @@ function EditorCanvas() {
         },
       },
       {
+        id: "wizard",
+        label: "Create scenario with the wizard",
+        hint: "5-step guided build · shape → stations → arrivals → realism → review",
+        group: "Create",
+        run: () => {
+          setWizardOpen(true);
+        },
+      },
+      {
         id: "fit-view",
         label: "Fit canvas to view",
         group: "View",
@@ -2755,59 +3022,65 @@ function EditorCanvas() {
     };
   }, [nodes, viewport.x, viewport.y, viewport.zoom]);
 
-  // Ghost quick-add anchor — right-mid edge of the selected node in
-  // wrapper-relative coords. Only renders when exactly ONE station node
-  // is selected (multi-select keeps the alignment toolbar instead).
-  const quickAddAnchor = useMemo<{ left: number; top: number } | null>(() => {
-    if (!selectedNodeId || selectedNodeIds.length > 1) return null;
-    const node = nodes.find((n) => n.id === selectedNodeId);
-    if (!node || node.type !== "station") return null;
-    const w = node.width ?? node.measured?.width ?? 180;
-    const h = node.height ?? node.measured?.height ?? 60;
-    const rightX = node.position.x + w;
-    const midY = node.position.y + h / 2;
+  // Edge floating toolbar anchor — X centred between the two endpoints, Y
+  // placed above the TOPMOST endpoint (smaller flow-y) so the toolbar
+  // never sits on top of the line itself. The toolbar component subtracts
+  // its own height + a gap, so we anchor at the node top.
+  /* eslint-disable react-hooks/refs -- wrapper rect translates flow-space →
+     viewport-space for fixed-positioning the floating edge toolbar. No
+     React-state equivalent without an extra ResizeObserver layer. */
+  const edgeToolbarAnchor = useMemo<{ x: number; y: number } | null>(() => {
+    if (!selectedEdgeId) return null;
+    const edge = edges.find((e) => e.id === selectedEdgeId);
+    if (!edge) return null;
+    const s = nodes.find((n) => n.id === edge.source);
+    const t = nodes.find((n) => n.id === edge.target);
+    if (!s || !t) return null;
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return null;
+    const rect = wrapper.getBoundingClientRect();
+    const sw = s.width ?? s.measured?.width ?? 180;
+    const tw = t.width ?? t.measured?.width ?? 180;
+    const sx = s.position.x + sw / 2;
+    const tx = t.position.x + tw / 2;
+    const midX = (sx + tx) / 2;
+    // Highest endpoint (smallest flow-y) — the toolbar floats ABOVE this.
+    const topY = Math.min(s.position.y, t.position.y);
     return {
-      left: rightX * viewport.zoom + viewport.x,
-      top: midY * viewport.zoom + viewport.y,
+      x: rect.left + midX * viewport.zoom + viewport.x,
+      y: rect.top + topY * viewport.zoom + viewport.y,
     };
-  }, [selectedNodeId, selectedNodeIds, nodes, viewport.x, viewport.y, viewport.zoom]);
+  }, [selectedEdgeId, edges, nodes, viewport.x, viewport.y, viewport.zoom]);
+  /* eslint-enable react-hooks/refs */
 
-  // Quick-add handler — spawn a new station of the chosen type, positioned
-  // a comfortable distance to the right of the selected node, and wire an
-  // edge from selected → new. The new station inherits the selected node's
-  // y-position so the chain stays horizontal.
-  const handleQuickAdd = useCallback(
-    (stationType: QuickAddStationType): void => {
-      if (!selectedNodeId) return;
-      const source = nodes.find((n) => n.id === selectedNodeId);
-      if (!source) return;
-      const item = PALETTE.find((p) => p.stationType === stationType);
-      if (!item) return;
-      const newId = `n${String(nodeIdRef.current++)}`;
-      const w = source.width ?? source.measured?.width ?? 180;
-      const newNode: Node = {
-        id: newId,
-        type: "station",
-        position: { x: source.position.x + w + 80, y: source.position.y },
-        data: {
-          label: item.label,
-          stationType: item.stationType,
-          cycleDistribution: constant(100),
-          defectRate: 0,
-          stationKey: generateStationKey(),
-        },
-      };
-      const newEdge: Edge = {
-        id: `e${String(Date.now())}-${selectedNodeId}-${newId}`,
-        source: selectedNodeId,
-        target: newId,
-      };
-      setNodes((ns) => ns.concat(newNode));
-      setEdges((eds) => eds.concat(newEdge));
-      setSelectedNodeId(newId);
+  const selectedEdge = useMemo<Edge | null>(() => {
+    if (!selectedEdgeId) return null;
+    return edges.find((e) => e.id === selectedEdgeId) ?? null;
+  }, [selectedEdgeId, edges]);
+
+  const updateSelectedEdgeData = useCallback(
+    (patch: Record<string, unknown>) => {
+      if (!selectedEdgeId) return;
+      setEdges((es) =>
+        es.map((e) =>
+          e.id === selectedEdgeId
+            ? {
+                ...e,
+                data: {
+                  ...(e.data ?? {}),
+                  ...patch,
+                },
+              }
+            : e,
+        ),
+      );
     },
-    [selectedNodeId, nodes, setNodes, setEdges],
+    [selectedEdgeId, setEdges],
   );
+
+  // Sprint 85 — quickAddAnchor + handleQuickAdd removed. Ghost quick-add
+  // suggestion tiles were intrusive on every node click. Drag-from-handle,
+  // station palette, and wizard cover the same ground.
 
   return (
     <div className="space-y-3">
@@ -2975,6 +3248,18 @@ function EditorCanvas() {
             title="Tour"
           >
             <HelpCircle className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setWizardOpen(true);
+            }}
+            className="gap-2"
+            title="Build a scenario with the guided wizard"
+          >
+            <Wand2 className="h-4 w-4" />
+            Wizard
           </Button>
           <Button
             variant="ghost"
@@ -3315,11 +3600,12 @@ function EditorCanvas() {
           ref={wrapperRef}
           onDragOver={onDragOver}
           onDrop={onDrop}
+          data-pan-mode={spacePanning ? "true" : undefined}
           className="border-border bg-background relative overflow-hidden rounded-md border"
         >
           <ReactFlow
             nodes={nodesForFlow}
-            edges={edgesForFlow}
+            edges={edgesForFlowOrdered}
             nodeTypes={NODE_TYPES}
             edgeTypes={EDGE_TYPES}
             onNodesChange={onNodesChange}
@@ -3332,6 +3618,7 @@ function EditorCanvas() {
             onReconnectEnd={onReconnectEnd}
             onNodeContextMenu={onNodeContextMenu}
             onPaneContextMenu={onPaneContextMenu}
+            onEdgeContextMenu={onEdgeContextMenu}
             onSelectionChange={onSelectionChange}
             onNodeDragStart={alignmentGuides.onNodeDragStart}
             onNodeDrag={alignmentGuides.onNodeDrag}
@@ -3339,7 +3626,14 @@ function EditorCanvas() {
             onPaneClick={() => {
               setSelectedNodeId(null);
               setSelectedNodeIds([]);
+              setSelectedEdgeId(null);
             }}
+            onEdgeClick={(_, edge) => {
+              setSelectedEdgeId(edge.id);
+              setSelectedNodeId(null);
+              setSelectedNodeIds([]);
+            }}
+            edgesFocusable={true}
             fitView
             proOptions={{ hideAttribution: true }}
             // Generous snap radius so a drag landing within 30px of a port
@@ -3422,6 +3716,28 @@ function EditorCanvas() {
                 flow.fitView({ duration: 400, padding: 0.2 });
               }}
               onAutoLayout={runAutoLayout}
+              onReverseEdge={() => {
+                if (!contextMenu || contextMenu.kind !== "edge" || !contextMenu.edgeId) return;
+                const edgeId = contextMenu.edgeId;
+                setEdges((es) =>
+                  es.map((e) =>
+                    e.id === edgeId
+                      ? {
+                          ...e,
+                          source: e.target,
+                          target: e.source,
+                          sourceHandle: e.targetHandle ?? null,
+                          targetHandle: e.sourceHandle ?? null,
+                        }
+                      : e,
+                  ),
+                );
+              }}
+              onDeleteEdge={() => {
+                if (!contextMenu || contextMenu.kind !== "edge" || !contextMenu.edgeId) return;
+                const edgeId = contextMenu.edgeId;
+                setEdges((es) => es.filter((e) => e.id !== edgeId));
+              }}
               hasClipboard={clipboardCount > 0}
             />
           ) : null}
@@ -3431,8 +3747,28 @@ function EditorCanvas() {
             canDistribute={nodes.filter((n) => n.selected).length >= 3}
             onOp={onAlignmentOp}
           />
-          <QuickAddGhosts anchor={quickAddAnchor} onAdd={handleQuickAdd} />
+          {/* Sprint 85 — ghost quick-adds removed; users found the floating
+              suggestions intrusive (appeared on every node click). Drag-
+              from-handle and the station palette already cover this. */}
         </div>
+        {selectedEdge ? (
+          <EdgeFloatingToolbar
+            anchor={edgeToolbarAnchor}
+            state={
+              {
+                lineShape: ((selectedEdge.data as { lineShape?: EdgeLineShape } | undefined)
+                  ?.lineShape ?? "smoothstep") as EdgeLineShape,
+                lineDash:
+                  (selectedEdge.data as { lineDash?: boolean } | undefined)?.lineDash === true,
+                arrowMode: ((selectedEdge.data as { arrowMode?: EdgeArrowMode } | undefined)
+                  ?.arrowMode ?? "end") as EdgeArrowMode,
+                strokeColor: (selectedEdge.data as { strokeColor?: string } | undefined)
+                  ?.strokeColor,
+              } satisfies EdgeToolbarState
+            }
+            onChange={(patch) => updateSelectedEdgeData(patch)}
+          />
+        ) : null}
         {commandOpen ? (
           <CommandPalette
             onClose={() => {
@@ -4069,12 +4405,7 @@ function EditorCanvas() {
             optimizationSummary={optimizationSummary}
             optimizationRunning={optimizationRunning}
             onRunOptimization={handleOptimizationSearch}
-            onApplyOptimizationCapacity={(capacity) => {
-              setSettings((s) => ({ ...s, interStationBufferCapacity: capacity }));
-              setTimeout(() => {
-                if (!isRunning) handleRun();
-              }, 0);
-            }}
+            onApplyOptimization={handleApplyOptimization}
             costSummary={
               runMeta
                 ? summarizeCosts(
@@ -6433,6 +6764,23 @@ function EditorCanvas() {
           </div>
         </SheetContent>
       </Sheet>
+      <WizardShell
+        open={wizardOpen}
+        onClose={() => {
+          setWizardOpen(false);
+        }}
+        onFinish={(draft, mode) => {
+          const commit = commitWizardDraft(draft);
+          setNodes(commit.nodes);
+          setEdges(commit.edges);
+          setSettings((s) => ({ ...s, ...commit.settingsPatch }));
+          setWizardOpen(false);
+          toast.success("Scenario created", {
+            description: `${String(commit.nodes.filter((n) => n.type !== "sticky" && n.type !== "frame").length)} stations · ${mode === "run" ? "running…" : "ready to run"}`,
+          });
+          if (mode === "run") setApplyAndRunTick((x) => x + 1);
+        }}
+      />
     </div>
   );
 }

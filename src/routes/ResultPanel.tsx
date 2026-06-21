@@ -26,6 +26,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { narrateRun } from "@/lib/narrate-run";
 import { toast } from "@/lib/toast";
 
+import { KpiDrilldown, SensitivityDrilldown } from "./DrilldownSheets";
 import { OeeOverTimeChart } from "./OeeOverTimeChart";
 import { ReworkOverTimeChart } from "./ReworkOverTimeChart";
 import { cycleStats } from "@/lib/cycle-stats";
@@ -93,7 +94,9 @@ interface ResultPanelProps {
   readonly optimizationSummary?: import("@/lib/optimization-search").OptimizationSummary | null;
   readonly optimizationRunning?: boolean;
   readonly onRunOptimization?: () => void;
-  readonly onApplyOptimizationCapacity?: (capacity: number) => void;
+  readonly onApplyOptimization?: (
+    candidate: import("@/lib/optimization-search").OptimizationCandidate,
+  ) => void;
 }
 
 /**
@@ -306,8 +309,17 @@ export function ResultPanel({
   optimizationSummary,
   optimizationRunning,
   onRunOptimization,
-  onApplyOptimizationCapacity,
+  onApplyOptimization,
 }: ResultPanelProps) {
+  type TabId = "overview" | "throughput" | "oee" | "states" | "quality" | "buffers" | "stations";
+  const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [kpiDrilldown, setKpiDrilldown] = useState<
+    import("@/lib/replications").ReplicationKpi | null
+  >(null);
+  const [sensitivityRow, setSensitivityRow] = useState<
+    import("@/lib/sensitivity-sweep").SensitivityRow | null
+  >(null);
+
   // VROL-720 — help-link anchor mapping. Routes to /help (same-tab) with a
   // hash so the matching definition scrolls into view.
   const helpAnchor = (label: string): string | null => {
@@ -319,10 +331,29 @@ export function ResultPanel({
     };
     return map[label] ?? null;
   };
+  const KPI_TO_REP_LABEL: Record<string, string> = {
+    Throughput: "Throughput",
+    "Line OEE": "Line OEE",
+    "Time-in-system": "Time-in-system",
+    Completed: "Completed",
+  };
+  const replicationKpiFor = (label: string) =>
+    replicationSummary?.kpis.find((k) => k.label === KPI_TO_REP_LABEL[label]) ?? null;
   const tile = (label: string, value: string, hint?: string) => {
     const href = helpAnchor(label);
+    const repKpi = replicationKpiFor(label);
+    const clickable = repKpi !== null;
+    const ariaLabel = clickable ? `${label} — open per-replication detail` : undefined;
     return (
-      <div className="border-border bg-card relative overflow-hidden rounded-md border p-3">
+      <button
+        type="button"
+        onClick={() => {
+          if (repKpi) setKpiDrilldown(repKpi);
+        }}
+        disabled={!clickable}
+        aria-label={ariaLabel}
+        className={`border-border bg-card relative w-full overflow-hidden rounded-md border p-3 text-left transition-colors ${clickable ? "hover:border-foreground/30 hover:bg-accent/40 cursor-pointer" : "cursor-default"}`}
+      >
         {/* Backdrop sparklines were removed — they had no axis context
             and confused readers. The Throughput tab shows the proper
             chart with labeled axes. */}
@@ -334,6 +365,7 @@ export function ResultPanel({
               aria-label={`What is ${label}?`}
               className="hover:text-foreground rounded-full px-1 text-[10px]"
               title="Open glossary"
+              onClick={(e) => e.stopPropagation()}
             >
               ?
             </a>
@@ -341,7 +373,12 @@ export function ResultPanel({
         </div>
         <div className="font-mono text-xl font-semibold tabular-nums">{value}</div>
         {hint ? <div className="text-muted-foreground mt-0.5 text-xs">{hint}</div> : null}
-      </div>
+        {clickable ? (
+          <div className="text-muted-foreground mt-1 text-[9px] tracking-wide uppercase">
+            Click → per-rep detail
+          </div>
+        ) : null}
+      </button>
     );
   };
   const throughputPerHour = result.throughputLambda * 3_600_000;
@@ -366,8 +403,6 @@ export function ResultPanel({
   const hasBreakdowns = result.perStationBreakdowns !== undefined;
   const hasLabor = result.laborUtilization !== undefined;
   // Tabbed drill-down. Default to Overview (the actionable view).
-  type TabId = "overview" | "throughput" | "oee" | "states" | "quality" | "buffers" | "stations";
-  const [activeTab, setActiveTab] = useState<TabId>("overview");
   const tabs: { id: TabId; label: string; icon: typeof Activity }[] = [
     { id: "overview", label: "Overview", icon: Lightbulb },
     { id: "throughput", label: "Throughput", icon: Activity },
@@ -534,7 +569,7 @@ export function ResultPanel({
               summary={sensitivitySummary ?? null}
               running={sensitivityRunning === true}
               onRun={onRunSensitivity}
-              {...(onFocusStation ? { onFocusStation } : {})}
+              onClickRow={(row) => setSensitivityRow(row)}
             />
           ) : null}
           {onRunWipCurve ? (
@@ -550,7 +585,7 @@ export function ResultPanel({
               summary={optimizationSummary ?? null}
               running={optimizationRunning === true}
               onRun={onRunOptimization}
-              {...(onApplyOptimizationCapacity ? { onApply: onApplyOptimizationCapacity } : {})}
+              {...(onApplyOptimization ? { onApply: onApplyOptimization } : {})}
             />
           ) : null}
           {costSummary ? <CostCard summary={costSummary} /> : null}
@@ -786,6 +821,20 @@ export function ResultPanel({
             : null}
         </div>
       ) : null}
+      <KpiDrilldown kpi={kpiDrilldown} onClose={() => setKpiDrilldown(null)} />
+      <SensitivityDrilldown
+        row={sensitivityRow}
+        summary={sensitivitySummary ?? null}
+        onClose={() => setSensitivityRow(null)}
+        {...(onFocusStation
+          ? {
+              onFocusStation: (idx: number) => {
+                onFocusStation(idx);
+                setSensitivityRow(null);
+              },
+            }
+          : {})}
+      />
     </div>
   );
 }

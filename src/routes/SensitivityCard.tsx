@@ -13,17 +13,17 @@ import { Play, Tornado } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { SensitivitySummary } from "@/lib/sensitivity-sweep";
+import type { SensitivityRow, SensitivitySummary } from "@/lib/sensitivity-sweep";
 
 interface SensitivityCardProps {
   readonly summary: SensitivitySummary | null;
   readonly running: boolean;
   readonly onRun: () => void;
-  /** Click a tornado row → pan + zoom canvas to that station. */
-  readonly onFocusStation?: (stationIdx: number) => void;
+  /** Click a tornado row → open the row drilldown sheet (preferred). */
+  readonly onClickRow?: (row: SensitivityRow) => void;
 }
 
-export function SensitivityCard({ summary, running, onRun, onFocusStation }: SensitivityCardProps) {
+export function SensitivityCard({ summary, running, onRun, onClickRow }: SensitivityCardProps) {
   return (
     <Card id="sensitivity">
       <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
@@ -48,7 +48,7 @@ export function SensitivityCard({ summary, running, onRun, onFocusStation }: Sen
             cycle-time changes hurt or help throughput most.
           </p>
         ) : (
-          <SensitivityBody summary={summary} {...(onFocusStation ? { onFocusStation } : {})} />
+          <SensitivityBody summary={summary} {...(onClickRow ? { onClickRow } : {})} />
         )}
       </CardContent>
     </Card>
@@ -57,10 +57,10 @@ export function SensitivityCard({ summary, running, onRun, onFocusStation }: Sen
 
 function SensitivityBody({
   summary,
-  onFocusStation,
+  onClickRow,
 }: {
   readonly summary: SensitivitySummary;
-  readonly onFocusStation?: (stationIdx: number) => void;
+  readonly onClickRow?: (row: SensitivityRow) => void;
 }) {
   if (summary.rows.length === 0) {
     return (
@@ -98,12 +98,12 @@ function SensitivityBody({
           const width = Math.abs(highPct - lowPct);
           const helpsWhenSlower = row.lowPerHour < row.highPerHour;
           const barColor = helpsWhenSlower ? "bg-sim-running/70" : "bg-sim-down/70";
-          const Wrapper = onFocusStation ? "button" : "div";
-          const wrapperProps = onFocusStation
+          const Wrapper = onClickRow ? "button" : "div";
+          const wrapperProps = onClickRow
             ? {
                 type: "button" as const,
                 onClick: () => {
-                  onFocusStation(row.stationIdx);
+                  onClickRow(row);
                 },
                 className:
                   "hover:bg-accent/40 flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-[11px] transition-colors",
@@ -113,7 +113,7 @@ function SensitivityBody({
             <Wrapper
               key={row.stationLabel}
               {...wrapperProps}
-              title={`${row.stationLabel}: ${fmt(row.lowPerHour)}/h (low) → ${fmt(row.highPerHour)}/h (high)${onFocusStation ? " · click to locate on canvas" : ""}`}
+              title={`${row.stationLabel}: ${fmt(row.lowPerHour)}/h (low) → ${fmt(row.highPerHour)}/h (high)${onClickRow ? " · click for detail" : ""}`}
             >
               <div className="text-foreground/80 w-28 shrink-0 truncate text-right font-medium">
                 {row.stationLabel}

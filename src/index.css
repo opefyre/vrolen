@@ -203,3 +203,87 @@
     outline-offset: 1px;
   }
 }
+
+/* Miro-style 4-side node handles. Subtle by default, become a clear dot on
+ * node hover or when a connection drag is in progress. Each side is offset
+ * a bit so the handle sits outside the node border instead of on it. */
+.vrolen-handle {
+  width: 12px !important;
+  height: 12px !important;
+  background: var(--sim-running) !important;
+  border: 2px solid white !important;
+  border-radius: 9999px !important;
+  opacity: 0;
+  transition:
+    opacity 120ms ease-out,
+    transform 120ms ease-out;
+  pointer-events: all !important;
+  z-index: 5 !important;
+}
+
+.react-flow__node:hover .vrolen-handle,
+.react-flow__node.selected .vrolen-handle,
+.react-flow__node-station:hover .vrolen-handle,
+.react-flow.react-flow--dragging .vrolen-handle,
+.vrolen-handle.connectionindicator {
+  opacity: 1;
+}
+
+.vrolen-handle:hover,
+.vrolen-handle.connectingfrom,
+.vrolen-handle.connectingto {
+  transform: scale(1.4);
+  opacity: 1 !important;
+}
+
+.vrolen-handle--top {
+  top: -6px !important;
+}
+.vrolen-handle--bottom {
+  bottom: -6px !important;
+  top: auto !important;
+}
+.vrolen-handle--left {
+  left: -6px !important;
+}
+.vrolen-handle--right {
+  right: -6px !important;
+  left: auto !important;
+}
+
+/* Sprint 89/90 — Cursor hierarchy on the canvas:
+ *   • Empty pane (idle): default arrow.
+ *   • Pane while Space-to-pan or middle-drag panning: grab → grabbing.
+ *   • Draggable nodes: grab → grabbing while dragging.
+ *   • Handles: crosshair (you're going to start a connection).
+ *   • Edges: default (the click is selection, not a link). */
+.react-flow__pane {
+  cursor: default;
+}
+/* Space-to-pan mode adds `dragging` to the pane (or .react-flow--draggable
+ * / .react-flow__pane.draggable depending on version). Show a hand so the
+ * user knows the canvas is now grabbable. */
+.react-flow__pane.draggable,
+.react-flow__pane.dragging,
+.react-flow--panning .react-flow__pane,
+[data-pan-mode="true"] .react-flow__pane {
+  cursor: grab;
+}
+.react-flow--panning.react-flow--dragging .react-flow__pane,
+.react-flow__pane:active.draggable {
+  cursor: grabbing;
+}
+.react-flow__node {
+  cursor: grab;
+}
+.react-flow__node:active,
+.react-flow.react-flow--dragging .react-flow__node {
+  cursor: grabbing;
+}
+.react-flow__node.no-drag,
+.react-flow__node[data-draggable="false"] {
+  cursor: default;
+}
+.vrolen-handle {
+  cursor: crosshair !important;
+}

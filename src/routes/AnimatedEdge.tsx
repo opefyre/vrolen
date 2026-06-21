@@ -11,10 +11,15 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   type EdgeProps,
+  getBezierPath,
   getSmoothStepPath,
+  getStraightPath,
   useReactFlow,
 } from "@xyflow/react";
-import { useId, useState } from "react";
+import { useId } from "react";
+
+export type EdgeLineShape = "smoothstep" | "bezier" | "straight";
+export type EdgeArrowMode = "end" | "start" | "both" | "none";
 
 import { Sparkline } from "./Sparkline";
 
@@ -23,7 +28,7 @@ const MAX_DURATION_S = 6;
 const MAX_DOTS = 5;
 
 export function AnimatedEdge(props: EdgeProps) {
-  const { sourceX, sourceY, targetX, targetY, markerEnd, style } = props;
+  const { sourceX, sourceY, targetX, targetY, style } = props;
   const data = (props.data ?? {}) as {
     flowRate?: number;
     dotColorClass?: string;
@@ -33,81 +38,65 @@ export function AnimatedEdge(props: EdgeProps) {
     playbackFillNow?: number;
     /** Run peak fill — used to normalise the live width. */
     playbackPeak?: number;
+    /** Miro-style edge styling (Sprint 84). */
+    lineShape?: EdgeLineShape;
+    lineDash?: boolean;
+    arrowMode?: EdgeArrowMode;
+    strokeColor?: string;
   };
   const flowRate = data.flowRate ?? 0;
   const dotColorClass = data.dotColorClass ?? "text-sim-running";
   const series = data.bufferFillSeries;
   const playbackFillNow = data.playbackFillNow;
   const playbackPeak = data.playbackPeak;
-  // Smoothstep gives Lucidchart-style orthogonal routing with rounded
-  // corners — beats spaghetti bezier curves the moment the graph branches.
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
+  const lineShape: EdgeLineShape = data.lineShape ?? "smoothstep";
+  const lineDash = data.lineDash === true;
+  const arrowMode: EdgeArrowMode = data.arrowMode ?? "end";
+  const strokeColor = data.strokeColor;
+  // Path generator — user-selected. smoothstep = orthogonal w/ rounded
+  // corners (default), bezier = curve, straight = straight line.
+  const pathArgs = {
     sourceX,
     sourceY,
     sourcePosition: props.sourcePosition,
     targetX,
     targetY,
     targetPosition: props.targetPosition,
-    borderRadius: 12,
-  });
+  } as const;
+  const [edgePath, labelX, labelY] =
+    lineShape === "bezier"
+      ? getBezierPath(pathArgs)
+      : lineShape === "straight"
+        ? getStraightPath({ sourceX, sourceY, targetX, targetY })
+        : getSmoothStepPath({ ...pathArgs, borderRadius: 12 });
   const pathId = `edge-path-${useId()}`;
   const flow = useReactFlow();
-  const [hover, setHover] = useState<boolean>(false);
 
-  // Mid-edge × button shown on hover so the user can delete an edge
-  // without opening a menu. EdgeLabelRenderer puts the DOM node inside
-  // a fixed overlay at flow-space coords; we re-enable pointer events
-  // and listen for click → setEdges(filter).
-  const deleteButton = (
-    <EdgeLabelRenderer>
-      <div
-        style={{
-          position: "absolute",
-          transform: `translate(-50%, -50%) translate(${String(labelX)}px, ${String(labelY)}px)`,
-          pointerEvents: "all",
-        }}
-        onPointerEnter={() => {
-          setHover(true);
-        }}
-        onPointerLeave={() => {
-          setHover(false);
-        }}
-        className="z-10 flex items-center justify-center"
-      >
-        <button
-          type="button"
-          aria-label="Delete edge"
-          title="Delete edge"
-          onClick={(e) => {
-            e.stopPropagation();
-            flow.setEdges((eds) => eds.filter((ed) => ed.id !== props.id));
-          }}
-          className={`bg-card flex h-5 w-5 items-center justify-center rounded-full border shadow-md transition-opacity ${
-            hover ? "opacity-100" : "opacity-0"
-          }`}
-        >
-          <span aria-hidden className="text-foreground text-[12px] leading-none">
-            ×
-          </span>
-        </button>
-      </div>
-    </EdgeLabelRenderer>
-  );
+  // Sprint 88 — mid-edge × delete button removed. Right-click → Delete
+  // edge and the keyboard Delete key both already cover edge deletion.
 
-  // Invisible thick stroke directly under the visible edge so the hover
-  // hit-target is generous (1.5px lines are hell to hover).
+  // Invisible stroke directly under the visible edge so the hit-target is
+  // a bit more forgiving than the 1.5px visible line — but narrow enough
+  // that two edges converging on the same handle don't share a click
+  // region. Sprint 90: dropped from 18 → 10 px after users reported only
+  // ever being able to select the leftmost of two adjacent edges.
   const hitArea = (
     <path
       d={edgePath}
       stroke="transparent"
-      strokeWidth={18}
+      strokeWidth={10}
       fill="none"
-      style={{ pointerEvents: "stroke", cursor: "pointer" }}
-      onPointerEnter={() => {
-        setHover(true);
-      }}
-      onPointerLeave={() => {
-        setHover(false);
+      style={{ pointerEvents: "stroke" }}
+      onClick={() => {
+        // Don't stopPropagation — let react-flow's onEdgeClick handler in
+        // EditorPage see the click and update its selection state.
+        flow.setEdges((eds) =>
+          eds.map((ed) => ({
+            ...ed,
+            selected: ed.id === props.id,
+          })),
+        );
+        flow.setNodes((ns) => ns.map((n) => ({ ...n, selected: false })));
       }}
     />
   );
@@ -129,19 +118,60 @@ export function AnimatedEdge(props: EdgeProps) {
           : "var(--sim-running)"
       : undefined;
 
+  const showArrowEnd = arrowMode === "end" || arrowMode === "both";
+  const showArrowStart = arrowMode === "start" || arrowMode === "both";
+  const arrowEndId = `arrow-end-${props.id}`;
+  const arrowStartId = `arrow-start-${props.id}`;
+  const arrowColor = strokeColor ?? playbackStrokeColor ?? "var(--foreground)";
+  // Render our own arrow markers in <defs> for full control over fill +
+  // direction (start/end). Two SVG markers per edge, only added when needed.
+  const arrowDefs = (
+    <defs>
+      {showArrowEnd ? (
+        <marker
+          id={arrowEndId}
+          viewBox="0 0 10 10"
+          refX="9"
+          refY="5"
+          markerUnits="userSpaceOnUse"
+          markerWidth="12"
+          markerHeight="12"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 0 L 10 5 L 0 10 z" fill={arrowColor} />
+        </marker>
+      ) : null}
+      {showArrowStart ? (
+        <marker
+          id={arrowStartId}
+          viewBox="0 0 10 10"
+          refX="9"
+          refY="5"
+          markerUnits="userSpaceOnUse"
+          markerWidth="12"
+          markerHeight="12"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 0 L 10 5 L 0 10 z" fill={arrowColor} />
+        </marker>
+      ) : null}
+    </defs>
+  );
   const baseEdgeProps: Parameters<typeof BaseEdge>[0] = {
     id: props.id,
     path: edgePath,
-    ...(markerEnd ? { markerEnd } : {}),
-    ...(style || playbackStrokeWidth
-      ? {
-          style: {
-            ...(style ?? {}),
-            ...(playbackStrokeWidth ? { strokeWidth: playbackStrokeWidth } : {}),
-            ...(playbackStrokeColor ? { stroke: playbackStrokeColor } : {}),
-          },
-        }
-      : {}),
+    ...(showArrowEnd ? { markerEnd: `url(#${arrowEndId})` } : {}),
+    ...(showArrowStart ? { markerStart: `url(#${arrowStartId})` } : {}),
+    style: {
+      ...(style ?? {}),
+      ...(playbackStrokeWidth ? { strokeWidth: playbackStrokeWidth } : {}),
+      ...(playbackStrokeColor
+        ? { stroke: playbackStrokeColor }
+        : strokeColor
+          ? { stroke: strokeColor }
+          : {}),
+      ...(lineDash ? { strokeDasharray: "6 4" } : {}),
+    },
   };
   // VROL-615 — render the buffer-fill sparkline above the edge midpoint when
   // the run carried a sampler. Stays visible even when animation / flow dots
@@ -166,10 +196,10 @@ export function AnimatedEdge(props: EdgeProps) {
   if (flowRate <= 0) {
     return (
       <>
+        {arrowDefs}
         <BaseEdge {...baseEdgeProps} />
         {hitArea}
         {sparkline}
-        {deleteButton}
       </>
     );
   }
@@ -188,6 +218,7 @@ export function AnimatedEdge(props: EdgeProps) {
 
   return (
     <>
+      {arrowDefs}
       <BaseEdge {...baseEdgeProps} />
       {hitArea}
       <defs>
@@ -206,7 +237,6 @@ export function AnimatedEdge(props: EdgeProps) {
         </circle>
       ))}
       {sparkline}
-      {deleteButton}
     </>
   );
 }

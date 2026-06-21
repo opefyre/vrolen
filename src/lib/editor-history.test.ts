@@ -12,6 +12,7 @@ import {
   recordChange,
   redo,
   serializeHistory,
+  snapshotKey,
   undo,
   type EditorSnapshot,
 } from "./editor-history";
@@ -104,5 +105,56 @@ describe("editor-history (VROL-309)", () => {
     const after = recordChange(EMPTY_HISTORY, snap("a"));
     expect(canUndo(after)).toBe(true);
     expect(canRedo(after)).toBe(false);
+  });
+});
+
+describe("snapshotKey (Sprint 86)", () => {
+  function snapWith(overrides: Partial<Node>): EditorSnapshot {
+    const base = snap("n");
+    return {
+      ...base,
+      nodes: [{ ...(base.nodes[0] as Node), ...overrides }],
+    };
+  }
+  it("same content → same key", () => {
+    expect(snapshotKey(snap("a"))).toBe(snapshotKey(snap("a")));
+  });
+  it("different node label → different key", () => {
+    expect(snapshotKey(snap("a"))).not.toBe(snapshotKey(snap("b")));
+  });
+  it("selection state does NOT change the key", () => {
+    const k1 = snapshotKey(snapWith({ selected: false }));
+    const k2 = snapshotKey(snapWith({ selected: true }));
+    expect(k1).toBe(k2);
+  });
+  it("dragging state does NOT change the key", () => {
+    const k1 = snapshotKey(snapWith({ dragging: false }));
+    const k2 = snapshotKey(snapWith({ dragging: true }));
+    expect(k1).toBe(k2);
+  });
+  it("measured size does NOT change the key", () => {
+    const k1 = snapshotKey(snapWith({}));
+    const k2 = snapshotKey(snapWith({ measured: { width: 180, height: 60 } }));
+    expect(k1).toBe(k2);
+  });
+  it("sparklineSeries injected by sim run does NOT change the key", () => {
+    const base = snap("n");
+    const node = base.nodes[0] as Node;
+    const k1 = snapshotKey(base);
+    const k2 = snapshotKey({
+      ...base,
+      nodes: [
+        {
+          ...node,
+          data: { ...(node.data as object), sparklineSeries: [1, 2, 3] },
+        },
+      ],
+    });
+    expect(k1).toBe(k2);
+  });
+  it("position change DOES change the key (real edit)", () => {
+    const k1 = snapshotKey(snap("a", 0));
+    const k2 = snapshotKey(snap("a", 100));
+    expect(k1).not.toBe(k2);
   });
 });

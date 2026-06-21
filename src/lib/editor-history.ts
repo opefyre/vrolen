@@ -22,6 +22,99 @@ export interface EditorSnapshot {
   readonly settings: RunSettings;
 }
 
+/**
+ * Fields on Node / node.data that react-flow or the simulator update on
+ * EVERY click, drag, run, etc. — without the user "doing" anything we'd
+ * want to undo. Stripping them gives us a stable identity that lets us
+ * detect "did the user actually change anything?" and skip no-op history
+ * commits.
+ *
+ * Why this matters: without it, selecting a node bumps `node.selected`,
+ * which bumps the nodes array reference, which fires the 400ms history
+ * debounce, which records a snapshot — so a single real edit ends up
+ * surrounded by 3-4 selection/measurement snapshots and the user has to
+ * press Cmd+Z several times before anything visible undoes.
+ */
+const EPHEMERAL_NODE_KEYS = new Set([
+  "selected",
+  "dragging",
+  "measured",
+  "width",
+  "height",
+  "resizing",
+  "positionAbsolute",
+]);
+const EPHEMERAL_DATA_KEYS = new Set([
+  // Per-run sparkline series + cached sim metrics — populated after a
+  // simulation, never directly edited by the user. Live runtime state
+  // tagged onto the node (playback live status, hover hints, etc.) also
+  // belongs here.
+  "sparklineSeries",
+  "lastRunStateMix",
+  "lastRunBottleneck",
+  "lastRunCompleted",
+  "lastRunStatus",
+  "playbackState",
+  "isHovered",
+]);
+
+interface NodeSnapKey {
+  readonly id: string;
+  readonly type: string | undefined;
+  readonly position: { x: number; y: number };
+  readonly data: Record<string, unknown>;
+}
+
+function sanitizeNode(n: Node): NodeSnapKey {
+  const data = n.data as Record<string, unknown> | undefined;
+  const cleanData: Record<string, unknown> = {};
+  if (data) {
+    for (const [k, v] of Object.entries(data)) {
+      if (EPHEMERAL_DATA_KEYS.has(k)) continue;
+      cleanData[k] = v;
+    }
+  }
+  return {
+    id: n.id,
+    type: n.type,
+    position: { x: n.position.x, y: n.position.y },
+    data: cleanData,
+  };
+}
+
+interface EdgeSnapKey {
+  readonly id: string;
+  readonly source: string;
+  readonly target: string;
+  readonly sourceHandle: string | null | undefined;
+  readonly targetHandle: string | null | undefined;
+  readonly data: unknown;
+}
+
+function sanitizeEdge(e: Edge): EdgeSnapKey {
+  return {
+    id: e.id,
+    source: e.source,
+    target: e.target,
+    sourceHandle: e.sourceHandle ?? null,
+    targetHandle: e.targetHandle ?? null,
+    data: e.data,
+  };
+}
+
+/**
+ * Stable string key for a snapshot — `===`-comparable across renders.
+ * Two snapshots that differ only in selection state, drag state, or sim
+ * results produce the same key (so the history debounce can skip them).
+ */
+export function snapshotKey(snap: EditorSnapshot): string {
+  const ns = snap.nodes.map(sanitizeNode);
+  const es = snap.edges.map(sanitizeEdge);
+  return JSON.stringify({ ns, es, s: snap.settings });
+}
+
+void EPHEMERAL_NODE_KEYS; // referenced via sanitizeNode allow-list comments above
+
 export interface EditorHistory {
   readonly past: readonly EditorSnapshot[];
   readonly future: readonly EditorSnapshot[];
