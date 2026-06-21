@@ -526,28 +526,42 @@ export function getPreset(id: string): Preset | undefined {
 }
 
 const PENDING_PRESET_KEY = "vrolen.pending-preset";
+const PENDING_AUTORUN_KEY = "vrolen.pending-autorun";
 
 /**
  * Landing page → editor handoff. The landing page writes a preset id here
  * and navigates to /editor; the editor reads + clears the key on mount and
  * loads that preset's graph + settings.
+ *
+ * Optional `autorun` flag fires the simulation as soon as the preset loads
+ * — used by the demo CTA so the first-time visitor sees results on first
+ * interaction instead of an empty canvas (VROL-816).
  */
-export function setPendingPreset(id: string): void {
+export function setPendingPreset(id: string, opts?: { autorun?: boolean }): void {
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage?.setItem?.(PENDING_PRESET_KEY, id);
+    if (opts?.autorun) {
+      window.sessionStorage?.setItem?.(PENDING_AUTORUN_KEY, "1");
+    } else {
+      window.sessionStorage?.removeItem?.(PENDING_AUTORUN_KEY);
+    }
   } catch {
     // sessionStorage unavailable — nav still happens; editor just shows the default.
   }
 }
 
-export function consumePendingPreset(): Preset | undefined {
+export function consumePendingPreset(): { preset: Preset; autorun: boolean } | undefined {
   if (typeof window === "undefined") return undefined;
   try {
     const id = window.sessionStorage?.getItem?.(PENDING_PRESET_KEY) ?? null;
     if (!id) return undefined;
+    const autorun = window.sessionStorage?.getItem?.(PENDING_AUTORUN_KEY) === "1";
     window.sessionStorage?.removeItem?.(PENDING_PRESET_KEY);
-    return getPreset(id);
+    window.sessionStorage?.removeItem?.(PENDING_AUTORUN_KEY);
+    const preset = getPreset(id);
+    if (!preset) return undefined;
+    return { preset, autorun };
   } catch {
     return undefined;
   }

@@ -56,8 +56,23 @@ export function AppShell({ children }: AppShellProps) {
         gridTemplateColumns: collapsed ? "auto 1fr" : "16rem 1fr",
       }}
     >
+      {/*
+       * VROL-781 — skip link. First focusable element so keyboard users can
+       * jump past the persistent header + sidebar straight to page content.
+       * Visually hidden until focused via Tailwind's `sr-only focus:not-sr-only`.
+       */}
+      <a
+        href="#main"
+        className="focus:bg-background focus:text-foreground focus:border-border focus-visible:ring-ring sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:rounded-md focus:border focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow-md focus:outline-none focus-visible:ring-2"
+      >
+        Skip to main content
+      </a>
+
       {/* Header */}
-      <header className="border-border bg-card col-span-2 flex h-14 items-center gap-2 border-b px-4">
+      <header
+        className="border-border bg-card col-span-2 flex h-14 items-center gap-2 border-b px-4"
+        aria-label="Application header"
+      >
         <Tooltip>
           <TooltipTrigger
             render={
@@ -134,8 +149,17 @@ export function AppShell({ children }: AppShellProps) {
         })}
       </aside>
 
-      {/* Main content */}
-      <main className="col-start-2 row-start-2 row-end-3 overflow-auto lg:col-start-2">
+      {/*
+       * VROL-781 — main landmark. `id="main"` is the skip-link target and
+       * `tabIndex={-1}` lets the skip link focus it programmatically without
+       * adding it to the regular Tab order.
+       */}
+      <main
+        id="main"
+        tabIndex={-1}
+        aria-label="Main content"
+        className="col-start-2 row-start-2 row-end-3 overflow-auto outline-none lg:col-start-2"
+      >
         {children}
       </main>
       <KeyboardShortcutsOverlay />

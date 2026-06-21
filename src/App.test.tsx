@@ -8,9 +8,9 @@ describe("App", () => {
     expect(screen.getByText(/Model your line, find the bottleneck/i)).toBeInTheDocument();
   });
 
-  it("surfaces the Open the editor CTA", () => {
+  it("surfaces the Run the demo CTA (VROL-815)", () => {
     render(<App />);
-    expect(screen.getByRole("button", { name: /Open the editor/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Run the demo/i })).toBeInTheDocument();
   });
 
   it("renders the bottom-of-page footer links", () => {

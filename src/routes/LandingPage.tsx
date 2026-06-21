@@ -9,7 +9,7 @@
  */
 
 import { ArrowRight, Activity, ExternalLink, GitBranch, Settings2, Wand2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { commitDraft } from "@/components/wizard/commit-draft";
@@ -39,23 +39,7 @@ function presetCategory(id: string): { label: string; tone: string } {
 }
 
 /** VROL-706 — count up to N over ~600ms. Lightweight CSS-free counter. */
-function useCountUp(target: number, durationMs = 600): number {
-  const [v, setV] = useState(0);
-  useEffect(() => {
-    let raf = 0;
-    const start = performance.now();
-    const tick = (t: number) => {
-      const k = Math.min(1, (t - start) / durationMs);
-      setV(Math.round(k * target));
-      if (k < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(raf);
-    };
-  }, [target, durationMs]);
-  return v;
-}
+// useCountUp removed in VROL-823 — outcome chips replaced the stat counters.
 
 function HeroFlow() {
   // Three-station mini chain with two animated dots flowing along the bezier.
@@ -122,24 +106,24 @@ function HeroFlow() {
   );
 }
 
-function HeroStats() {
-  const presets = useCountUp(PRESETS.length);
-  const stations = useCountUp(10);
+/**
+ * VROL-823 — outcome-oriented hero chips. Replace the inventory-style stat
+ * counters (12 presets · 10 station types) with verb-noun chips that name
+ * what the user will *do* with the tool — same row of three chips you'd
+ * see in a Linear or Vercel hero.
+ */
+function HeroOutcomeChips() {
+  const chips = ["Find the bottleneck", "Compare what-ifs", "Cost the throughput"];
   return (
-    <div className="mx-auto grid max-w-xs grid-cols-2 gap-3 text-center">
-      <Stat value={presets} label="presets" />
-      <Stat value={stations} label="station types" />
-    </div>
-  );
-}
-
-function Stat({ value, label }: { value: number; label: string }) {
-  return (
-    <div>
-      <div className="font-heading text-foreground text-2xl font-bold tabular-nums">
-        {value.toLocaleString()}
-      </div>
-      <div className="text-muted-foreground mt-0.5 text-xs tracking-wide uppercase">{label}</div>
+    <div className="mx-auto flex max-w-2xl flex-wrap items-center justify-center gap-2">
+      {chips.map((label) => (
+        <span
+          key={label}
+          className="border-border bg-card text-muted-foreground rounded-full border px-3 py-1 text-xs"
+        >
+          {label}
+        </span>
+      ))}
     </div>
   );
 }
@@ -166,8 +150,10 @@ function FeatureCard({
 
 export default function LandingPage() {
   const [wizardOpen, setWizardOpen] = useState<boolean>(false);
-  const goToEditor = (presetId?: string) => {
-    if (presetId) setPendingPreset(presetId);
+  // VROL-816 — demo CTA autoruns the simulation. The pending-preset handoff
+  // carries `autorun: true` so the editor fires its first run on mount.
+  const goToEditor = (presetId?: string, opts?: { autorun?: boolean }) => {
+    if (presetId) setPendingPreset(presetId, opts);
     if (typeof window !== "undefined") window.location.href = "/editor";
   };
 
@@ -188,8 +174,11 @@ export default function LandingPage() {
           where the constraint really is.
         </p>
         <HeroFlow />
-        {/* VROL-706 — animated stat counters anchored below the hero. */}
-        <HeroStats />
+        {/* VROL-823 — outcome chips replace the inventory-style counter row. */}
+        <HeroOutcomeChips />
+        {/* VROL-815 — three-tier CTA hierarchy: 1 primary, 1 outline, 1 link.
+            Primary = wizard (30s time-to-first-run). Outline = demo (autoruns).
+            Link = templates browser for users who want to shop around first. */}
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Button
             size="lg"
@@ -199,38 +188,25 @@ export default function LandingPage() {
             }}
           >
             <Wand2 className="h-4 w-4" />
-            Create scenario
+            Create scenario — 30s
           </Button>
           <Button
             size="lg"
             variant="outline"
             onClick={() => {
-              goToEditor();
+              goToEditor("bottling-line", { autorun: true });
             }}
             className="gap-2"
           >
-            Open the editor
+            Run the demo
             <ArrowRight className="h-4 w-4" />
           </Button>
-          <Button
-            size="lg"
-            variant="ghost"
-            onClick={() => {
-              goToEditor("bottling-line");
-            }}
+          <a
+            href="/templates"
+            className="text-muted-foreground hover:text-foreground text-sm underline-offset-4 hover:underline"
           >
-            Load the bottling demo
-          </Button>
-          {/* VROL-437 — /demo is a one-click external entry point. */}
-          <Button
-            size="lg"
-            variant="ghost"
-            onClick={() => {
-              if (typeof window !== "undefined") window.location.href = "/templates";
-            }}
-          >
-            Browse templates
-          </Button>
+            Browse 12 templates →
+          </a>
         </div>
       </section>
 

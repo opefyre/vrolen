@@ -787,8 +787,9 @@ function EditorCanvas() {
         autorun: wizard.autorun,
       };
     }
-    const preset = consumePendingPreset();
-    if (preset) {
+    const pending = consumePendingPreset();
+    if (pending) {
+      const { preset, autorun } = pending;
       const nodesCopy = preset.graph.nodes.map((n) => ({ ...n, data: { ...n.data } }));
       const edgesCopy = preset.graph.edges.map((e) => ({ ...e }));
       return {
@@ -796,7 +797,9 @@ function EditorCanvas() {
         edges: edgesCopy,
         settings: { ...preset.settings },
         presetTitle: preset.title as string | undefined,
-        autorun: false,
+        // VROL-816 — demo CTA autorun: when the pending-preset handoff
+        // carries autorun=true, fire the simulation as the editor mounts.
+        autorun,
       };
     }
     const g = loadGraph();
