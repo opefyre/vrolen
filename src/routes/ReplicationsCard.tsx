@@ -4,13 +4,20 @@
  * the Arena house style (mean (95 % CI: [lo, hi])).
  */
 
-import { Sigma } from "lucide-react";
+import { Scale, Sigma } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { pairedTConfidence } from "@/lib/comparison-stats";
 import type { ReplicationSummary } from "@/lib/replications";
 import { noisinessSignal } from "@/lib/replications";
 
-export function ReplicationsCard({ summary }: { readonly summary: ReplicationSummary }) {
+export function ReplicationsCard({
+  summary,
+  baseline,
+}: {
+  readonly summary: ReplicationSummary;
+  readonly baseline?: ReplicationSummary;
+}) {
   if (summary.n < 2) return null;
   const noise = noisinessSignal(summary);
   const noiseTone =
@@ -69,7 +76,75 @@ export function ReplicationsCard({ summary }: { readonly summary: ReplicationSum
             </tbody>
           </table>
         </div>
+        {baseline ? <PairedDeltaSection summary={summary} baseline={baseline} /> : null}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Paired-t CI of (current - baseline) per matched KPI. The baseline is
+ * the previous multi-rep run; we treat the two as paired because they
+ * shared the same seeds (CRN). If KPI labels mismatch, we skip silently.
+ */
+function PairedDeltaSection({
+  summary,
+  baseline,
+}: {
+  readonly summary: ReplicationSummary;
+  readonly baseline: ReplicationSummary;
+}) {
+  // Match KPIs by label.
+  const rows = summary.kpis
+    .map((cur) => {
+      const base = baseline.kpis.find((k) => k.label === cur.label);
+      if (!base) return null;
+      const result = pairedTConfidence(base.values, cur.values);
+      if (!result) return null;
+      return { kpi: cur, baseKpi: base, result };
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null);
+  if (rows.length === 0) return null;
+  return (
+    <div className="border-border bg-background/40 mt-3 rounded-md border p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <Scale className="text-muted-foreground h-3.5 w-3.5" aria-hidden />
+        <span className="text-sm font-medium">vs previous run (paired 95% CI)</span>
+        <span className="text-muted-foreground text-[10px]">{baseline.n} matched seeds</span>
+      </div>
+      <div className="space-y-1">
+        {rows.map(({ kpi, result }) => {
+          const fmt = kpi.format;
+          const tone = result.significant
+            ? result.meanDelta > 0
+              ? "text-sim-running-foreground"
+              : "text-sim-down-foreground"
+            : "text-muted-foreground";
+          const arrow = result.meanDelta > 0 ? "▲" : result.meanDelta < 0 ? "▼" : "=";
+          return (
+            <div key={kpi.label} className="flex items-center gap-2 text-[11px]">
+              <div className="text-foreground/80 w-32 shrink-0 truncate">{kpi.label}</div>
+              <div
+                className={`w-32 shrink-0 font-mono tabular-nums ${tone}`}
+                title={`Effect size dz=${result.cohensDz.toFixed(2)}`}
+              >
+                {arrow} {fmt(Math.abs(result.meanDelta))}
+              </div>
+              <div className="text-muted-foreground w-44 shrink-0 font-mono tabular-nums">
+                95% CI [{fmt(result.low95)}, {fmt(result.high95)}]
+              </div>
+              <div
+                className={`text-[10px] font-medium tracking-wide uppercase ${result.significant ? tone : "text-muted-foreground"}`}
+              >
+                {result.significant ? "significant" : "n.s."}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-muted-foreground mt-2 text-[10px]">
+        Paired t-test on per-replication differences. Significance = the 95% CI excludes zero.
+      </p>
+    </div>
   );
 }

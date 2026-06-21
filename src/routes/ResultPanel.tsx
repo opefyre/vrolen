@@ -74,6 +74,8 @@ interface ResultPanelProps {
   readonly onApplyWarmup?: (ms: number) => void;
   /** Cross-replication summary; rendered as a 95% CI table when present. */
   readonly replicationSummary?: import("@/lib/replications").ReplicationSummary | null;
+  /** Previous run's replication summary; drives the paired-t vs-baseline section. */
+  readonly replicationBaseline?: import("@/lib/replications").ReplicationSummary | null;
   /** Cost summary; rendered as the Cost & revenue card when present. */
   readonly costSummary?: import("@/lib/cost-economics").CostSummary | null;
   /** Sensitivity sweep summary. */
@@ -292,6 +294,7 @@ export function ResultPanel({
   onFocusStation,
   onApplyWarmup,
   replicationSummary,
+  replicationBaseline,
   costSummary,
   sensitivitySummary,
   sensitivityRunning,
@@ -520,7 +523,12 @@ export function ResultPanel({
             currentWarmupMs={warmupMs}
             {...(onApplyWarmup ? { onApplyWarmup } : {})}
           />
-          {replicationSummary ? <ReplicationsCard summary={replicationSummary} /> : null}
+          {replicationSummary ? (
+            <ReplicationsCard
+              summary={replicationSummary}
+              {...(replicationBaseline ? { baseline: replicationBaseline } : {})}
+            />
+          ) : null}
           {onRunSensitivity ? (
             <SensitivityCard
               summary={sensitivitySummary ?? null}

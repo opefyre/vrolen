@@ -782,6 +782,9 @@ function EditorCanvas() {
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
   // Cross-replication summary — populated only when settings.replications > 1.
   const [replicationSummary, setReplicationSummary] = useState<ReplicationSummary | null>(null);
+  // Baseline = the multi-replication results from the PRIOR run. Lets the
+  // current run's ReplicationsCard show a paired-t CI vs the baseline.
+  const [baselineSummary, setBaselineSummary] = useState<ReplicationSummary | null>(null);
   // Sensitivity sweep — fires on demand from the Results panel.
   const [sensitivitySummary, setSensitivitySummary] = useState<SensitivitySummary | null>(null);
   const [sensitivityRunning, setSensitivityRunning] = useState<boolean>(false);
@@ -1690,7 +1693,13 @@ function EditorCanvas() {
         }
         const wallMs = performance.now() - t0;
         if (replications > 1) {
-          setReplicationSummary(summarizeReplications(allResults));
+          const summary = summarizeReplications(allResults);
+          setReplicationSummary((prev) => {
+            // Promote the previous run's summary into the baseline slot so the
+            // ReplicationsCard can show "vs baseline" paired-t CIs.
+            if (prev && prev.n === summary.n) setBaselineSummary(prev);
+            return summary;
+          });
         }
         // VROL-694 — compute throughput delta vs the previous run for this scenario.
         const prevRuns = activeScenarioName ? listRunHistory(activeScenarioName) : [];
@@ -4007,6 +4016,7 @@ function EditorCanvas() {
               }, 0);
             }}
             replicationSummary={replicationSummary}
+            replicationBaseline={baselineSummary}
             sensitivitySummary={sensitivitySummary}
             sensitivityRunning={sensitivityRunning}
             onRunSensitivity={handleSensitivitySweep}
