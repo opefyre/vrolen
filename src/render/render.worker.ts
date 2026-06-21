@@ -18,7 +18,66 @@
  * so the main thread can surface them instead of failing silently.
  */
 
-import { Application, Container, Graphics, Text } from "pixi.js";
+/// <reference lib="webworker" />
+
+// PixiJS v8's auto-detect prefers the browser environment over webworker
+// when both extensions are registered. The browser env's helpers reach
+// for `document` at init time, which doesn't exist in a Worker. Stub it
+// with a minimal no-op object BEFORE importing pixi so the eager init
+// path doesn't throw, then let the webworker environment take over at
+// runtime via the extension priority dance.
+//
+// We only stub the surface the eager-load path needs: createElement /
+// getElementById / body / head. Real DOM operations are routed to the
+// WebWorker environment by PixiJS after init.
+const scopeAny = self as unknown as Record<string, unknown>;
+if (typeof scopeAny.document === "undefined") {
+  // PixiJS's eager init in v8 calls document.createElement('canvas') to
+  // build auxiliary buffers (text atlases, render textures). In a Worker
+  // we can return a real OffscreenCanvas so getContext() works; for
+  // anything else we return a no-op stub.
+  const stubEl = {
+    appendChild: () => undefined,
+    setAttribute: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    style: {},
+  };
+  const wrapCanvas = (canvas: OffscreenCanvas): OffscreenCanvas =>
+    new Proxy(canvas, {
+      set(target, key, value) {
+        // OffscreenCanvas demands unsigned-long for width/height; PixiJS
+        // sometimes passes undefined or fractional intermediates while
+        // computing render-buffer sizes. Coerce to a safe int.
+        if (key === "width" || key === "height") {
+          const n = Math.max(1, Math.floor(Number(value) || 1));
+          Reflect.set(target, key, n);
+          return true;
+        }
+        return Reflect.set(target, key, value);
+      },
+    });
+  const fakeCreateElement = (tag: string): unknown => {
+    if (tag === "canvas") {
+      return wrapCanvas(new OffscreenCanvas(1, 1));
+    }
+    return stubEl;
+  };
+  scopeAny.document = {
+    createElement: fakeCreateElement,
+    createElementNS: (_ns: string, tag: string) => fakeCreateElement(tag),
+    getElementById: () => null,
+    body: stubEl,
+    head: stubEl,
+    documentElement: stubEl,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  };
+}
+
+// Geometry-only — text labels overlay on the main thread via HTML in
+// IsoCanvas, so the renderer never needs `document` for font measurement.
+import { Application, Container, Graphics } from "pixi.js";
 
 import { depthKey, worldToScreen } from "./isometric";
 import {
@@ -32,6 +91,11 @@ import {
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 
 let app: Application | null = null;
+// Set true only after `await app.init()` resolves. Resize / camera / scene
+// messages that arrive in the gap between `new Application()` and the init
+// callback finishing should no-op (they'll be re-driven once the main
+// thread sees the `ready` event).
+let appReady = false;
 let world: Container | null = null;
 let stationLayer: Container | null = null;
 let edgeLayer: Container | null = null;
@@ -60,6 +124,9 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
   try {
     dpr = msg.dpr;
     app = new Application();
+    // PixiJS v8 in a Web Worker — pass `manageImports: false` to opt out
+    // of dynamic-import side effects that touch `document`. The renderer
+    // itself runs fine on OffscreenCanvas with the WebGL pipeline.
     await app.init({
       canvas: msg.canvas as unknown as HTMLCanvasElement,
       width: msg.width,
@@ -69,6 +136,7 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
       background: 0xf6f8fa,
       antialias: true,
       preference: "webgl",
+      manageImports: false,
     });
     // World container — camera transforms apply here so child layers can
     // be authored in flat world-space and pan/zoom is just one matrix.
@@ -88,15 +156,16 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
     world.addChild(stationLayer);
     app.stage.addChild(world);
 
-    // Bootstrap placeholder so the user sees the renderer is alive before
-    // any scene arrives. Removed on first scene update.
-    const placeholder = new Text({
-      text: "PixiJS renderer ready · awaiting scene",
-      style: { fontFamily: "monospace", fontSize: 14, fill: 0x7a8290 },
-    });
+    // Bootstrap placeholder: a centred dotted box so the user sees the
+    // renderer is alive before any scene arrives. Text labels live in
+    // main-thread HTML (see above note).
+    const placeholder = new Graphics();
     placeholder.label = "placeholder";
-    placeholder.x = msg.width / 2 - placeholder.width / 2;
-    placeholder.y = msg.height / 2 - placeholder.height / 2;
+    placeholder
+      .roundRect(-80, -16, 160, 32, 4)
+      .stroke({ color: 0x7a8290, width: 1, alignment: 0.5 });
+    placeholder.x = msg.width / 2;
+    placeholder.y = msg.height / 2;
     app.stage.addChild(placeholder);
 
     // Frame-counter ticker → posts FPS every ~1s for diagnostics. The 1s
@@ -111,6 +180,7 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
       }
     });
 
+    appReady = true;
     post({ kind: "ready", pixiVersion: "8" });
   } catch (err) {
     reportError("init", err);
@@ -118,7 +188,7 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
 }
 
 function handleResize(msg: Extract<MainToWorker, { kind: "resize" }>): void {
-  if (!app) return;
+  if (!appReady || !app) return;
   try {
     dpr = msg.dpr;
     app.renderer.resolution = dpr;
@@ -129,7 +199,7 @@ function handleResize(msg: Extract<MainToWorker, { kind: "resize" }>): void {
 }
 
 function handleCamera(msg: Extract<MainToWorker, { kind: "camera" }>): void {
-  if (!world) return;
+  if (!appReady || !world) return;
   try {
     world.x = msg.x;
     world.y = msg.y;
@@ -152,19 +222,15 @@ function drawStation(s: RenderStation): Container {
   const c = new Container();
   c.label = `station:${s.id}`;
   // Body — rounded rect tinted by state. PixiJS Graphics v8 API.
+  // No text label here; labels overlay on the main thread (HTML) so we
+  // can use real CSS + a11y + i18n without dragging `document` into the
+  // worker. The container's screen position drives where the label sits.
   const body = new Graphics();
   body
     .roundRect(-40, -16, 80, 32, 6)
     .fill({ color: STATION_COLORS[s.state] })
     .stroke({ color: s.isBottleneck ? 0xf97316 : 0x111827, width: s.isBottleneck ? 2 : 1 });
   c.addChild(body);
-  // Label centered.
-  const label = new Text({
-    text: s.label,
-    style: { fontFamily: "Inter, sans-serif", fontSize: 11, fill: 0xffffff, fontWeight: "600" },
-  });
-  label.anchor.set(0.5);
-  c.addChild(label);
   // Project world tile coords → screen px via the isometric helper
   // (VROL-191). The world container's own transform handles camera pan/zoom,
   // so per-sprite math uses the IDENTITY camera here.
@@ -190,7 +256,7 @@ function drawEdge(
 }
 
 function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
-  if (!app || !stationLayer || !edgeLayer) return;
+  if (!appReady || !app || !stationLayer || !edgeLayer) return;
   try {
     // Drop placeholder on first real scene.
     const placeholder = app.stage.getChildByLabel("placeholder", true);
@@ -242,6 +308,7 @@ function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
 }
 
 function handleDispose(): void {
+  appReady = false;
   app?.destroy(true, { children: true, texture: true });
   app = null;
   world = null;

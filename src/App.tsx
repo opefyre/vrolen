@@ -14,6 +14,9 @@ import TemplatesPage from "@/routes/TemplatesPage";
 // Lazy-load it so the home page + /run + /design-tokens don't pay for its
 // bundle on first visit (VROL-603).
 const EditorPage = lazy(() => import("@/routes/EditorPage"));
+// /iso-demo ships the PixiJS bundle (~400 KB). Keep it off the critical
+// path so the landing page stays light. VROL-852.
+const IsoDemoPage = lazy(() => import("@/routes/IsoDemoPage"));
 
 function EditorFallback() {
   return (
@@ -35,6 +38,12 @@ export default function App() {
     page = (
       <Suspense fallback={<EditorFallback />}>
         <EditorPage />
+      </Suspense>
+    );
+  else if (pathname === "/iso-demo")
+    page = (
+      <Suspense fallback={<EditorFallback />}>
+        <IsoDemoPage />
       </Suspense>
     );
   else page = <LandingPage />;

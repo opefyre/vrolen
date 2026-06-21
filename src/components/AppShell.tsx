@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  Boxes,
   Factory,
   LayoutGrid,
   Layers,
@@ -30,6 +31,10 @@ const NAV_ITEMS: readonly NavItem[] = [
   { href: "/run", label: "Run demo", icon: Play },
   // VROL-442 — /templates entry in the primary nav.
   { href: "/templates", label: "Templates", icon: Layers },
+  // VROL-852 — iso renderer sandbox. Surfaced in primary nav while E06 is
+  // active so the work is one click away; expected to graduate into /editor
+  // once VROL-203/207 land.
+  { href: "/iso-demo", label: "Iso demo", icon: Boxes },
   { href: "/help", label: "Glossary", icon: BookOpen },
   { href: "/design-tokens", label: "Design tokens", icon: Palette },
 ];
