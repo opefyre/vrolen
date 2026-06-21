@@ -19,11 +19,12 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import type { ChainResult } from "@/engine";
+import type { ChainResult, TimeseriesSample } from "@/engine";
 import { asMaterialId } from "@/engine";
 import { Accordion, AccordionStatus } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { narrateRun } from "@/lib/narrate-run";
+import { detectWarmup } from "@/lib/warmup-detection";
 import { toast } from "@/lib/toast";
 
 import { KpiDrilldown, SensitivityDrilldown } from "./DrilldownSheets";
@@ -183,6 +184,147 @@ function ProductMixBody({ result }: { result: ChainResult }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * VROL-832 — Warm-up Welch sparkline. 80px-tall dual-line chart of the
+ * raw per-sample throughput rate (faint) overlaid with a rolling-mean
+ * line (bold), with vertical markers at the Welch-recommended warm-up
+ * and the currently-configured warm-up. Sits above the Verification
+ * card so the reader sees "this is where the line stabilized" before
+ * they see the Apply-warmup button.
+ *
+ * Stays self-contained: no recharts / d3 — same SVG-hand-rolled approach
+ * as Sparkline + ThroughputChart so the bundle stays light.
+ */
+function WarmupWelchSparkline({
+  samples,
+  recommendedMs,
+  currentMs,
+  horizonMs,
+}: {
+  readonly samples: readonly TimeseriesSample[];
+  readonly recommendedMs: number | null;
+  readonly currentMs: number;
+  readonly horizonMs: number;
+}) {
+  if (samples.length < 4 || horizonMs <= 0) return null;
+  // Derive per-sample throughput rate (parts/ms) — mirrors what
+  // detectWarmup() consumes so the markers line up with the data.
+  const rates: { tMs: number; r: number }[] = [];
+  for (let i = 1; i < samples.length; i++) {
+    const cur = samples[i]!;
+    const prev = samples[i - 1]!;
+    const dt = cur.tMs - prev.tMs;
+    if (dt <= 0) continue;
+    rates.push({ tMs: cur.tMs, r: (cur.lineCompleted - prev.lineCompleted) / dt });
+  }
+  if (rates.length < 4) return null;
+  const w = Math.max(2, Math.floor(rates.length * 0.15));
+  const windowedRates: { tMs: number; r: number }[] = rates.map((s, i) => {
+    const lo = Math.max(0, i - Math.floor(w / 2));
+    const hi = Math.min(rates.length, lo + w);
+    let sum = 0;
+    let count = 0;
+    for (let j = lo; j < hi; j++) {
+      sum += rates[j]!.r;
+      count++;
+    }
+    return { tMs: s.tMs, r: count > 0 ? sum / count : s.r };
+  });
+  const peak = Math.max(...rates.map((s) => s.r), ...windowedRates.map((s) => s.r), 1e-12);
+  const W = 320;
+  const H = 80;
+  const padX = 4;
+  const padY = 6;
+  const xAt = (tMs: number): number =>
+    padX + (Math.max(0, Math.min(horizonMs, tMs)) / horizonMs) * (W - padX * 2);
+  const yAt = (r: number): number => H - padY - (r / peak) * (H - padY * 2);
+  const toPath = (pts: { tMs: number; r: number }[]): string =>
+    pts
+      .map((p, i) => `${i === 0 ? "M" : "L"} ${xAt(p.tMs).toFixed(1)} ${yAt(p.r).toFixed(1)}`)
+      .join(" ");
+  const rawPath = toPath(rates);
+  const meanPath = toPath(windowedRates);
+  const recX = recommendedMs !== null ? xAt(recommendedMs) : null;
+  const curX = xAt(currentMs);
+  return (
+    <div className="border-border bg-card rounded-md border p-3">
+      <div className="text-muted-foreground mb-1 flex items-center justify-between text-[11px] tracking-wide uppercase">
+        <span>Warm-up · Welch's method</span>
+        <span className="font-mono text-[10px] normal-case">
+          recommended{" "}
+          {recommendedMs !== null
+            ? recommendedMs >= 1000
+              ? `${(recommendedMs / 1000).toFixed(1)}s`
+              : `${recommendedMs.toFixed(0)}ms`
+            : "—"}
+          {" · "}current{" "}
+          {currentMs >= 1000 ? `${(currentMs / 1000).toFixed(1)}s` : `${currentMs.toFixed(0)}ms`}
+        </span>
+      </div>
+      <svg
+        viewBox={`0 0 ${String(W)} ${String(H)}`}
+        preserveAspectRatio="none"
+        className="text-sim-running block h-20 w-full"
+        role="img"
+        aria-label="Warm-up Welch sparkline"
+      >
+        <path d={rawPath} stroke="currentColor" strokeOpacity={0.25} strokeWidth={1} fill="none" />
+        <path d={meanPath} stroke="currentColor" strokeWidth={1.5} fill="none" />
+        {recX !== null ? (
+          <>
+            <line
+              x1={recX}
+              x2={recX}
+              y1={2}
+              y2={H - 2}
+              stroke="currentColor"
+              strokeWidth={1}
+              strokeDasharray="3 2"
+            />
+            <text
+              x={recX + 3}
+              y={10}
+              className="fill-current font-mono"
+              fontSize={9}
+              fillOpacity={0.85}
+            >
+              rec
+            </text>
+          </>
+        ) : null}
+        <line
+          x1={curX}
+          x2={curX}
+          y1={2}
+          y2={H - 2}
+          stroke="currentColor"
+          strokeOpacity={0.5}
+          strokeWidth={1}
+        />
+        <text
+          x={curX + 3}
+          y={H - 4}
+          className="fill-current font-mono"
+          fontSize={9}
+          fillOpacity={0.5}
+        >
+          current
+        </text>
+      </svg>
+      <div className="text-muted-foreground mt-1 flex justify-between text-[10px]">
+        <span>0</span>
+        <span className="font-mono tabular-nums">
+          {horizonMs >= 1000 ? `${(horizonMs / 1000).toFixed(1)}s` : `${horizonMs.toFixed(0)}ms`}
+        </span>
+      </div>
+      <p className="text-muted-foreground mt-1 text-[10px]">
+        Faint line = raw per-sample throughput rate. Bold line = windowed mean. Dashed marker =
+        Welch-recommended warm-up; solid = current setting.
+      </p>
     </div>
   );
 }
@@ -412,9 +554,56 @@ export function ResultPanel({
     { id: "buffers", label: "Buffers", icon: Boxes },
     { id: "stations", label: "Stations", icon: Layers },
   ];
+  // VROL-843 — realised vs ideal cycle strip. The "ideal" cycle is the
+  // bottleneck station's declared cycle time (slowest of the per-station
+  // ideal cycles), which sets the line's upper bound on throughput.
+  // Realised cycle is just the inverse of measured throughput.
+  // Color: red when realised exceeds ideal by >10% (significant slip),
+  // green when within 5% (line is running near its theoretical pace).
+  const idealCycleMs = (() => {
+    const cycles = result.perStationOee.map((o) => o.idealCycleTimeMs).filter((n) => n > 0);
+    return cycles.length > 0 ? Math.max(...cycles) : 0;
+  })();
+  const realisedCycleMs = throughputPerHour > 0 ? 60_000 / throughputPerHour : Infinity;
+  const cycleStrip = (() => {
+    if (!Number.isFinite(realisedCycleMs) || idealCycleMs <= 0) return null;
+    const ratio = realisedCycleMs / idealCycleMs;
+    const pctOver = (ratio - 1) * 100;
+    const toneClass =
+      pctOver > 10
+        ? "text-sim-down-foreground"
+        : Math.abs(pctOver) <= 5
+          ? "text-sim-running-foreground"
+          : "text-muted-foreground";
+    const sign = pctOver >= 0 ? "+" : "";
+    return (
+      <div
+        className="border-border bg-card text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border px-3 py-2 text-xs"
+        aria-label="Realised vs ideal cycle"
+      >
+        <span>
+          Realised cycle{" "}
+          <strong className="text-foreground font-mono tabular-nums">
+            {fmt(realisedCycleMs, 0)} ms
+          </strong>
+        </span>
+        <span>
+          · Ideal{" "}
+          <strong className="text-foreground font-mono tabular-nums">
+            {fmt(idealCycleMs, 0)} ms
+          </strong>
+        </span>
+        <span className={`font-mono tabular-nums ${toneClass}`}>
+          {sign}
+          {fmt(pctOver, 0)}%
+        </span>
+      </div>
+    );
+  })();
   return (
     <div className="space-y-3">
       <InsightsBanner result={result} />
+      {cycleStrip}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {tile("Completed", result.completed.toLocaleString(), "during measurement window")}
         {tile("Throughput", fmt(throughputPerHour, 0), "parts / hour")}
@@ -552,6 +741,18 @@ export function ResultPanel({
               <FinalStateCard result={result} stationLabels={runMeta.stationLabels} />
             </CardContent>
           </Card>
+          {/* VROL-832 — dual-line sparkline (raw + windowed mean) with markers
+              for the Welch-recommended warm-up and the currently-configured
+              warm-up. Renders above the Verification card so the visual sits
+              right next to the Apply-warmup affordance. */}
+          {result.samples.length >= 4 ? (
+            <WarmupWelchSparkline
+              samples={result.samples}
+              recommendedMs={detectWarmup(result.samples, horizonMs).recommendedMs}
+              currentMs={warmupMs}
+              horizonMs={horizonMs}
+            />
+          ) : null}
           <VerificationCard
             result={result}
             horizonMs={horizonMs}

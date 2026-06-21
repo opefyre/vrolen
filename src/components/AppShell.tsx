@@ -12,6 +12,7 @@ import {
 import type { ReactNode } from "react";
 
 import { KeyboardShortcutsOverlay } from "@/components/editor/keyboard-shortcuts";
+import { CommandPaletteHint } from "@/components/global-command-palette";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -118,6 +119,9 @@ export function AppShell({ children }: AppShellProps) {
               Offline
             </span>
           ) : null}
+          {/* VROL-817 — global Cmd+K hint chip. Click to open the palette
+              from any route (or hit Cmd+K / Ctrl+K). */}
+          <CommandPaletteHint />
           <ThemeToggle />
         </div>
       </header>

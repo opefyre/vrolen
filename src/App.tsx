@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { GlobalCommandPalette } from "@/components/global-command-palette";
 import { Toaster } from "@/components/Toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import DemoPage from "@/routes/DemoPage";
@@ -50,8 +51,10 @@ export default function App() {
 
   return (
     <TooltipProvider>
-      <AppShell>{page}</AppShell>
-      <Toaster />
+      <GlobalCommandPalette>
+        <AppShell>{page}</AppShell>
+        <Toaster />
+      </GlobalCommandPalette>
     </TooltipProvider>
   );
 }

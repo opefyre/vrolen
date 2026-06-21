@@ -9,13 +9,168 @@
  * They're presentational; data + apply callbacks come from the parent.
  */
 
-import { ArrowDown, ArrowUp, Crown, MapPin, Minus, TrendingDown, TrendingUp } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Copy,
+  Crown,
+  MapPin,
+  Minus,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import type { ReplicationKpi } from "@/lib/replications";
 import type { OptimizationCandidate, OptimizationSummary } from "@/lib/optimization-search";
 import type { SensitivityRow, SensitivitySummary } from "@/lib/sensitivity-sweep";
+import { toast } from "@/lib/toast";
+
+// ──────────────────────────────────────────────────────────────────────────────
+// VROL-840 — markdown formatters + clipboard helper.
+//
+// Each drilldown sheet exposes a "Copy as markdown" affordance in the header.
+// Inline formatters here (rather than reusing narrate-run) so the markdown is
+// drilldown-shaped: a header + a table + a short paragraph the user can paste
+// straight into a ticket or doc without further editing.
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function writeToClipboard(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success("Copied");
+  } catch {
+    toast.error("Copy failed", { description: "Clipboard not available" });
+  }
+}
+
+function kpiToMarkdown(kpi: ReplicationKpi): string {
+  const fmt = kpi.format;
+  const sorted = [...kpi.values].sort((a, b) => a - b);
+  const n = sorted.length;
+  const at = (q: number): number => {
+    if (n === 0) return 0;
+    const idx = Math.min(n - 1, Math.max(0, Math.floor(q * (n - 1))));
+    return sorted[idx] ?? 0;
+  };
+  const min = sorted[0] ?? 0;
+  const max = sorted[n - 1] ?? 0;
+  const p25 = at(0.25);
+  const median = at(0.5);
+  const p75 = at(0.75);
+  const lines: string[] = [];
+  lines.push(`### ${kpi.label} · per-replication detail`);
+  lines.push("");
+  lines.push("| Metric | Value |");
+  lines.push("| --- | --- |");
+  lines.push(`| Mean | ${fmt(kpi.mean)} |`);
+  lines.push(`| 95% CI | [${fmt(kpi.low95)}, ${fmt(kpi.high95)}] (± ${fmt(kpi.halfWidth95)}) |`);
+  lines.push(`| Min | ${fmt(min)} |`);
+  lines.push(`| p25 | ${fmt(p25)} |`);
+  lines.push(`| Median | ${fmt(median)} |`);
+  lines.push(`| p75 | ${fmt(p75)} |`);
+  lines.push(`| Max | ${fmt(max)} |`);
+  lines.push(`| Stddev | ${fmt(kpi.stddev)} |`);
+  lines.push(`| n (replications) | ${String(n)} |`);
+  lines.push("");
+  lines.push(
+    `Mean ${fmt(kpi.mean)} across ${String(n)} replications; 95% CI [${fmt(kpi.low95)}, ${fmt(kpi.high95)}].`,
+  );
+  return lines.join("\n");
+}
+
+function sensitivityToMarkdown(row: SensitivityRow, summary: SensitivitySummary): string {
+  const fmt = (n: number) => Math.round(n).toLocaleString();
+  const lowScale = summary.lowMultiplier;
+  const highScale = summary.highMultiplier;
+  const lowPct =
+    summary.baselinePerHour > 0
+      ? ((row.lowPerHour - summary.baselinePerHour) / summary.baselinePerHour) * 100
+      : 0;
+  const highPct =
+    summary.baselinePerHour > 0
+      ? ((row.highPerHour - summary.baselinePerHour) / summary.baselinePerHour) * 100
+      : 0;
+  const helpsWhenSlower = row.lowPerHour < row.highPerHour;
+  const lines: string[] = [];
+  lines.push(`### ${row.stationLabel} · sensitivity detail`);
+  lines.push("");
+  lines.push("| Scenario | Throughput | Δ vs baseline |");
+  lines.push("| --- | --- | --- |");
+  lines.push(
+    `| @${lowScale.toFixed(2)}× faster | ${fmt(row.lowPerHour)} /h | ${lowPct.toFixed(1)}% |`,
+  );
+  lines.push(`| Baseline | ${fmt(summary.baselinePerHour)} /h | 0.0% |`);
+  lines.push(
+    `| @${highScale.toFixed(2)}× slower | ${fmt(row.highPerHour)} /h | ${highPct.toFixed(1)}% |`,
+  );
+  lines.push("");
+  lines.push(
+    helpsWhenSlower
+      ? `Slowing ${row.stationLabel} helps throughput by ${Math.abs(highPct).toFixed(1)}% — saturated downstream station.`
+      : `Speeding ${row.stationLabel} helps throughput by ${Math.abs(lowPct).toFixed(1)}% — bottleneck candidate.`,
+  );
+  return lines.join("\n");
+}
+
+function heatmapCellToMarkdown(
+  candidate: OptimizationCandidate,
+  summary: OptimizationSummary,
+): string {
+  const fmt = (n: number) => Math.round(n).toLocaleString();
+  const ms = (n: number) => `${Math.round(n).toLocaleString()} ms`;
+  const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+  const baseline =
+    summary.candidates.find(
+      (c) => c.bufferCapacity === summary.currentCapacity && c.cycleMultiplier === 1,
+    ) ?? null;
+  const tputDelta =
+    baseline && baseline.meanThroughputPerHour > 0
+      ? ((candidate.meanThroughputPerHour - baseline.meanThroughputPerHour) /
+          baseline.meanThroughputPerHour) *
+        100
+      : null;
+  const tisDelta =
+    baseline && baseline.meanTimeInSystemMs > 0
+      ? ((candidate.meanTimeInSystemMs - baseline.meanTimeInSystemMs) /
+          baseline.meanTimeInSystemMs) *
+        100
+      : null;
+  const lines: string[] = [];
+  lines.push(
+    `### Combo · WIP ${String(candidate.bufferCapacity)} · ${summary.targetStationLabel} @${candidate.cycleMultiplier.toFixed(2)}×`,
+  );
+  lines.push("");
+  lines.push("| Metric | Value | Δ vs current baseline |");
+  lines.push("| --- | --- | --- |");
+  lines.push(
+    `| Throughput | ${fmt(candidate.meanThroughputPerHour)} /h | ${tputDelta === null ? "—" : `${tputDelta.toFixed(1)}%`} |`,
+  );
+  lines.push(
+    `| Time in system | ${ms(candidate.meanTimeInSystemMs)} | ${tisDelta === null ? "—" : `${tisDelta.toFixed(1)}%`} |`,
+  );
+  lines.push(`| Scrap rate | ${pct(candidate.meanScrapRate)} | — |`);
+  lines.push("");
+  lines.push(
+    `Means averaged across ${String(candidate.replications)} replications; deltas vs current canvas (WIP ${String(summary.currentCapacity)} @1.00×).`,
+  );
+  return lines.join("\n");
+}
+
+function CopyMarkdownButton({ onCopy }: { readonly onCopy: () => void }) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-7 gap-1.5 px-2 text-xs"
+      onClick={onCopy}
+      aria-label="Copy as markdown"
+    >
+      <Copy className="h-3.5 w-3.5" aria-hidden /> Copy markdown
+    </Button>
+  );
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // KPI drilldown
@@ -36,8 +191,15 @@ export function KpiDrilldown({ kpi, onClose }: KpiDrilldownProps) {
     >
       <SheetContent side="right" className="overflow-y-auto sm:max-w-md">
         <SheetHeader className="pr-7">
-          <SheetTitle className="flex items-center gap-2">
-            {kpi?.label ?? "KPI"} · per-replication detail
+          <SheetTitle className="flex items-center justify-between gap-2">
+            <span>{kpi?.label ?? "KPI"} · per-replication detail</span>
+            {kpi ? (
+              <CopyMarkdownButton
+                onCopy={() => {
+                  void writeToClipboard(kpiToMarkdown(kpi));
+                }}
+              />
+            ) : null}
           </SheetTitle>
         </SheetHeader>
         {kpi ? <KpiDrilldownBody kpi={kpi} /> : null}
@@ -61,16 +223,31 @@ function KpiDrilldownBody({ kpi }: { readonly kpi: ReplicationKpi }) {
   const min = values[0] ?? 0;
   const max = values[n - 1] ?? 0;
   const iqr = p75 - p25;
-  // Histogram
-  const BINS = Math.min(10, Math.max(3, Math.ceil(Math.sqrt(n))));
+  // VROL-839 — Freedman-Diaconis bin width:
+  //   bin_width = 2 · IQR(values) / n^(1/3)
+  //   bin_count = ceil((max - min) / bin_width), clamped to [3, 30].
+  // FD adapts to the spread of the data: heavy-tailed samples get fewer
+  // wider bins, tight clusters get more narrow ones. sqrt-n (the prior
+  // heuristic) overshoots for skewed distributions which is what we see
+  // most often in replication KPIs. For tiny n (≤ 8) histograms are
+  // mostly noise so we fall back to a strip plot of individual dots.
+  const useStrip = n <= 8;
   const span = Math.max(1e-9, max - min);
-  const binWidth = span / BINS;
-  const bins: number[] = Array.from({ length: BINS }, () => 0);
-  for (const v of values) {
-    const k = Math.min(BINS - 1, Math.floor((v - min) / binWidth));
-    bins[k] = (bins[k] ?? 0) + 1;
+  let BINS = 1;
+  let bins: number[] = [];
+  let maxBin = 1;
+  if (!useStrip) {
+    const fdWidth = iqr > 0 ? (2 * iqr) / Math.cbrt(Math.max(1, n)) : span / 3;
+    const rawCount = Math.ceil(span / Math.max(1e-9, fdWidth));
+    BINS = Math.min(30, Math.max(3, rawCount || 3));
+    const binWidth = span / BINS;
+    bins = Array.from({ length: BINS }, () => 0);
+    for (const v of values) {
+      const k = Math.min(BINS - 1, Math.floor((v - min) / binWidth));
+      bins[k] = (bins[k] ?? 0) + 1;
+    }
+    maxBin = Math.max(...bins, 1);
   }
-  const maxBin = Math.max(...bins, 1);
   // CI box
   const ciSpan = kpi.high95 - kpi.low95;
   const rangeSpan = max - min;
@@ -117,24 +294,56 @@ function KpiDrilldownBody({ kpi }: { readonly kpi: ReplicationKpi }) {
             fill="currentColor"
             fillOpacity={0.08}
           />
-          {bins.map((c, i) => {
-            const x = (i / BINS) * 220 + 1;
-            const w = 220 / BINS - 2;
-            const h = (c / maxBin) * 70;
-            const y = 78 - h;
-            return (
-              <rect
-                key={i}
-                x={x}
-                y={y}
-                width={w}
-                height={h}
-                fill="currentColor"
-                fillOpacity={0.7}
-                rx={1}
+          {useStrip ? (
+            // Strip plot: a single row of dots at each observation. Honest
+            // for n ≤ 8 where binning would invent visual structure.
+            <>
+              <line
+                x1={2}
+                x2={218}
+                y1={40}
+                y2={40}
+                stroke="currentColor"
+                strokeOpacity={0.25}
+                strokeWidth={0.5}
               />
-            );
-          })}
+              {values.map((v, i) => {
+                const cx = rangeSpan > 0 ? 2 + ((v - min) / rangeSpan) * 216 : 110;
+                return (
+                  <circle
+                    key={i}
+                    cx={cx}
+                    cy={40}
+                    r={3}
+                    fill="currentColor"
+                    fillOpacity={0.55}
+                    stroke="currentColor"
+                    strokeOpacity={0.9}
+                    strokeWidth={0.75}
+                  />
+                );
+              })}
+            </>
+          ) : (
+            bins.map((c, i) => {
+              const x = (i / BINS) * 220 + 1;
+              const w = 220 / BINS - 2;
+              const h = (c / maxBin) * 70;
+              const y = 78 - h;
+              return (
+                <rect
+                  key={i}
+                  x={x}
+                  y={y}
+                  width={w}
+                  height={h}
+                  fill="currentColor"
+                  fillOpacity={0.7}
+                  rx={1}
+                />
+              );
+            })
+          )}
           {/* Mean line */}
           <line
             x1={rangeSpan > 0 ? ((kpi.mean - min) / rangeSpan) * 220 : 110}
@@ -150,7 +359,9 @@ function KpiDrilldownBody({ kpi }: { readonly kpi: ReplicationKpi }) {
           <span className="font-mono tabular-nums">{fmt(max)}</span>
         </div>
         <p className="text-muted-foreground mt-1 text-[10px]">
-          Bars = histogram. Faded band = 95% CI. Vertical line = mean.
+          {useStrip
+            ? `Dots = ${String(n)} replication value${n === 1 ? "" : "s"}. Faded band = 95% CI. Vertical line = mean.`
+            : `Bars = Freedman-Diaconis histogram (${String(BINS)} bins). Faded band = 95% CI. Vertical line = mean.`}
         </p>
       </div>
       <div className="border-border rounded-md border p-3">
@@ -229,7 +440,16 @@ export function SensitivityDrilldown({
     >
       <SheetContent side="right" className="overflow-y-auto sm:max-w-md">
         <SheetHeader className="pr-7">
-          <SheetTitle>{row?.stationLabel ?? "Station"} · sensitivity detail</SheetTitle>
+          <SheetTitle className="flex items-center justify-between gap-2">
+            <span>{row?.stationLabel ?? "Station"} · sensitivity detail</span>
+            {row && summary ? (
+              <CopyMarkdownButton
+                onCopy={() => {
+                  void writeToClipboard(sensitivityToMarkdown(row, summary));
+                }}
+              />
+            ) : null}
+          </SheetTitle>
         </SheetHeader>
         {row && summary ? (
           <SensitivityDrilldownBody
@@ -398,8 +618,17 @@ export function HeatmapCellDrilldown({
     >
       <SheetContent side="right" className="overflow-y-auto sm:max-w-md">
         <SheetHeader className="pr-7">
-          <SheetTitle className="flex items-center gap-2">
-            <Crown className="h-4 w-4" aria-hidden /> Combo detail
+          <SheetTitle className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2">
+              <Crown className="h-4 w-4" aria-hidden /> Combo detail
+            </span>
+            {candidate && summary ? (
+              <CopyMarkdownButton
+                onCopy={() => {
+                  void writeToClipboard(heatmapCellToMarkdown(candidate, summary));
+                }}
+              />
+            ) : null}
           </SheetTitle>
         </SheetHeader>
         {candidate && summary ? (
