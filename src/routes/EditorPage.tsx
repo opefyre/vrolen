@@ -1049,9 +1049,10 @@ function EditorCanvas() {
     handleType: "source" | "target" | null;
   } | null>(null);
 
-  // VROL-738 — autosave indicator flash. Drives off the same effect as the
-  // saveGraph call so the chip pulses 'Saving…' for ~250ms after each change.
-  const [autosaveState, setAutosaveState] = useState<"saved" | "saving">("saved");
+  // Autosave indicator — we keep the chip but never flip to a 'saving'
+  // state. localStorage writes complete in well under a frame, so the
+  // 'Saving…' flash was perceived as nervous UI. See note on the
+  // saveGraph effect below.
   // VROL-739 — on first mount, if the persisted canvas was non-empty (i.e. we
   // actually recovered prior work), surface a one-shot toast with an Undo
   // affordance so the user can confirm or revert the restore.
@@ -1083,18 +1084,9 @@ function EditorCanvas() {
   ]);
   useEffect(() => {
     saveGraph({ nodes, edges });
-    let id: ReturnType<typeof setTimeout> | null = null;
-    // Defer the state update one microtask so it isn't synchronous with the
-    // commit (see react-hooks/set-state-in-effect rule).
-    queueMicrotask(() => {
-      setAutosaveState("saving");
-      id = setTimeout(() => {
-        setAutosaveState("saved");
-      }, 250);
-    });
-    return () => {
-      if (id !== null) clearTimeout(id);
-    };
+    // localStorage write is synchronous; there is no observable
+    // 'saving' window to indicate. Audit flagged the prior flash as
+    // nervous UI — see note above.
   }, [nodes, edges]);
 
   /**
@@ -2850,16 +2842,13 @@ function EditorCanvas() {
           <span className="text-foreground/80 truncate text-sm font-semibold">
             {activeScenarioName ?? "Untitled scenario"}
           </span>
-          {/* VROL-738 — autosave indicator. */}
+          {/* Autosave indicator. localStorage writes are instant so the
+              chip stays steady — flashing was perceived as nervous UI. */}
           <span
-            className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-              autosaveState === "saving"
-                ? "bg-sim-setup/20 text-sim-setup-foreground"
-                : "bg-muted text-muted-foreground"
-            }`}
+            className="bg-muted text-muted-foreground rounded-full px-1.5 py-0.5 text-[10px] font-medium"
             aria-live="polite"
           >
-            {autosaveState === "saving" ? "Saving…" : "Saved"}
+            Saved
           </span>
           {activeScenarioName && activeScenarioIsModified ? (
             <span
