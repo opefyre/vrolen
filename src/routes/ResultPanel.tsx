@@ -534,6 +534,7 @@ export function ResultPanel({
               summary={sensitivitySummary ?? null}
               running={sensitivityRunning === true}
               onRun={onRunSensitivity}
+              {...(onFocusStation ? { onFocusStation } : {})}
             />
           ) : null}
           {onRunWipCurve ? (

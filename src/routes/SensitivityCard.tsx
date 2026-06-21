@@ -19,9 +19,11 @@ interface SensitivityCardProps {
   readonly summary: SensitivitySummary | null;
   readonly running: boolean;
   readonly onRun: () => void;
+  /** Click a tornado row → pan + zoom canvas to that station. */
+  readonly onFocusStation?: (stationIdx: number) => void;
 }
 
-export function SensitivityCard({ summary, running, onRun }: SensitivityCardProps) {
+export function SensitivityCard({ summary, running, onRun, onFocusStation }: SensitivityCardProps) {
   return (
     <Card id="sensitivity">
       <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
@@ -46,14 +48,20 @@ export function SensitivityCard({ summary, running, onRun }: SensitivityCardProp
             cycle-time changes hurt or help throughput most.
           </p>
         ) : (
-          <SensitivityBody summary={summary} />
+          <SensitivityBody summary={summary} {...(onFocusStation ? { onFocusStation } : {})} />
         )}
       </CardContent>
     </Card>
   );
 }
 
-function SensitivityBody({ summary }: { readonly summary: SensitivitySummary }) {
+function SensitivityBody({
+  summary,
+  onFocusStation,
+}: {
+  readonly summary: SensitivitySummary;
+  readonly onFocusStation?: (stationIdx: number) => void;
+}) {
   if (summary.rows.length === 0) {
     return (
       <p className="text-muted-foreground text-sm">
@@ -90,11 +98,22 @@ function SensitivityBody({ summary }: { readonly summary: SensitivitySummary }) 
           const width = Math.abs(highPct - lowPct);
           const helpsWhenSlower = row.lowPerHour < row.highPerHour;
           const barColor = helpsWhenSlower ? "bg-sim-running/70" : "bg-sim-down/70";
+          const Wrapper = onFocusStation ? "button" : "div";
+          const wrapperProps = onFocusStation
+            ? {
+                type: "button" as const,
+                onClick: () => {
+                  onFocusStation(row.stationIdx);
+                },
+                className:
+                  "hover:bg-accent/40 flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-[11px] transition-colors",
+              }
+            : { className: "flex items-center gap-2 text-[11px]" };
           return (
-            <div
+            <Wrapper
               key={row.stationLabel}
-              className="flex items-center gap-2 text-[11px]"
-              title={`${row.stationLabel}: ${fmt(row.lowPerHour)}/h (low) → ${fmt(row.highPerHour)}/h (high)`}
+              {...wrapperProps}
+              title={`${row.stationLabel}: ${fmt(row.lowPerHour)}/h (low) → ${fmt(row.highPerHour)}/h (high)${onFocusStation ? " · click to locate on canvas" : ""}`}
             >
               <div className="text-foreground/80 w-28 shrink-0 truncate text-right font-medium">
                 {row.stationLabel}
@@ -115,7 +134,7 @@ function SensitivityBody({ summary }: { readonly summary: SensitivitySummary }) 
               >
                 {row.swingPct.toFixed(1)}%
               </div>
-            </div>
+            </Wrapper>
           );
         })}
       </div>
