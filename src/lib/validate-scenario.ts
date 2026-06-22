@@ -164,10 +164,66 @@ function checkReferenceIntegrity(
       });
     }
   });
+  // VROL-AUDIT — pre-compute the set of nodes that belong to the "active
+  // chain" that graph-to-chain will keep. We mirror graph-to-chain's logic:
+  //   - exclude decorative sticky / frame nodes
+  //   - find the in-degree-0 source(s); if exactly one, the chain is the set
+  //     of nodes reachable from it. Otherwise, the chain is the union of the
+  //     single longest path from each source (matches the linear fallback).
+  // A rework target outside this set is silently dropped → warn the user.
+  const stationNodes = nodes.filter((n) => n.type !== "sticky" && n.type !== "frame");
+  const outgoingForRework = new Map<string, string[]>();
+  const incomingForRework = new Map<string, string[]>();
+  for (const n of stationNodes) {
+    outgoingForRework.set(n.id, []);
+    incomingForRework.set(n.id, []);
+  }
+  for (const e of edges) {
+    if (!outgoingForRework.has(e.source) || !outgoingForRework.has(e.target)) continue;
+    outgoingForRework.get(e.source)!.push(e.target);
+    incomingForRework.get(e.target)!.push(e.source);
+  }
+  const sourceNodes = stationNodes.filter((n) => (incomingForRework.get(n.id) ?? []).length === 0);
+  const sinkNodes = stationNodes.filter((n) => (outgoingForRework.get(n.id) ?? []).length === 0);
+  // Single-source/single-sink: DAG branch — the chain is everything reachable
+  // from the source (matching graph-to-chain's topoSet).
+  // Otherwise: linear-fallback — chain is the longest linear sub-path from
+  // the picked source (matches the bestChain compute in graph-to-chain).
+  const activeChainSet = new Set<string>();
+  if (sourceNodes.length === 1 && sinkNodes.length === 1) {
+    const src = sourceNodes[0]!;
+    const stack = [src.id];
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      if (activeChainSet.has(cur)) continue;
+      activeChainSet.add(cur);
+      for (const next of outgoingForRework.get(cur) ?? []) {
+        if (!activeChainSet.has(next)) stack.push(next);
+      }
+    }
+  } else {
+    // Mirror graph-to-chain's bestChain: longest single-successor linear walk.
+    let bestChain: string[] = [];
+    for (const src of sourceNodes) {
+      const chain: string[] = [src.id];
+      let cur = src.id;
+      while (true) {
+        const outs = outgoingForRework.get(cur) ?? [];
+        if (outs.length !== 1) break;
+        const next = outs[0]!;
+        if (chain.includes(next)) break;
+        chain.push(next);
+        cur = next;
+      }
+      if (chain.length > bestChain.length) bestChain = chain;
+    }
+    for (const id of bestChain) activeChainSet.add(id);
+  }
   // Rework target references — node.data.reworkTargetNodeId must point at an existing node.
   nodes.forEach((n, i) => {
     const raw = (n.data as { reworkTargetNodeId?: unknown } | undefined)?.reworkTargetNodeId;
-    if (typeof raw === "string" && raw.length > 0 && !ids.has(raw)) {
+    if (typeof raw !== "string" || raw.length === 0) return;
+    if (!ids.has(raw)) {
       out.push({
         code: "REF_REWORK_TARGET_UNKNOWN",
         severity: "error",
@@ -175,6 +231,22 @@ function checkReferenceIntegrity(
         message: `Station "${n.id}" reworks to unknown node "${raw}"`,
         path: `nodes[${String(i)}].data.reworkTargetNodeId`,
         fix: `Pick a different rework target or remove the setting`,
+        nodeId: n.id,
+        fixAction: { kind: "clear-rework-target", nodeId: n.id },
+      });
+      return;
+    }
+    // VROL-AUDIT — target exists but isn't on the active chain. graph-to-chain
+    // silently drops it (line 307 of graph-to-chain.ts), so defects will be
+    // scrapped instead of rerouted. Warn (not error) so the user keeps running.
+    if (!activeChainSet.has(raw)) {
+      out.push({
+        code: "REF_REWORK_TARGET_OFFCHAIN",
+        severity: "warning",
+        category: "reference",
+        message: `Station "${n.id}"'s rework target "${raw}" isn't on the active chain — defects will be scrapped instead of rerouted`,
+        path: `nodes[${String(i)}].data.reworkTargetNodeId`,
+        fix: `Connect "${raw}" to the chain or clear the rework target`,
         nodeId: n.id,
         fixAction: { kind: "clear-rework-target", nodeId: n.id },
       });
@@ -269,23 +341,56 @@ function checkTopology(
   // has > 1 source or sink).
   const sources = stationNodes.filter((n) => (incoming.get(n.id) ?? []).length === 0);
   const sinks = stationNodes.filter((n) => (outgoing.get(n.id) ?? []).length === 0);
+  // VROL-AUDIT — multi-source / multi-sink graphs fall into the linear-fallback
+  // branch of graph-to-chain that emits only stationCycleTimes + labels, silently
+  // dropping capacity, defectRate, setupDistribution, changeoverMatrix,
+  // cycleByProduct, reworkTargetId, reworkPassLimit, and skills. Block the run
+  // with an explicit error so the user doesn't see silently-mis-computed KPIs.
   if (sources.length > 1) {
     out.push({
       code: "TOPO_MULTIPLE_SOURCES",
-      severity: "warning",
+      severity: "error",
       category: "topology",
-      message: `${String(sources.length)} stations have no input — engine accepts a single source`,
-      fix: `Connect the extra sources downstream of a shared input`,
+      message: `${String(sources.length)} stations have no input — the engine requires a single source so per-station settings (capacity, defect rate, setup, rework) aren't silently dropped`,
+      fix: `Connect the extra sources downstream of a shared input station`,
     });
   }
   if (sinks.length > 1) {
     out.push({
       code: "TOPO_MULTIPLE_SINKS",
-      severity: "warning",
+      severity: "error",
       category: "topology",
-      message: `${String(sinks.length)} stations have no output — engine accepts a single sink`,
-      fix: `Connect the extra sinks upstream of a shared output`,
+      message: `${String(sinks.length)} stations have no output — the engine requires a single sink so per-station settings (capacity, defect rate, setup, rework) aren't silently dropped`,
+      fix: `Connect the extra sinks upstream of a shared output station`,
     });
+  }
+  // VROL-AUDIT — even with one source + one sink, the DAG branch is skipped when
+  // the source can't reach the sink (disconnected subgraph). Catch that case too:
+  // some non-skipped stations would fall into the linear fallback. We approximate
+  // by checking that every station is on the source→sink reachable path.
+  if (sources.length === 1 && sinks.length === 1 && stationNodes.length > 1) {
+    const src = sources[0]!;
+    const sinkId = sinks[0]!.id;
+    const seen = new Set<string>([src.id]);
+    const stack = [src.id];
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      for (const next of outgoing.get(cur) ?? []) {
+        if (!seen.has(next)) {
+          seen.add(next);
+          stack.push(next);
+        }
+      }
+    }
+    if (!seen.has(sinkId)) {
+      out.push({
+        code: "TOPO_SOURCE_SINK_DISCONNECTED",
+        severity: "error",
+        category: "topology",
+        message: `Source "${src.id}" can't reach sink "${sinkId}" — connect them before running`,
+        fix: `Add edges so every station sits on a path from source to sink`,
+      });
+    }
   }
 }
 

@@ -28,7 +28,16 @@ export interface WarmupRecommendation {
 
 const MIN_SAMPLES_FOR_DETECTION = 6;
 const WINDOW_FRACTION = 0.15; // moving-average window = 15% of samples
-const STABILITY_TOL = 0.05; // 5% of long-run mean
+// VROL-AUDIT — tightened from 5% to 2% so the heuristic doesn't fire mid-ramp
+// on a fast linear ramp-up (Audit-15 / Finding C). 2% on a Bin(N, p) rate
+// matches the Welch-recommended "± few percent" threshold once N is large
+// enough for the moving average to smooth single-bucket noise.
+const STABILITY_TOL = 0.02; // 2% of long-run mean
+// VROL-AUDIT — require the moving average to stay inside the tolerance band
+// for K consecutive windows. A single window passing once during a ramp's
+// crossover gave a 1000 ms recommendation on a 5 s ramp; demanding three
+// in-band windows pushes the recommendation past the ramp's tail.
+const CONSECUTIVE_IN_BAND_REQUIRED = 3;
 
 export function detectWarmup(
   samples: readonly TimeseriesSample[],
@@ -74,16 +83,27 @@ export function detectWarmup(
 
   const w = Math.max(2, Math.floor(rates.length * WINDOW_FRACTION));
   // Forward-looking moving average — value at index i is the mean of
-  // rates[i .. i+w]. We find the earliest i where the MA stays within
-  // STABILITY_TOL of meanLambda for the rest of the series.
+  // rates[i .. i+w]. We find the earliest i where the MA enters the
+  // STABILITY_TOL band around meanLambda AND stays in-band for the next
+  // CONSECUTIVE_IN_BAND_REQUIRED windows.
   let steadyIdx = rates.length - 1;
+  let inBandRun = 0;
+  let runStartIdx = -1;
   for (let i = 0; i + w < rates.length; i++) {
     let sum = 0;
     for (let j = i; j < i + w; j++) sum += rates[j]!;
     const ma = sum / w;
-    if (Math.abs(ma - meanLambda) <= meanLambda * STABILITY_TOL) {
-      steadyIdx = i;
-      break;
+    const inBand = Math.abs(ma - meanLambda) <= meanLambda * STABILITY_TOL;
+    if (inBand) {
+      if (inBandRun === 0) runStartIdx = i;
+      inBandRun += 1;
+      if (inBandRun >= CONSECUTIVE_IN_BAND_REQUIRED) {
+        steadyIdx = runStartIdx;
+        break;
+      }
+    } else {
+      inBandRun = 0;
+      runStartIdx = -1;
     }
   }
 

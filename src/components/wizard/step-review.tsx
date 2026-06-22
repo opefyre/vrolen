@@ -1,19 +1,19 @@
 /**
- * VROL-820 — review step preview card.
+ * Step 8 — review + commit.
  *
- * Renders a two-column summary card:
- *   - Left: thumbnail-style summary lines (station count, products,
- *     arrival rate, realism) with a "Tweak section" jump link next to
- *     each line that takes the user back to the relevant step.
- *   - Right: a compact SVG mini-DAG (N circles in a row joined by
- *     arrows) sized to ~200x80, themed via the `--primary`,
- *     `--muted-foreground`, and `--border` CSS vars so it follows the
- *     light/dark theme.
+ * VROL-871 — two-column review:
+ *   - Left: summary list with "Tweak section" jumps back to the right step.
+ *   - Right: mini-DAG showing the authored graph (single source/sink hinted).
+ *   - Bottom: validation summary rolling up every upstream validator. The
+ *     wizard shell already gates Next on validateReview, but surfacing
+ *     errors here lets the user fix them inline.
  */
 
-import { Pencil } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Pencil } from "lucide-react";
 
-import type { WizardDraft } from "./wizard-types";
+import { meanOf } from "@/engine";
+
+import { STEP_VALIDATORS, type WizardDraft } from "./wizard-types";
 
 function fmtHorizon(ms: number): string {
   const h = ms / (60 * 60 * 1000);
@@ -22,24 +22,23 @@ function fmtHorizon(ms: number): string {
   return `${(h / 24).toFixed(0)} days`;
 }
 
-function realismLabel(level: WizardDraft["realism"]): string {
-  switch (level) {
-    case "simple":
-      return "Simple";
-    case "realistic":
-      return "Realistic";
-    case "stress":
-      return "Stress";
-  }
-}
-
 interface ReviewLineSpec {
   readonly label: string;
   readonly value: string;
-  /** Step index to jump back to when the user clicks "Tweak section". */
-  readonly stepIdx: 0 | 1 | 2 | 3;
+  /** Step index to jump back to. */
+  readonly stepIdx: number;
   readonly testId: string;
 }
+
+const STEP_LABELS = [
+  "Shape",
+  "Stations",
+  "Connections",
+  "Products",
+  "Realism",
+  "Arrivals",
+  "Run window",
+] as const;
 
 export function StepReview({
   draft,
@@ -48,45 +47,70 @@ export function StepReview({
   readonly draft: WizardDraft;
   readonly onJump: (idx: number) => void;
 }) {
-  const productCount = countProducts(draft);
-  const arrivalRatePerHour = Math.round(draft.arrivalsPerMin * 60);
+  const reps = draft.runWindow.replications;
+  const arrivalsLabel = draft.arrivals.enabled
+    ? `1 / ${String(Math.round(meanOf(draft.arrivals.interArrivalDist)))} ms`
+    : "Off";
+  const productsLabel = draft.productsEnabled
+    ? `${String(draft.products.length)} products`
+    : "Single part";
   const lines: readonly ReviewLineSpec[] = [
     {
-      label: "Station count",
+      label: "Topology",
+      value: draft.shapeKind.replace("-", " "),
+      stepIdx: 0,
+      testId: "review-shape",
+    },
+    {
+      label: "Stations",
       value: String(draft.stations.length),
       stepIdx: 1,
       testId: "review-stations",
     },
     {
+      label: "Connections",
+      value: String(draft.connections.length),
+      stepIdx: 2,
+      testId: "review-connections",
+    },
+    {
       label: "Products",
-      value: String(productCount),
-      stepIdx: 0,
+      value: productsLabel,
+      stepIdx: 3,
       testId: "review-products",
     },
     {
-      label: "Arrival rate",
-      value: `${String(arrivalRatePerHour)}/h`,
-      stepIdx: 2,
+      label: "Breakdowns",
+      value: draft.breakdowns.enabled ? "Stochastic" : "Off",
+      stepIdx: 4,
+      testId: "review-realism",
+    },
+    {
+      label: "Source",
+      value: arrivalsLabel,
+      stepIdx: 5,
       testId: "review-arrivals",
     },
     {
       label: "Run length",
-      value: fmtHorizon(draft.horizonMs),
-      stepIdx: 2,
+      value: fmtHorizon(draft.runWindow.horizonMs),
+      stepIdx: 6,
       testId: "review-horizon",
     },
     {
-      label: "Realism",
-      value: realismLabel(draft.realism),
-      stepIdx: 3,
-      testId: "review-realism",
+      label: "Replications",
+      value: String(reps),
+      stepIdx: 6,
+      testId: "review-replications",
     },
   ];
+  // Walk every upstream validator to surface aggregate problems.
+  const upstream = STEP_VALIDATORS.slice(0, -1).map((v) => v(draft));
+  const issues = upstream.filter((v) => !v.valid);
   return (
     <div className="space-y-3">
       <p className="text-foreground/80 text-sm">
-        Hit <strong>Run simulation</strong> and we&rsquo;ll show you throughput, bottlenecks, and
-        OEE in about 2 seconds.
+        Review the scenario, then hit <strong>Create scenario</strong> to mount it in the editor.
       </p>
       <div className="border-border bg-background/40 grid gap-3 rounded-md border p-3 sm:grid-cols-[1fr_auto]">
         <div className="space-y-2">
@@ -102,7 +126,9 @@ export function StepReview({
               >
                 <span className="text-muted-foreground">{line.label}</span>
                 <span className="flex items-center gap-2">
-                  <span className="text-foreground font-mono tabular-nums">{line.value}</span>
+                  <span className="text-foreground font-mono capitalize tabular-nums">
+                    {line.value}
+                  </span>
                   <button
                     type="button"
                     onClick={() => {
@@ -120,55 +146,117 @@ export function StepReview({
           </ul>
         </div>
         <div className="flex items-center justify-center sm:justify-end">
-          <MiniDag count={draft.stations.length} />
+          <MiniDag draft={draft} />
         </div>
+      </div>
+      <div
+        className={`border-border space-y-1 rounded-md border p-3 text-sm ${
+          issues.length === 0 ? "bg-sim-running/5" : "bg-sim-down/5"
+        }`}
+      >
+        {issues.length === 0 ? (
+          <div className="text-sim-running flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4" />
+            <span>Looks good — scenario is ready to commit.</span>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <div className="text-sim-down flex items-center gap-2 font-medium">
+              <AlertTriangle className="h-4 w-4" />
+              <span>{issues.length} step(s) still need attention.</span>
+            </div>
+            <ul className="space-y-0.5 text-xs">
+              {issues.map((v) => (
+                <li key={v.step}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onJump(v.step);
+                    }}
+                    className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
+                  >
+                    Step {String(v.step + 1)} · {STEP_LABELS[v.step] ?? "(step)"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 /**
- * "Products" is a rough proxy for distinct product types in the line.
- * The wizard doesn't model multi-product flows directly, so today we
- * use 1 unless the user has explicitly added differently-typed stations.
- * Counting unique stationType keys keeps the value meaningful for the
- * preset variations and degrades gracefully to 1 for the blank shape.
+ * VROL-871 — mini-DAG echoing the connection editor's preview. Uses the
+ * same column-based layout so review feels consistent with step 3.
  */
-function countProducts(draft: WizardDraft): number {
-  const types = new Set<string>();
-  draft.stations.forEach((s) => {
-    types.add(s.stationType);
-  });
-  return Math.max(1, types.size);
-}
-
-/**
- * VROL-820 — compact left-to-right DAG diagram. N circles, each linked
- * by an arrow. Colors use CSS vars so the SVG themes with the rest of
- * the app:
- *   - circle fill: var(--primary)
- *   - circle stroke: var(--border)
- *   - arrow stroke: var(--muted-foreground)
- *
- * Sizing: 200 wide × 80 tall. We clamp display to a max of 6 nodes so
- * the diagram never overflows; longer chains show "+N" on the trailing
- * node to communicate the truncation.
- */
-function MiniDag({ count }: { readonly count: number }) {
-  const width = 200;
-  const height = 80;
-  const maxNodes = 6;
-  const shown = Math.min(Math.max(1, count), maxNodes);
-  const overflow = Math.max(0, count - maxNodes);
+function MiniDag({ draft }: { readonly draft: WizardDraft }) {
+  const stations = draft.stations;
+  const connections = draft.connections;
+  const width = 220;
+  const height = 96;
   const padding = 16;
-  const innerWidth = width - padding * 2;
-  const step = shown === 1 ? 0 : innerWidth / (shown - 1);
-  const cy = height / 2;
-  const radius = 10;
+  const incoming = new Map<string, string[]>();
+  const outgoing = new Map<string, string[]>();
+  stations.forEach((s) => {
+    incoming.set(s.id, []);
+    outgoing.set(s.id, []);
+  });
+  connections.forEach((e) => {
+    incoming.get(e.targetId)?.push(e.sourceId);
+    outgoing.get(e.sourceId)?.push(e.targetId);
+  });
+  const col = new Map<string, number>();
+  const queue: string[] = [];
+  stations.forEach((s) => {
+    if ((incoming.get(s.id) ?? []).length === 0) {
+      col.set(s.id, 0);
+      queue.push(s.id);
+    }
+  });
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    if (!cur) break;
+    const curCol = col.get(cur) ?? 0;
+    (outgoing.get(cur) ?? []).forEach((next) => {
+      const prev = col.get(next);
+      const candidate = curCol + 1;
+      if (prev === undefined || candidate > prev) col.set(next, candidate);
+      queue.push(next);
+    });
+  }
+  stations.forEach((s) => {
+    if (!col.has(s.id)) col.set(s.id, 0);
+  });
+  const byColumn = new Map<number, string[]>();
+  stations.forEach((s) => {
+    const c = col.get(s.id) ?? 0;
+    const list = byColumn.get(c) ?? [];
+    list.push(s.id);
+    byColumn.set(c, list);
+  });
+  const cols = [...byColumn.keys()].sort((a, b) => a - b);
+  const maxCol = cols[cols.length - 1] ?? 0;
+  const stride = maxCol === 0 ? 0 : (width - padding * 2) / Math.max(1, maxCol);
+  const pos = new Map<string, { x: number; y: number }>();
+  cols.forEach((c) => {
+    const list = byColumn.get(c) ?? [];
+    const yStride = (height - padding * 2) / Math.max(1, list.length);
+    list.forEach((id, idx) => {
+      pos.set(id, {
+        x: padding + c * stride,
+        y: padding + yStride * idx + yStride / 2,
+      });
+    });
+  });
+  const radius = 8;
   return (
     <svg
       role="img"
-      aria-label={`Mini topology with ${String(count)} ${count === 1 ? "station" : "stations"}`}
+      aria-label={`Mini topology with ${String(stations.length)} ${
+        stations.length === 1 ? "station" : "stations"
+      }`}
       viewBox={`0 0 ${String(width)} ${String(height)}`}
       width={width}
       height={height}
@@ -187,45 +275,45 @@ function MiniDag({ count }: { readonly count: number }) {
           <path d="M0,0 L8,4 L0,8 z" fill="var(--muted-foreground)" />
         </marker>
       </defs>
-      {Array.from({ length: shown - 1 }).map((_, i) => {
-        const x1 = padding + step * i + radius;
-        const x2 = padding + step * (i + 1) - radius;
+      {connections.map((e, i) => {
+        const a = pos.get(e.sourceId);
+        const b = pos.get(e.targetId);
+        if (!a || !b) return null;
         return (
           <line
             key={`edge-${String(i)}`}
-            x1={x1}
-            y1={cy}
-            x2={x2}
-            y2={cy}
+            x1={a.x + radius}
+            y1={a.y}
+            x2={b.x - radius}
+            y2={b.y}
             stroke="var(--muted-foreground)"
             strokeWidth={1.5}
             markerEnd="url(#vrolen-wizard-dag-arrow)"
           />
         );
       })}
-      {Array.from({ length: shown }).map((_, i) => {
-        const cx = padding + step * i;
-        const isLast = i === shown - 1;
-        const label = isLast && overflow > 0 ? `+${String(overflow)}` : String(i + 1);
+      {stations.map((s, i) => {
+        const p = pos.get(s.id);
+        if (!p) return null;
         return (
-          <g key={`node-${String(i)}`}>
+          <g key={s.id}>
             <circle
-              cx={cx}
-              cy={cy}
+              cx={p.x}
+              cy={p.y}
               r={radius}
               fill="var(--primary)"
               stroke="var(--border)"
               strokeWidth={1.5}
             />
             <text
-              x={cx}
-              y={cy + 3}
+              x={p.x}
+              y={p.y + 3}
               textAnchor="middle"
               fontSize={9}
               fontWeight={600}
               fill="var(--primary-foreground)"
             >
-              {label}
+              {i + 1}
             </text>
           </g>
         );

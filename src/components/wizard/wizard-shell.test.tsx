@@ -84,6 +84,25 @@ describe("WizardShell (VROL-783) a11y focus management", () => {
     expect(title?.textContent).toMatch(/Shape/i);
   });
 
+  it("renders the rebuilt 8-step stepper (VROL-871)", () => {
+    render(<WizardShell open onClose={() => {}} onFinish={() => {}} />);
+    // Step 1 of 8 caption proves the new 8-step pipeline is wired.
+    expect(screen.getByText(/Step 1 of 8/i)).toBeInTheDocument();
+  });
+
+  it("the last step exposes Create scenario (not Run simulation) — VROL-871", async () => {
+    const { rerender } = render(<WizardShell open onClose={() => {}} onFinish={() => {}} />);
+    // Click the last stepper dot directly. Future steps are disabled, so we
+    // need to advance through each step using Next.
+    const user = userEvent.setup();
+    for (let i = 0; i < 7; i++) {
+      const next = screen.getByRole("button", { name: /Next/i });
+      await user.click(next);
+    }
+    expect(screen.getByRole("button", { name: /Create scenario/i })).toBeInTheDocument();
+    rerender(<WizardShell open={false} onClose={() => {}} onFinish={() => {}} />);
+  });
+
   it("Escape triggers the Save & exit path (persists draft + closes)", () => {
     const onClose = vi.fn();
     render(<WizardShell open onClose={onClose} onFinish={() => {}} />);

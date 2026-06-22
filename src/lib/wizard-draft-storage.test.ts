@@ -61,7 +61,12 @@ describe("wizard-draft-storage (VROL-820)", () => {
   });
 
   it("round-trips a saved draft", () => {
-    const draft = { ...defaultDraft(), arrivalsPerMin: 42, presetId: "assembly-cell" };
+    // VROL-871 — round-trip the rebuilt draft shape.
+    const draft = {
+      ...defaultDraft(),
+      shapeKind: "branching" as const,
+      runWindow: { ...defaultDraft().runWindow, replications: 7 },
+    };
     expect(saveWizardDraft(draft)).toBe(true);
     expect(hasWizardDraft()).toBe(true);
     expect(loadWizardDraft()).toEqual(draft);
@@ -84,8 +89,19 @@ describe("wizard-draft-storage (VROL-820)", () => {
     expect(loadWizardDraft()).toBeNull();
   });
 
+  it("returns null for the legacy v=1 schema (VROL-871 dropped it)", () => {
+    storage.setItem(
+      WIZARD_DRAFT_KEY,
+      JSON.stringify({ v: 1, savedAt: 0, draft: { presetId: "bottling-line" } }),
+    );
+    expect(loadWizardDraft()).toBeNull();
+  });
+
   it("returns null when the stored draft fails shape validation", () => {
-    storage.setItem(WIZARD_DRAFT_KEY, JSON.stringify({ v: 1, savedAt: 0, draft: { presetId: 5 } }));
+    storage.setItem(
+      WIZARD_DRAFT_KEY,
+      JSON.stringify({ v: 2, savedAt: 0, draft: { shapeKind: 5 } }),
+    );
     expect(loadWizardDraft()).toBeNull();
   });
 });

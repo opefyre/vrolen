@@ -114,6 +114,17 @@ export function CommandPalette({ onClose, actions }: CommandPaletteProps) {
     };
   }, [filtered, active, onClose]);
 
+  // Lock body scroll while the modal is open. The custom overlay isn't
+  // backed by shadcn/Radix Dialog so we don't get its scroll-lock for free.
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
   useEffect(() => {
     // Keep the active row in view.
     const el = listRef.current?.querySelector<HTMLElement>(`[data-cmd-idx="${String(active)}"]`);

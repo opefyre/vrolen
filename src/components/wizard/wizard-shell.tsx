@@ -32,8 +32,11 @@ import { saveWizardDraft } from "@/lib/wizard-draft-storage";
 import { toast } from "@/lib/toast";
 
 import { StepArrivals } from "./step-arrivals";
+import { StepConnections } from "./step-connections";
+import { StepProducts } from "./step-products";
 import { StepRealism } from "./step-realism";
 import { StepReview } from "./step-review";
+import { StepRunWindow } from "./step-run-window";
 import { StepShape } from "./step-shape";
 import { StepStations } from "./step-stations";
 import {
@@ -58,10 +61,13 @@ interface WizardShellProps {
 
 const STEPS: readonly { readonly title: string; readonly subtitle: string }[] = [
   { title: "Shape", subtitle: "Pick a starting topology" },
-  { title: "Stations", subtitle: "Rename + tune cycle times" },
-  { title: "Arrivals", subtitle: "Source rate + run length" },
-  { title: "Realism", subtitle: "How messy is the world?" },
-  { title: "Preview", subtitle: "Review and run" },
+  { title: "Stations", subtitle: "Author each station's parameters" },
+  { title: "Connections", subtitle: "Wire stations into a DAG" },
+  { title: "Products", subtitle: "Recipe + changeovers" },
+  { title: "Realism", subtitle: "Breakdowns, maintenance, workers" },
+  { title: "Arrivals", subtitle: "Source + materials" },
+  { title: "Run window", subtitle: "Horizon, warm-up, replications" },
+  { title: "Review", subtitle: "Confirm and create" },
 ];
 
 export function WizardShell(props: WizardShellProps) {
@@ -452,10 +458,16 @@ function StepBody({
     case 1:
       return <StepStations draft={draft} update={update} errors={errors} />;
     case 2:
-      return <StepArrivals draft={draft} update={update} errors={errors} />;
+      return <StepConnections draft={draft} update={update} errors={errors} />;
     case 3:
-      return <StepRealism draft={draft} setRealism={setRealism} errors={errors} />;
+      return <StepProducts draft={draft} update={update} errors={errors} />;
     case 4:
+      return <StepRealism draft={draft} update={update} setRealism={setRealism} errors={errors} />;
+    case 5:
+      return <StepArrivals draft={draft} update={update} errors={errors} />;
+    case 6:
+      return <StepRunWindow draft={draft} update={update} errors={errors} />;
+    case 7:
       return <StepReview draft={draft} onJump={onJump} />;
     default:
       return null;
@@ -497,7 +509,7 @@ function Footer({
       {isLast ? (
         <Button size="sm" onClick={onRun} className="gap-1.5">
           <Play className="h-3.5 w-3.5" />
-          Run simulation
+          Create scenario
         </Button>
       ) : (
         <Button

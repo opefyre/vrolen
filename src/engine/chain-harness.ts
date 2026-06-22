@@ -934,6 +934,12 @@ function* simulationStream(
   const sinkExecutor = executors[topology.sinkIdx];
   if (!sinkExecutor) throw new Error("chain harness invariant: no sink executor");
   sinkExecutor.onCompletion((event) => {
+    // VROL-AUDIT — sink completion fires for EVERY cycle (good, defective,
+    // Down/Maintenance scrap). Without this filter, result.completed and
+    // result.throughputLambda overcount by the sink's scrap rate. Skipping
+    // defectives here aligns result.completed with perStationCompleted[sinkIdx]
+    // (the engine's correctly-filtered station-level good-count).
+    if (event.defective) return;
     exits.push({ part: event.part, exitTimeMs: event.timeMs });
     if (perProductCompleted && event.part.productId !== undefined) {
       perProductCompleted.set(
@@ -1264,6 +1270,16 @@ function* simulationStream(
           executor.handleRepair(ev.timeMs);
           executor.attemptStart(ev.timeMs);
         }
+        break dispatch;
+      }
+      if (ev.payload.kind === "setup-complete") {
+        // VROL-AUDIT — without this branch, stations with setupTimeMs > 0 sit
+        // in Setup forever (per-station OEE shows availability=0, runTimeMs=0,
+        // Setup % = 100), even though cycle-complete still fires and throughput
+        // math survives. handleSetupComplete is a no-op when the SM isn't in
+        // Setup, so this is safe with capacity > 1 stations.
+        const sidx = stationIds.indexOf(ev.payload.stationId);
+        executors[sidx]?.handleSetupComplete(ev.timeMs);
         break dispatch;
       }
       if (ev.payload.kind !== "cycle-complete") break dispatch;

@@ -50,6 +50,20 @@ describe("validateScenario (VROL-86)", () => {
     expect(r.errors.find((e) => e.code === "REF_REWORK_TARGET_UNKNOWN")).toBeDefined();
   });
 
+  it("reference: rework target that exists but is off-chain is a warning (VROL-AUDIT)", () => {
+    // disconnected (no edges to/from) — exists in the node set but not in
+    // the reachable chain. graph-to-chain silently drops it.
+    const r = validateScenario(
+      [node("a"), node("b", { reworkTargetNodeId: "disconnected" }), node("disconnected")],
+      [edge("e", "a", "b")],
+      settings(),
+    );
+    const w = r.warnings.find((x) => x.code === "REF_REWORK_TARGET_OFFCHAIN");
+    expect(w).toBeDefined();
+    expect(w!.fixAction).toEqual({ kind: "clear-rework-target", nodeId: "b" });
+    expect(w!.message).toContain("scrapped");
+  });
+
   // ─── 3. Topology ───────────────────────────────────────────────────────────
   it("topology: orphan node (no edges) emits a warning", () => {
     const r = validateScenario(
@@ -76,13 +90,36 @@ describe("validateScenario (VROL-86)", () => {
     expect(r.warnings.find((w) => w.code === "TOPO_CYCLE_DETECTED")).toBeDefined();
   });
 
-  it("topology: multiple sources warn", () => {
+  it("topology: multiple sources are an error (VROL-AUDIT — silent feature drop)", () => {
     const r = validateScenario(
       [node("a"), node("b"), node("c")],
       [edge("e1", "a", "c"), edge("e2", "b", "c")],
       settings(),
     );
-    expect(r.warnings.find((w) => w.code === "TOPO_MULTIPLE_SOURCES")).toBeDefined();
+    const err = r.errors.find((e) => e.code === "TOPO_MULTIPLE_SOURCES");
+    expect(err).toBeDefined();
+    // Message must explain why this blocks (silent feature drop).
+    expect(err!.message).toMatch(/silently dropped/i);
+  });
+
+  it("topology: multiple sinks are an error (VROL-AUDIT — silent feature drop)", () => {
+    const r = validateScenario(
+      [node("source"), node("b"), node("c")],
+      [edge("e1", "source", "b"), edge("e2", "source", "c")],
+      settings(),
+    );
+    const err = r.errors.find((e) => e.code === "TOPO_MULTIPLE_SINKS");
+    expect(err).toBeDefined();
+    expect(err!.message).toMatch(/silently dropped/i);
+  });
+
+  it("topology: single-source/single-sink linear chain stays clean (VROL-AUDIT regression)", () => {
+    const r = validateScenario(
+      [node("a"), node("b"), node("c")],
+      [edge("e1", "a", "b"), edge("e2", "b", "c")],
+      settings(),
+    );
+    expect(r.errors.find((e) => e.category === "topology")).toBeUndefined();
   });
 
   // ─── 4. Resource feasibility ───────────────────────────────────────────────

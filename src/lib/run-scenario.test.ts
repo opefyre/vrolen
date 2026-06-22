@@ -49,4 +49,32 @@ describe("runScenario", () => {
     );
     expect("kind" in out && out.kind === "materials-no-selection").toBe(true);
   });
+
+  it("VROL-AUDIT: forwards samplerIntervalMs so result.samples populates", () => {
+    const out = runScenario(
+      baseNodes,
+      baseEdges,
+      { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000 },
+      null,
+    );
+    expect("result" in out).toBe(true);
+    if (!("result" in out)) return;
+    // Pre-fix: result.samples was undefined / empty regardless of the setting.
+    // After fix: every 1s a sample is emitted across the default 60s horizon.
+    expect(out.result.samples).toBeDefined();
+    expect((out.result.samples ?? []).length).toBeGreaterThan(10);
+  });
+
+  it("VROL-AUDIT: samplerIntervalMs=0 leaves samples empty (off)", () => {
+    const out = runScenario(
+      baseNodes,
+      baseEdges,
+      { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 0 },
+      null,
+    );
+    expect("result" in out).toBe(true);
+    if (!("result" in out)) return;
+    // Sampler off: engine returns no samples.
+    expect((out.result.samples ?? []).length).toBe(0);
+  });
 });

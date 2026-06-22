@@ -659,15 +659,32 @@ function EditorCanvas() {
     const wizard = takePendingWizardCommit();
     if (wizard) {
       const baseSettings = loadRunSettings();
-      const settings = {
+      const patch = wizard.settingsPatch;
+      const settings: RunSettings = {
         ...baseSettings,
-        horizonMs: wizard.settingsPatch.horizonMs,
-        interStationBufferCapacity: wizard.settingsPatch.interStationBufferCapacity,
-        source: { ...baseSettings.source, ...wizard.settingsPatch.source },
-        breakdowns: wizard.settingsPatch.breakdowns
-          ? { ...baseSettings.breakdowns, ...wizard.settingsPatch.breakdowns }
+        horizonMs: patch.horizonMs,
+        // VROL-871 — wizard now authors warmup, seed, replications too.
+        warmupMs: typeof patch.warmupMs === "number" ? patch.warmupMs : baseSettings.warmupMs,
+        seed: typeof patch.seed === "number" ? patch.seed : baseSettings.seed,
+        replications:
+          typeof patch.replications === "number"
+            ? Math.max(1, Math.min(50, Math.floor(patch.replications)))
+            : baseSettings.replications,
+        interStationBufferCapacity: patch.interStationBufferCapacity,
+        source: { ...baseSettings.source, ...patch.source },
+        breakdowns: patch.breakdowns
+          ? { ...baseSettings.breakdowns, ...patch.breakdowns }
           : baseSettings.breakdowns,
-        samplerIntervalMs: wizard.settingsPatch.samplerIntervalMs,
+        samplerIntervalMs: patch.samplerIntervalMs,
+        products: patch.products
+          ? { ...baseSettings.products, ...patch.products }
+          : baseSettings.products,
+        workers: patch.workers
+          ? { ...baseSettings.workers, ...patch.workers }
+          : baseSettings.workers,
+        materials: patch.materials
+          ? { ...baseSettings.materials, ...patch.materials }
+          : baseSettings.materials,
       };
       const nodesCopy = wizard.nodes.map((n) => ({ ...n, data: { ...n.data } }));
       const edgesCopy = wizard.edges.map((e) => ({ ...e }));
@@ -860,21 +877,19 @@ function EditorCanvas() {
   /** VROL-633 — Inspector advanced section collapsed by default. */
   const [inspectorAdvancedOpen, setInspectorAdvancedOpen] = useState<boolean>(false);
   /** VROL-635 — Drawer optional-sections expanded state (closed by default).
-   *  VROL-297 — schedule added. */
+   *  VROL-AUDIT — schedule key removed when the accordion was deleted. */
   const [drawerSections, setDrawerSections] = useState<{
     materials: boolean;
     products: boolean;
     workers: boolean;
     breakdowns: boolean;
     source: boolean;
-    schedule: boolean;
   }>({
     materials: false,
     products: false,
     workers: false,
     breakdowns: false,
     source: false,
-    schedule: false,
   });
   const toggleDrawerSection = useCallback((key: keyof typeof drawerSections) => {
     setDrawerSections((s) => ({ ...s, [key]: !s[key] }));
@@ -5315,14 +5330,16 @@ function EditorCanvas() {
       </Sheet>
 
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <SheetContent side="right" className="w-[24rem] sm:max-w-md">
-          <SheetHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pr-7">
-            <div className="space-y-1">
-              <SheetTitle>Run settings</SheetTitle>
-              <SheetDescription>Applied to every Run. Persisted across reloads.</SheetDescription>
-            </div>
-            {/* VROL-712 — copy / paste settings JSON. */}
-            <div className="flex shrink-0 gap-1">
+        <SheetContent
+          side="right"
+          className="flex w-[24rem] flex-col gap-0 overflow-y-auto sm:max-w-md"
+        >
+          <SheetHeader className="space-y-1 pr-10">
+            <SheetTitle>Run settings</SheetTitle>
+            <SheetDescription>Applied to every Run. Persisted across reloads.</SheetDescription>
+            {/* VROL-712 — copy / paste settings JSON. Placed under the title
+                so they can't collide with the shadcn close (X) button. */}
+            <div className="flex gap-1 pt-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -6467,221 +6484,13 @@ function EditorCanvas() {
               ) : null}
             </Accordion>
 
-            {/* VROL-297 — Line-wide schedule editor. */}
-            <Accordion
-              title="Schedule"
-              icon={<Hourglass className="h-4 w-4" />}
-              status={
-                <AccordionStatus tone={settings.schedule?.enabled ? "on" : "off"}>
-                  {settings.schedule?.enabled
-                    ? `${String((settings.schedule.breaks?.length ?? 0) + (settings.schedule.maintenanceWindows?.length ?? 0))} entries`
-                    : "Off"}
-                </AccordionStatus>
-              }
-              expanded={drawerSections.schedule}
-              onToggle={() => {
-                toggleDrawerSection("schedule");
-              }}
-            >
-              <label className="flex items-center gap-2 text-sm font-medium">
-                <input
-                  type="checkbox"
-                  checked={settings.schedule?.enabled ?? false}
-                  onChange={(e) => {
-                    setSettings((s) => ({
-                      ...s,
-                      schedule: {
-                        enabled: e.target.checked,
-                        breaks: s.schedule?.breaks ?? [],
-                        maintenanceWindows: s.schedule?.maintenanceWindows ?? [],
-                      },
-                    }));
-                  }}
-                  className="accent-sim-running h-4 w-4"
-                />
-                Enable line-wide schedule
-              </label>
-              <p className="text-muted-foreground text-xs">
-                Global breaks + maintenance windows for the whole line. Per-station maintenance
-                lives on each station's inspector.
-              </p>
-              {settings.schedule?.enabled ? (
-                <div className="space-y-3">
-                  <div>
-                    <div className="text-muted-foreground mb-1 flex items-center justify-between text-xs font-medium">
-                      <span>Breaks ({String(settings.schedule.breaks.length)})</span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-6 text-xs"
-                        onClick={() => {
-                          setSettings((s) => ({
-                            ...s,
-                            schedule: {
-                              ...(s.schedule ?? {
-                                enabled: true,
-                                breaks: [],
-                                maintenanceWindows: [],
-                              }),
-                              breaks: [
-                                ...(s.schedule?.breaks ?? []),
-                                { atMs: 30 * 60_000, durationMs: 15 * 60_000, label: "Break" },
-                              ],
-                            },
-                          }));
-                        }}
-                      >
-                        + Break
-                      </Button>
-                    </div>
-                    <ul className="space-y-1 text-xs">
-                      {settings.schedule.breaks.map((b, idx) => (
-                        <li
-                          key={`brk-${String(idx)}`}
-                          className="bg-card border-border flex items-center gap-2 rounded-md border p-2"
-                        >
-                          <Input
-                            type="text"
-                            value={b.label}
-                            onChange={(e) => {
-                              const label = e.target.value;
-                              setSettings((s) => ({
-                                ...s,
-                                schedule: {
-                                  ...(s.schedule ?? {
-                                    enabled: true,
-                                    breaks: [],
-                                    maintenanceWindows: [],
-                                  }),
-                                  breaks: (s.schedule?.breaks ?? []).map((x, i) =>
-                                    i === idx ? { ...x, label } : x,
-                                  ),
-                                },
-                              }));
-                            }}
-                            className="h-7 flex-1 text-xs"
-                          />
-                          <span className="text-muted-foreground font-mono tabular-nums">
-                            @{(b.atMs / 60_000).toFixed(0)}m · {(b.durationMs / 60_000).toFixed(0)}m
-                          </span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            aria-label="Remove break"
-                            onClick={() => {
-                              setSettings((s) => ({
-                                ...s,
-                                schedule: {
-                                  ...(s.schedule ?? {
-                                    enabled: true,
-                                    breaks: [],
-                                    maintenanceWindows: [],
-                                  }),
-                                  breaks: (s.schedule?.breaks ?? []).filter((_, i) => i !== idx),
-                                },
-                              }));
-                            }}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground mb-1 flex items-center justify-between text-xs font-medium">
-                      <span>
-                        Maintenance ({String(settings.schedule.maintenanceWindows.length)})
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-6 text-xs"
-                        onClick={() => {
-                          setSettings((s) => ({
-                            ...s,
-                            schedule: {
-                              ...(s.schedule ?? {
-                                enabled: true,
-                                breaks: [],
-                                maintenanceWindows: [],
-                              }),
-                              maintenanceWindows: [
-                                ...(s.schedule?.maintenanceWindows ?? []),
-                                {
-                                  atMs: 60 * 60_000,
-                                  durationMs: 30 * 60_000,
-                                  label: "Planned maintenance",
-                                },
-                              ],
-                            },
-                          }));
-                        }}
-                      >
-                        + Window
-                      </Button>
-                    </div>
-                    <ul className="space-y-1 text-xs">
-                      {settings.schedule.maintenanceWindows.map((m, idx) => (
-                        <li
-                          key={`mnt-${String(idx)}`}
-                          className="bg-card border-border flex items-center gap-2 rounded-md border p-2"
-                        >
-                          <Input
-                            type="text"
-                            value={m.label}
-                            onChange={(e) => {
-                              const label = e.target.value;
-                              setSettings((s) => ({
-                                ...s,
-                                schedule: {
-                                  ...(s.schedule ?? {
-                                    enabled: true,
-                                    breaks: [],
-                                    maintenanceWindows: [],
-                                  }),
-                                  maintenanceWindows: (s.schedule?.maintenanceWindows ?? []).map(
-                                    (x, i) => (i === idx ? { ...x, label } : x),
-                                  ),
-                                },
-                              }));
-                            }}
-                            className="h-7 flex-1 text-xs"
-                          />
-                          <span className="text-muted-foreground font-mono tabular-nums">
-                            @{(m.atMs / 60_000).toFixed(0)}m · {(m.durationMs / 60_000).toFixed(0)}m
-                          </span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            aria-label="Remove maintenance window"
-                            onClick={() => {
-                              setSettings((s) => ({
-                                ...s,
-                                schedule: {
-                                  ...(s.schedule ?? {
-                                    enabled: true,
-                                    breaks: [],
-                                    maintenanceWindows: [],
-                                  }),
-                                  maintenanceWindows: (s.schedule?.maintenanceWindows ?? []).filter(
-                                    (_, i) => i !== idx,
-                                  ),
-                                },
-                              }));
-                            }}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              ) : null}
-            </Accordion>
+            {/* VROL-297 — Line-wide schedule editor REMOVED in VROL-AUDIT (data-flow audit).
+                The accordion wrote to settings.schedule.breaks / settings.schedule.maintenanceWindows
+                but NO run path read them — EditorPage.handleRun and runScenario both ignored
+                the field, so users got identical results with or without the schedule enabled.
+                Fix 5 path (b) per the audit: remove the UI rather than wire it up. Follow-up:
+                re-introduce as a properly-wired feature that fans out to per-station
+                maintenance windows + worker breaks (or applies natively in the engine). */}
 
             <Accordion
               title="Breakdowns"
@@ -6840,7 +6649,31 @@ function EditorCanvas() {
           const commit = commitWizardDraft(draft);
           setNodes(commit.nodes);
           setEdges(commit.edges);
-          setSettings((s) => ({ ...s, ...commit.settingsPatch }));
+          // VROL-871 — merge the rebuilt wizard patch with the same care the
+          // landing-page handoff applies: spread source/breakdowns onto the
+          // base block so unrelated keys (e.g. animateFlow) stay put.
+          setSettings((s) => {
+            const patch = commit.settingsPatch;
+            return {
+              ...s,
+              horizonMs: patch.horizonMs,
+              warmupMs: typeof patch.warmupMs === "number" ? patch.warmupMs : s.warmupMs,
+              seed: typeof patch.seed === "number" ? patch.seed : s.seed,
+              replications:
+                typeof patch.replications === "number"
+                  ? Math.max(1, Math.min(50, Math.floor(patch.replications)))
+                  : s.replications,
+              interStationBufferCapacity: patch.interStationBufferCapacity,
+              source: { ...s.source, ...patch.source },
+              breakdowns: patch.breakdowns
+                ? { ...s.breakdowns, ...patch.breakdowns }
+                : s.breakdowns,
+              samplerIntervalMs: patch.samplerIntervalMs,
+              products: patch.products ? { ...s.products, ...patch.products } : s.products,
+              workers: patch.workers ? { ...s.workers, ...patch.workers } : s.workers,
+              materials: patch.materials ? { ...s.materials, ...patch.materials } : s.materials,
+            };
+          });
           setWizardOpen(false);
           toast.success("Scenario created", {
             description: `${String(commit.nodes.filter((n) => n.type !== "sticky" && n.type !== "frame").length)} stations · ${mode === "run" ? "running…" : "ready to run"}`,

@@ -5,23 +5,22 @@
  * via its existing canvas-persistence flow. We piggyback on that: we
  * write a special pending-scenario record, then redirect; on mount the
  * editor checks for the pending record, applies it, and clears it.
+ *
+ * VROL-871 — widened the settings patch to carry the rebuilt wizard's
+ * full payload (run window, products, workers, materials) so the
+ * editor mounts a complete scenario, not a half-authored one.
  */
 
 import type { Edge, Node } from "@xyflow/react";
+
+import type { WizardCommit } from "@/components/wizard/wizard-types";
 
 const PENDING_KEY = "vrolen.wizard-pending";
 
 export interface WizardPending {
   readonly nodes: Node[];
   readonly edges: Edge[];
-  readonly settingsPatch: {
-    horizonMs: number;
-    interStationBufferCapacity: number;
-    source: { enabled: boolean; intervalMs: number; batchSize: number };
-    breakdowns?: { enabled: boolean; mtbfMs: number; mttrMs: number };
-    defaultDefectRate: number;
-    samplerIntervalMs: number;
-  };
+  readonly settingsPatch: WizardCommit["settingsPatch"];
   readonly autorun: boolean;
 }
 

@@ -151,6 +151,12 @@ export function runScenario(
             },
           }
         : {}),
+      // VROL-AUDIT — without this, comparison runs return result.samples = []
+      // and the throughput-over-time + WIP-curve cards render flat. Mirrors
+      // EditorPage.handleRun (EditorPage.tsx ~1764).
+      ...(settings.samplerIntervalMs > 0
+        ? { sampler: { intervalMs: settings.samplerIntervalMs } }
+        : {}),
     });
 
     return {

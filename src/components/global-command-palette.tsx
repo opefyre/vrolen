@@ -158,9 +158,14 @@ export function GlobalCommandPalette({ children }: { children: ReactNode }) {
 
   // Cmd+K / Ctrl+K global handler. Ignored in editable targets (forms,
   // contentEditable) so typing in an input doesn't hijack focus.
+  //
+  // On /editor the editor mounts its OWN richer command palette + Cmd+K
+  // listener. Both would otherwise fire and TWO modals would open. Defer
+  // to the route-local one when we're on /editor.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== "k" || (!e.metaKey && !e.ctrlKey)) return;
+      if (typeof window !== "undefined" && window.location.pathname === "/editor") return;
       const t = e.target as HTMLElement | null;
       if (t) {
         const tag = t.tagName;
