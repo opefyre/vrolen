@@ -8,6 +8,7 @@ import {
   deleteScenario,
   listScenarios,
   loadScenario,
+  markScenarioUsed,
   saveScenario,
 } from "./scenario-store";
 
@@ -91,6 +92,29 @@ describe("scenario-store", () => {
     expect(deleteScenario("toDelete")).toBe(true);
     expect(loadScenario("toDelete")).toBeNull();
     expect(deleteScenario("toDelete")).toBe(false); // already gone
+  });
+
+  it("markScenarioUsed bumps lastUsedAtMs (VROL-789)", () => {
+    saveScenario("alpha", {
+      graph: { nodes: sampleNodes, edges: sampleEdges },
+      settings: DEFAULT_RUN_SETTINGS,
+      savedAtMs: 100,
+    });
+    saveScenario("beta", {
+      graph: { nodes: sampleNodes, edges: sampleEdges },
+      settings: DEFAULT_RUN_SETTINGS,
+      savedAtMs: 200,
+    });
+    const before = listScenarios();
+    const alphaBefore = before.find((s) => s.name === "alpha");
+    expect(alphaBefore?.lastUsedAtMs).toBeTypeOf("number");
+    // Pass a strictly-larger stamp to prove the value is what we wrote.
+    const stamp = (alphaBefore?.lastUsedAtMs ?? 0) + 10_000;
+    expect(markScenarioUsed("alpha", stamp)).toBe(true);
+    const after = listScenarios();
+    const alphaAfter = after.find((s) => s.name === "alpha");
+    expect(alphaAfter?.lastUsedAtMs).toBe(stamp);
+    expect(markScenarioUsed("missing")).toBe(false);
   });
 
   it("trims surrounding whitespace from names on save", () => {

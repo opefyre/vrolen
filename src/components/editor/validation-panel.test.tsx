@@ -95,4 +95,33 @@ describe("ValidationPanel (VROL-304)", () => {
     render(<ValidationPanel result={result} onIssueFocus={() => {}} onIssueFix={() => {}} />);
     expect(screen.queryByTestId("fix-button")).toBeNull();
   });
+
+  // VROL-780 — panel must stay mounted / render-stable across changing
+  // validation-state props. Re-rendering with a new `result` object should
+  // update content in place, not throw away DOM nodes. We verify with a stable
+  // ref on a child node.
+  it("re-renders content in place when result prop changes (VROL-780)", () => {
+    const initial: ValidationResult = {
+      errors: [errIssue({ message: "First issue" })],
+      warnings: [],
+    };
+    const { rerender, container } = render(
+      <ValidationPanel result={initial} onIssueFocus={() => {}} />,
+    );
+    const rootBefore = container.firstElementChild;
+    expect(rootBefore?.textContent).toContain("First issue");
+    rerender(
+      <ValidationPanel
+        result={{ errors: [], warnings: [warnIssue({ message: "Now a warning" })] }}
+        onIssueFocus={() => {}}
+      />,
+    );
+    const rootAfter = container.firstElementChild;
+    // Same root DOM node — React reconciled, didn't remount.
+    expect(rootAfter).toBe(rootBefore);
+    expect(rootAfter?.textContent).toContain("Now a warning");
+    // And again to the empty state — still the same component tree.
+    rerender(<ValidationPanel result={{ errors: [], warnings: [] }} onIssueFocus={() => {}} />);
+    expect(container.textContent).toMatch(/No validation issues/i);
+  });
 });

@@ -27,7 +27,7 @@ import {
   Workflow,
   XCircle,
 } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ComponentType, type ReactNode, useEffect, useRef, useState } from "react";
 
 export interface ContextMenuTarget {
   readonly kind: "node" | "pane" | "edge";
@@ -40,6 +40,19 @@ export interface ContextMenuTarget {
   readonly headerSubtitle?: string;
   readonly clientX: number;
   readonly clientY: number;
+}
+
+/**
+ * VROL-775 — items the pane right-click menu renders under an "Insert"
+ * section header. Each entry inserts a node at the right-click position
+ * via the `run` callback. The icon is a lucide component so it stays
+ * consistent with the rest of the menu.
+ */
+export interface ContextMenuInsertItem {
+  readonly id: string;
+  readonly label: string;
+  readonly icon: ComponentType<{ className?: string }>;
+  readonly run: () => void;
 }
 
 interface ContextMenuProps {
@@ -58,6 +71,13 @@ interface ContextMenuProps {
   readonly onDeleteEdge?: () => void;
   readonly onRename?: () => void;
   readonly hasClipboard: boolean;
+  /**
+   * VROL-775 — when the menu opens on the empty pane, render this list of
+   * insert actions at the top under an "Insert" section header. Empty list
+   * (or omitted) hides the section entirely so node + edge variants are
+   * unaffected.
+   */
+  readonly insertItems?: readonly ContextMenuInsertItem[];
 }
 
 interface MenuItemSpec {
@@ -161,6 +181,7 @@ export function CanvasContextMenu({
   onDeleteEdge,
   onRename,
   hasClipboard,
+  insertItems,
 }: ContextMenuProps) {
   // Build the section list from the target kind so all rendering logic
   // stays uniform (no nested ternaries in JSX).
@@ -260,16 +281,39 @@ export function CanvasContextMenu({
             },
           ]
         : [
+            // VROL-775 — pane right-click Insert section. Skipped when no
+            // items are passed in so older callers still see the prior menu.
+            ...(insertItems && insertItems.length > 0
+              ? [
+                  {
+                    id: "insert",
+                    label: "Insert",
+                    items: insertItems.map((it) => ({
+                      id: `insert-${it.id}`,
+                      icon: <it.icon className="h-3.5 w-3.5" />,
+                      label: it.label,
+                      run: it.run,
+                    })),
+                  } satisfies MenuSection,
+                ]
+              : []),
             {
               id: "clipboard",
               items: [
-                {
-                  id: "paste",
-                  icon: <ClipboardPaste className="h-3.5 w-3.5" />,
-                  label: "Paste",
-                  shortcut: "⌘V",
-                  run: hasClipboard ? onPaste : () => {},
-                },
+                // VROL-775 — Paste only when there's something on the clipboard.
+                // Old build rendered a permanently-greyed Paste row; the spec
+                // calls for it to disappear when empty.
+                ...(hasClipboard
+                  ? [
+                      {
+                        id: "paste",
+                        icon: <ClipboardPaste className="h-3.5 w-3.5" />,
+                        label: "Paste",
+                        shortcut: "⌘V",
+                        run: onPaste,
+                      },
+                    ]
+                  : []),
                 {
                   id: "select-all",
                   icon: <MousePointerSquareDashed className="h-3.5 w-3.5" />,

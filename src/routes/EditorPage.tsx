@@ -35,12 +35,12 @@ import {
   applyNodeChanges,
   reconnectEdge,
   useReactFlow,
+  useStore,
   useViewport,
 } from "@xyflow/react";
 import {
   Boxes,
   CheckCircle2,
-  ChevronDown,
   CircleDot,
   Combine,
   ConciergeBell,
@@ -48,19 +48,26 @@ import {
   Download,
   AlertCircle,
   AlertTriangle,
+  ArrowLeftRight,
   Factory,
+  Frame as FrameIcon,
   Redo2,
+  Repeat,
+  RotateCcw,
   Undo2,
   FolderOpen,
   HelpCircle,
   Hourglass,
   Loader2,
+  Lock as LockIcon,
   MoreHorizontal,
   Package,
   PackageCheck,
   Play,
   Save,
   Settings2,
+  StickyNote,
+  Tag,
   Trash2,
   Truck,
   Wand2,
@@ -131,7 +138,6 @@ import {
   validateScenario,
   type ValidationIssue,
 } from "@/lib/validate-scenario";
-import { EmptyState } from "@/components/EmptyState";
 import { BulkInspector } from "@/components/editor/bulk-inspector";
 import { CustomParamsField } from "@/components/editor/custom-params-field";
 import type { CustomParam } from "@/lib/custom-params";
@@ -154,6 +160,7 @@ import {
   deleteScenario,
   listScenarios,
   loadScenario,
+  markScenarioUsed,
   saveScenario,
   setScenarioNotes,
   type ScenarioSummary,
@@ -166,6 +173,7 @@ import { toast } from "@/lib/toast";
 import { PlaybackController } from "@/components/editor/playback-controller";
 import { CanvasControls } from "@/components/editor/canvas-controls";
 import { NonStationInspector } from "@/components/editor/non-station-inspector";
+import { ScenariosList } from "@/components/editor/scenarios-list";
 import { Coach } from "@/components/editor/coach";
 import { buildCoachTips } from "@/lib/coach-tips";
 import {
@@ -395,6 +403,30 @@ function StationNode({ data, selected, id }: NodeProps) {
               : playbackState === "Maintenance"
                 ? "bg-sim-maintenance"
                 : "bg-sim-idle";
+  // VROL-802 — outer state ring tint. Sits OUTSIDE the node border so it
+  // stays legible against a busy canvas (the existing playbackTint only
+  // shades the body interior).
+  const playbackRingBorder =
+    playbackState === "Running"
+      ? "border-sim-running"
+      : playbackState === "Starved"
+        ? "border-sim-starved"
+        : playbackState === "BlockedOut"
+          ? "border-sim-blocked"
+          : playbackState === "Down"
+            ? "border-sim-down"
+            : playbackState === "Setup"
+              ? "border-sim-setup"
+              : playbackState === "Maintenance"
+                ? "border-sim-maintenance"
+                : playbackState
+                  ? "border-sim-idle"
+                  : "";
+  // VROL-802 — pull the live canvas zoom so we can collapse the badge row
+  // + cycle-time line below 0.6× (illegible past that point and just
+  // smears the canvas). useStore reads s.transform[2], the zoom factor.
+  const zoom = useStore((s: { transform: readonly [number, number, number] }) => s.transform[2]);
+  const isLowZoom = zoom < 0.6;
 
   return (
     <div
@@ -406,9 +438,19 @@ function StationNode({ data, selected, id }: NodeProps) {
           : "border-border hover:shadow-md"
       } ${playbackTint ? `ring-2 ${playbackTint}` : ""}`}
     >
+      {/* VROL-802 — outer 2px state ring. Sits OUTSIDE the node border so
+          the playback state stays readable on a busy canvas. The inner
+          playbackTint shades the body; this draws the outline. */}
+      {playbackRingBorder ? (
+        <span
+          data-testid="station-state-ring"
+          aria-hidden
+          className={`pointer-events-none absolute -inset-[3px] rounded-[10px] border-2 ${playbackRingBorder}`}
+        />
+      ) : null}
       {playbackState ? (
         <span
-          className={`absolute -top-1 right-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${playbackDotColor} text-white shadow-sm`}
+          className={`absolute -top-1 right-1 z-10 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${playbackDotColor} text-white shadow-sm`}
           aria-label={`Currently ${playbackState}`}
         >
           <span
@@ -438,16 +480,16 @@ function StationNode({ data, selected, id }: NodeProps) {
         </span>
       ) : null}
       {/* Lock badge — set via right-click → Lock. The node's draggable
-          flag is also flipped so React Flow refuses to move it. */}
+          flag is also flipped so React Flow refuses to move it.
+          VROL-802 — emoji swapped for lucide Lock so the badge matches
+          the rest of the iconography. */}
       {isLocked ? (
         <span
-          className="bg-muted text-muted-foreground absolute -right-2 -bottom-2 z-10 rounded-full p-1 shadow-sm ring-2 ring-white"
+          className="bg-muted text-muted-foreground absolute -right-2 -bottom-2 z-10 inline-flex items-center justify-center rounded-full p-1 shadow-sm ring-2 ring-white"
           aria-label="Locked"
           title="Locked. Right-click → Unlock to move."
         >
-          <span aria-hidden className="text-[9px]">
-            🔒
-          </span>
+          <LockIcon aria-hidden className="h-2.5 w-2.5" />
         </span>
       ) : null}
       {/* Four side handles — Miro-like. ConnectionMode.Loose lets each
@@ -525,8 +567,9 @@ function StationNode({ data, selected, id }: NodeProps) {
         )}
       </div>
       {/* VROL-776 — cycle-time mean readout. Hidden when type is buffer /
-          input / output or when no distribution is configured. */}
-      {showCycleMean ? (
+          input / output or when no distribution is configured.
+          VROL-802 — also hidden below 0.6× zoom (text becomes illegible). */}
+      {showCycleMean && !isLowZoom ? (
         <div
           className="text-muted-foreground mt-0.5 pl-9 font-mono text-[10px] tabular-nums"
           title="Mean cycle time"
@@ -534,15 +577,22 @@ function StationNode({ data, selected, id }: NodeProps) {
           {formatCycleMean(cycleMeanMs)}
         </div>
       ) : null}
-      {maintenanceCount +
+      {/* VROL-802 — emoji glyphs swapped for lucide icons so the badges
+          match the rest of the editor iconography. Whole row collapses
+          below 0.6× zoom — past that point the icons just smear. */}
+      {!isLowZoom &&
+      maintenanceCount +
         skillCount +
         (hasSetup ? 1 : 0) +
         (hasMatrix ? 1 : 0) +
         (hasRework ? 1 : 0) +
         (hasParallel ? 1 : 0) +
         (isCustom ? 1 : 0) >
-      0 ? (
-        <div className="text-muted-foreground mt-1.5 flex flex-wrap gap-1 text-[10px]">
+        0 ? (
+        <div
+          data-testid="station-badges"
+          className="text-muted-foreground mt-1.5 flex flex-wrap gap-1 text-[10px]"
+        >
           {isCustom ? (
             <span
               className="bg-muted text-foreground rounded-full px-1.5 py-0.5"
@@ -552,28 +602,45 @@ function StationNode({ data, selected, id }: NodeProps) {
             </span>
           ) : null}
           {maintenanceCount > 0 ? (
-            <span className="bg-muted rounded-full px-1.5 py-0.5" title="Maintenance windows">
-              🛠 {maintenanceCount}
+            <span
+              className="bg-muted inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5"
+              title="Maintenance windows"
+            >
+              <Wrench aria-hidden className="h-2.5 w-2.5" />
+              {maintenanceCount}
             </span>
           ) : null}
           {skillCount > 0 ? (
-            <span className="bg-muted rounded-full px-1.5 py-0.5" title="Required skills">
-              🏷 {skillCount}
+            <span
+              className="bg-muted inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5"
+              title="Required skills"
+            >
+              <Tag aria-hidden className="h-2.5 w-2.5" />
+              {skillCount}
             </span>
           ) : null}
           {hasSetup ? (
-            <span className="bg-muted rounded-full px-1.5 py-0.5" title="Setup time configured">
-              ↻
+            <span
+              className="bg-muted inline-flex items-center rounded-full px-1.5 py-0.5"
+              title="Setup time configured"
+            >
+              <RotateCcw aria-hidden className="h-2.5 w-2.5" />
             </span>
           ) : null}
           {hasMatrix ? (
-            <span className="bg-muted rounded-full px-1.5 py-0.5" title="Changeover matrix">
-              ⇄
+            <span
+              className="bg-muted inline-flex items-center rounded-full px-1.5 py-0.5"
+              title="Changeover matrix"
+            >
+              <ArrowLeftRight aria-hidden className="h-2.5 w-2.5" />
             </span>
           ) : null}
           {hasRework ? (
-            <span className="bg-muted rounded-full px-1.5 py-0.5" title="Rework target set">
-              ↺
+            <span
+              className="bg-muted inline-flex items-center rounded-full px-1.5 py-0.5"
+              title="Rework target set"
+            >
+              <Repeat aria-hidden className="h-2.5 w-2.5" />
             </span>
           ) : null}
           {hasParallel ? <CapacityChip capacity={capacity} /> : null}
@@ -602,8 +669,13 @@ function StationNode({ data, selected, id }: NodeProps) {
 
 import { AlignmentGuidesOverlay } from "@/components/canvas/alignment-guides";
 import { useAlignmentGuides } from "@/components/canvas/use-alignment-guides";
-import { CanvasContextMenu, type ContextMenuTarget } from "@/components/canvas/context-menu";
+import {
+  CanvasContextMenu,
+  type ContextMenuInsertItem,
+  type ContextMenuTarget,
+} from "@/components/canvas/context-menu";
 import { InputAnalyzerModal } from "@/components/editor/input-analyzer-modal";
+import { SaveNameDialog } from "@/components/editor/save-name-dialog";
 import { CommandPalette, type CommandAction } from "@/components/canvas/command-palette";
 import { AlignmentToolbar, type AlignOp } from "@/components/canvas/alignment-toolbar";
 import {
@@ -782,12 +854,10 @@ function EditorCanvas() {
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [wizardOpen, setWizardOpen] = useState<boolean>(false);
   const [scenariosOpen, setScenariosOpen] = useState<boolean>(false);
-  // VROL-685 — case-insensitive search filter for the scenarios list.
-  const [scenarioSearch, setScenarioSearch] = useState<string>("");
+  // VROL-789 — search + recency segmentation moved into ScenariosList; sort
+  // dropdown removed in favor of the 2-primary + collapsed-rest pattern.
   // VROL-726 — palette search input state.
   const [paletteSearch, setPaletteSearch] = useState<string>("");
-  // VROL-695 — sort dropdown state.
-  const [scenarioSort, setScenarioSort] = useState<"date" | "name" | "nodes">("date");
   // VROL-682 — two slots for picking history runs to compare.
   const [historyCompareA, setHistoryCompareA] = useState<number | null>(null);
   const [historyCompareB, setHistoryCompareB] = useState<number | null>(null);
@@ -877,6 +947,8 @@ function EditorCanvas() {
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
   /** VROL-633 — Inspector advanced section collapsed by default. */
   const [inspectorAdvancedOpen, setInspectorAdvancedOpen] = useState<boolean>(false);
+  /** VROL-788 — Inspector cost & revenue accordion state. */
+  const [inspectorCostOpen, setInspectorCostOpen] = useState<boolean>(false);
   /** VROL-635 — Drawer optional-sections expanded state (closed by default).
    *  VROL-AUDIT — schedule key removed when the accordion was deleted. */
   const [drawerSections, setDrawerSections] = useState<{
@@ -920,6 +992,9 @@ function EditorCanvas() {
   );
   /** Snapshot of the active scenario as JSON; used to detect drift for the modified badge. */
   const [activeScenarioSnapshot, setActiveScenarioSnapshot] = useState<string | null>(null);
+  // VROL-812 — inline name dialog for first-save-from-Cmd+S on an Untitled
+  // scenario. Replaces the prior native-prompt / silent-no-op behaviour.
+  const [saveNameDialogOpen, setSaveNameDialogOpen] = useState<boolean>(false);
   // VROL-654 — rendered-form shape so both live runs + restored snapshots
   // hydrate the same state. ScenarioRunOutcome is normalized at call site.
   const [comparison, setComparison] = useState<{
@@ -1496,6 +1571,61 @@ function EditorCanvas() {
     setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), ...newNodes]);
     if (newEdges.length > 0) setEdges((eds) => [...eds, ...newEdges]);
   }, [flow, setNodes, setEdges]);
+
+  // VROL-775 — pane right-click Insert. Spawns the chosen node kind at
+  // the right-click position (or the canvas centre as a fallback). Mirrors
+  // the offsets used by onDrop and the keyboard-insert path so the spawned
+  // node lands centred on the cursor.
+  const insertAtClient = useCallback(
+    (
+      kind: "station" | "sticky" | "frame",
+      clientX: number,
+      clientY: number,
+      item?: PaletteItem,
+    ) => {
+      const pos = flow.screenToFlowPosition({ x: clientX, y: clientY });
+      const id = `n${String(nodeIdRef.current++)}`;
+      if (kind === "sticky") {
+        const newNode: Node = {
+          id,
+          type: "sticky",
+          position: pos,
+          data: { text: "", color: "yellow" },
+        };
+        setNodes((ns) => ns.concat(newNode));
+        return;
+      }
+      if (kind === "frame") {
+        const newNode: Node = {
+          id,
+          type: "frame",
+          position: pos,
+          zIndex: -1,
+          selectable: true,
+          data: { label: "Section", color: "blue", width: 320, height: 200 },
+        };
+        setNodes((ns) => ns.concat(newNode));
+        return;
+      }
+      if (!item) return;
+      const newNode: Node = {
+        id,
+        type: "station",
+        // Centre the spawned station on the cursor like onDrop does.
+        position: { x: pos.x - 90, y: pos.y - 30 },
+        data: {
+          label: item.label,
+          stationType: item.stationType,
+          cycleDistribution: constant(100),
+          defectRate: 0,
+          stationKey: generateStationKey(),
+        },
+      };
+      setNodes((ns) => ns.concat(newNode));
+      setSelectedNodeId(id);
+    },
+    [flow, setNodes],
+  );
 
   const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -2249,9 +2379,15 @@ function EditorCanvas() {
         // VROL-730 — Cmd/Ctrl+Enter triggers Run.
         e.preventDefault();
         if (!isRunning) handleRun();
-      } else if (key === "s" && activeScenarioName) {
-        // VROL-733 — Cmd/Ctrl+S saves the active scenario in place.
+      } else if (key === "s") {
+        // VROL-733 + VROL-812 — Cmd/Ctrl+S saves the active scenario in
+        // place. When the scenario is still Untitled, open the inline name
+        // dialog rather than the prior silent no-op / native prompt.
         e.preventDefault();
+        if (!activeScenarioName) {
+          setSaveNameDialogOpen(true);
+          return;
+        }
         try {
           saveScenario(activeScenarioName, {
             graph: { nodes: [...nodes], edges: [...edges] },
@@ -2260,7 +2396,7 @@ function EditorCanvas() {
           });
           setScenarios(listScenarios());
           setActiveScenarioSnapshot(JSON.stringify({ graph: { nodes, edges }, settings }));
-          toast.success(`Saved "${activeScenarioName}"`);
+          toast.success("Saved");
         } catch (err) {
           const m = err instanceof Error ? err.message : String(err);
           toast.error("Save failed", { description: m });
@@ -2527,6 +2663,10 @@ function EditorCanvas() {
       setResult(null);
       setRunMeta(null);
       setActiveScenarioName(name);
+      // VROL-789 — mark this scenario as recently used so the Scenarios drawer
+      // can surface the last 2 as primary buttons.
+      markScenarioUsed(name);
+      setScenarios(listScenarios());
       nodeIdRef.current =
         payload.graph.nodes.reduce(
           (max, n) => Math.max(max, parseInt(n.id.replace(/\D/g, ""), 10) || 0),
@@ -3434,11 +3574,20 @@ function EditorCanvas() {
               <Redo2 className="h-3.5 w-3.5" />
             </Button>
           </div>
-          {/* VROL-304 — validation badge: opens an inline popover with all issues. */}
-          {validation.errors.length + validation.warnings.length > 0 ? (
-            <div className="relative">
+          {/* VROL-304 / VROL-780 — validation badge in a render-locked slot.
+              The slot is always present in the top-bar (fixed min-width) so
+              the chip + popover never get re-mounted by neighbouring
+              re-renders — only the chip's CONTENT updates. The popover stays
+              mounted while open so the user keeps their scroll position +
+              focus across validation-state changes. */}
+          <div
+            className="relative flex h-8 min-w-[7rem] items-center justify-end"
+            data-testid="validation-slot"
+          >
+            {validation.errors.length + validation.warnings.length > 0 ? (
               <button
                 type="button"
+                id="validation-trigger"
                 onClick={() => {
                   setValidationOpen((v) => !v);
                 }}
@@ -3448,9 +3597,12 @@ function EditorCanvas() {
                     : "border-sim-setup/40 bg-sim-setup/10 text-sim-setup-foreground"
                 }`}
                 aria-label={`${String(validation.errors.length)} errors, ${String(validation.warnings.length)} warnings`}
+                aria-expanded={validationOpen}
+                aria-controls="validation-popover"
                 // VROL-721 — live region so screen-reader users hear updates.
                 aria-live="polite"
                 title="Open validation panel"
+                data-testid="validation-trigger"
               >
                 {validation.errors.length > 0 ? (
                   <AlertCircle className="h-3.5 w-3.5" />
@@ -3465,21 +3617,27 @@ function EditorCanvas() {
                   ? `${String(validation.warnings.length)} ${validation.warnings.length === 1 ? "warning" : "warnings"}`
                   : null}
               </button>
-              {validationOpen ? (
-                <div className="border-border bg-card absolute right-0 z-40 mt-1 w-96 rounded-md border shadow-lg">
-                  <ValidationPanel
-                    result={validation}
-                    onIssueFocus={focusValidationIssue}
-                    onIssueFix={applyValidationFix}
-                    onFixAll={(issues) => {
-                      for (const iss of issues) applyValidationFix(iss);
-                      toast.success(`Applied ${String(issues.length)} fixes`);
-                    }}
-                  />
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+            ) : null}
+            {validationOpen ? (
+              <div
+                id="validation-popover"
+                role="dialog"
+                aria-labelledby="validation-trigger"
+                className="border-border bg-card absolute top-full right-0 z-40 mt-1 w-96 rounded-md border shadow-lg"
+                data-testid="validation-popover"
+              >
+                <ValidationPanel
+                  result={validation}
+                  onIssueFocus={focusValidationIssue}
+                  onIssueFix={applyValidationFix}
+                  onFixAll={(issues) => {
+                    for (const iss of issues) applyValidationFix(iss);
+                    toast.success(`Applied ${String(issues.length)} fixes`);
+                  }}
+                />
+              </div>
+            ) : null}
+          </div>
           {/* VROL-774 — Run is the primary action in the top bar. Default
               size + variant + a primary-tinted ring make it the obvious
               call-to-action against the surrounding ghost / outline chrome. */}
@@ -3862,6 +4020,43 @@ function EditorCanvas() {
                 setEdges((es) => es.filter((e) => e.id !== edgeId));
               }}
               hasClipboard={clipboardCount > 0}
+              insertItems={
+                contextMenu.kind === "pane"
+                  ? ([
+                      ...PALETTE.map(
+                        (item): ContextMenuInsertItem => ({
+                          id: item.stationType,
+                          label: item.label,
+                          icon: item.icon,
+                          run: () => {
+                            insertAtClient(
+                              "station",
+                              contextMenu.clientX,
+                              contextMenu.clientY,
+                              item,
+                            );
+                          },
+                        }),
+                      ),
+                      {
+                        id: "sticky",
+                        label: "Sticky note",
+                        icon: StickyNote,
+                        run: () => {
+                          insertAtClient("sticky", contextMenu.clientX, contextMenu.clientY);
+                        },
+                      },
+                      {
+                        id: "frame",
+                        label: "Section frame",
+                        icon: FrameIcon,
+                        run: () => {
+                          insertAtClient("frame", contextMenu.clientX, contextMenu.clientY);
+                        },
+                      },
+                    ] satisfies readonly ContextMenuInsertItem[])
+                  : undefined
+              }
             />
           ) : null}
           <AlignmentToolbar
@@ -3908,6 +4103,39 @@ function EditorCanvas() {
           onApply={(d) => {
             updateSelectedNodeData({ cycleDistribution: d });
             toast.success(`Distribution applied: ${d.kind}`);
+          }}
+        />
+        {/* VROL-812 — inline name dialog for the first Cmd+S on an
+            Untitled scenario. Updates the active name in place so the
+            top-bar label flips without a reload. */}
+        <SaveNameDialog
+          open={saveNameDialogOpen}
+          onOpenChange={setSaveNameDialogOpen}
+          onSubmit={(name) => {
+            // Reject collisions against existing scenarios just like the
+            // scenarios drawer's save flow does.
+            const existing = new Set(listScenarios().map((s) => s.name));
+            if (existing.has(name)) {
+              toast.error("That name is already taken", {
+                description: "Pick a different name and try again.",
+              });
+              setSaveNameDialogOpen(true);
+              return;
+            }
+            try {
+              saveScenario(name, {
+                graph: { nodes, edges },
+                settings,
+                savedAtMs: Date.now(),
+              });
+              setScenarios(listScenarios());
+              setActiveScenarioName(name);
+              setActiveScenarioSnapshot(JSON.stringify({ graph: { nodes, edges }, settings }));
+              toast.success("Saved");
+            } catch (err) {
+              const m = err instanceof Error ? err.message : String(err);
+              toast.error("Save failed", { description: m });
+            }
           }}
         />
 
@@ -4094,13 +4322,16 @@ function EditorCanvas() {
                   updateSelectedNodeData({ defectRate: n });
                 }}
               />
-              {/* Cost / revenue inputs — empty by default. Filling any of them
-                  unlocks the Cost & revenue card under Results. */}
-              <details className="border-border bg-background/40 rounded-md border p-2 text-sm">
-                <summary className="text-muted-foreground cursor-pointer font-medium">
-                  Cost &amp; revenue (optional)
-                </summary>
-                <div className="mt-2 grid grid-cols-2 gap-2">
+              {/* VROL-788 — single collapse paradigm: was <details>, now shadcn
+                  Accordion to match the advanced section + Run settings drawer. */}
+              <Accordion
+                title="Cost & revenue (optional)"
+                expanded={inspectorCostOpen}
+                onToggle={() => {
+                  setInspectorCostOpen((v) => !v);
+                }}
+              >
+                <div className="grid grid-cols-2 gap-2">
                   <NumberField
                     id="inspector-cost-hour"
                     label="$ / hour"
@@ -4158,7 +4389,7 @@ function EditorCanvas() {
                   Set $/h on machines, $/cycle on consumable stations, $/scrap on QC, and $/good
                   part on the output sink. The Cost &amp; revenue card unlocks after the next Run.
                 </p>
-              </details>
+              </Accordion>
               <NumberField
                 id="inspector-capacity"
                 label="Parallel cycles"
@@ -4314,26 +4545,17 @@ function EditorCanvas() {
             </CardContent>
             {/* VROL-633 — advanced settings collapsed by default. Power users
                 expand once; the toggle's open/closed state persists per
-                station via the inspectorAdvancedOpen useState below. */}
+                station via the inspectorAdvancedOpen useState below.
+                VROL-788 — was a custom button-plus-conditional, now a shadcn
+                Accordion to match the Cost & revenue section above. */}
             <CardContent id="insp-advanced" className="border-border scroll-mt-4 border-t pt-3">
-              <button
-                type="button"
-                onClick={() => {
+              <Accordion
+                title="Advanced"
+                expanded={inspectorAdvancedOpen}
+                onToggle={() => {
                   setInspectorAdvancedOpen((v) => !v);
                 }}
-                className="hover:bg-accent flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm font-medium"
-                aria-expanded={inspectorAdvancedOpen}
               >
-                <span>{inspectorAdvancedOpen ? "Hide" : "Show"} advanced</span>
-                <ChevronDown
-                  className={`h-4 w-4 transition-transform ${
-                    inspectorAdvancedOpen ? "rotate-180" : ""
-                  }`}
-                />
-              </button>
-            </CardContent>
-            {inspectorAdvancedOpen ? (
-              <CardContent className="space-y-3">
                 <SetupTimeEditor
                   value={
                     (selectedNode.data as { setupDistribution?: Distribution }).setupDistribution ??
@@ -4472,8 +4694,8 @@ function EditorCanvas() {
                     }}
                   />
                 ) : null}
-              </CardContent>
-            ) : null}
+              </Accordion>
+            </CardContent>
           </Card>
         ) : null}
       </div>
@@ -5010,371 +5232,321 @@ function EditorCanvas() {
                 ) : null}
               </div>
             ) : null}
-            {/* VROL-685 — scenario search; hidden when fewer than 3 to save space. */}
-            {scenarios.length >= 3 ? (
-              <div className="flex gap-2">
-                <Input
-                  type="search"
-                  value={scenarioSearch}
-                  placeholder="Search scenarios…"
-                  onChange={(e) => {
-                    setScenarioSearch(e.target.value);
-                  }}
-                  data-testid="scenario-search"
-                  className="text-sm"
-                />
-                {/* VROL-695 — sort dropdown. */}
-                <select
-                  aria-label="Sort scenarios"
-                  value={scenarioSort}
-                  onChange={(e) => {
-                    setScenarioSort(e.target.value as typeof scenarioSort);
-                  }}
-                  className="border-border bg-background rounded-md border px-2 text-xs"
-                >
-                  <option value="date">Newest</option>
-                  <option value="name">Name A→Z</option>
-                  <option value="nodes">Nodes ↓</option>
-                </select>
-              </div>
-            ) : null}
-            {scenarios.length === 0 ? (
-              <EmptyState
-                icon={Save}
-                title="No saved scenarios yet"
-                body={
-                  <>
-                    Click <strong>Save current</strong> to capture the graph + run settings under a
-                    name.
-                  </>
-                }
-              />
-            ) : (
-              <ul className="space-y-2">
-                {[...scenarios]
-                  .sort((a, b) => {
-                    if (scenarioSort === "name") return a.name.localeCompare(b.name);
-                    if (scenarioSort === "nodes") return b.nodeCount - a.nodeCount;
-                    return b.savedAtMs - a.savedAtMs;
-                  })
-                  .filter((s) =>
-                    scenarioSearch.trim() === ""
-                      ? true
-                      : s.name.toLowerCase().includes(scenarioSearch.trim().toLowerCase()),
-                  )
-                  .map((s) => {
-                    const history = historyByScenario[s.name] ?? [];
-                    return (
-                      <li
-                        key={s.name}
-                        className="border-border bg-card flex flex-col gap-2 rounded-md border p-3"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-medium">
-                              {s.name}
-                              {activeScenarioName === s.name ? (
+            {/* VROL-789 — 2 last-used primary buttons + collapsed "More scenarios…"
+                + search across the FULL list. Recency comes from scenario-store's
+                lastUsedAtMs (bumped on load + save). The render-prop carries
+                every per-row affordance the editor needs (notes, history,
+                confirm). */}
+            <ScenariosList
+              scenarios={scenarios}
+              activeScenarioName={activeScenarioName}
+              onPrimaryLoad={(name) => {
+                setConfirmAction({ scenario: name, kind: "load" });
+              }}
+              renderItem={(s) => {
+                const history = historyByScenario[s.name] ?? [];
+                return (
+                  <div className="border-border bg-card flex flex-col gap-2 rounded-md border p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium">
+                          {s.name}
+                          {activeScenarioName === s.name ? (
+                            <span
+                              className={`ml-2 rounded-full px-2 py-0.5 text-xs font-medium ${
+                                activeScenarioIsModified
+                                  ? "bg-sim-setup text-sim-setup-foreground"
+                                  : "bg-sim-running text-sim-running-foreground"
+                              }`}
+                            >
+                              {activeScenarioIsModified ? "active · modified" : "active"}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="text-muted-foreground text-xs">
+                          {s.nodeCount} node{s.nodeCount === 1 ? "" : "s"} · {s.edgeCount} edge
+                          {s.edgeCount === 1 ? "" : "s"}
+                          {/* VROL-700 — last-run throughput chip for at-a-glance comparison. */}
+                          {history[0] ? (
+                            <span
+                              className="text-foreground/80 ml-2 font-mono tabular-nums"
+                              title={`Last run: ${history[0].completed.toLocaleString()} parts · OEE ${(history[0].lineOee * 100).toFixed(0)}%`}
+                            >
+                              ·{" "}
+                              {Math.round(history[0].throughputLambda * 3_600_000).toLocaleString()}
+                              /h
+                            </span>
+                          ) : null}
+                        </div>
+                        {/* VROL-714 — bottleneck migration trail (oldest → newest). */}
+                        {history.some((h) => h.bottleneckLabel) ? (
+                          <div className="text-muted-foreground mt-1 flex flex-wrap gap-1 text-[10px]">
+                            <span className="text-[9px] tracking-wide uppercase">Bottlenecks:</span>
+                            {[...history]
+                              .reverse()
+                              .filter((h) => h.bottleneckLabel)
+                              .map((h, hi) => (
                                 <span
-                                  className={`ml-2 rounded-full px-2 py-0.5 text-xs font-medium ${
-                                    activeScenarioIsModified
-                                      ? "bg-sim-setup text-sim-setup-foreground"
-                                      : "bg-sim-running text-sim-running-foreground"
-                                  }`}
+                                  key={String(h.runAtMs) + String(hi)}
+                                  className="bg-muted rounded px-1.5 py-0.5 font-mono text-[9px]"
                                 >
-                                  {activeScenarioIsModified ? "active · modified" : "active"}
+                                  {h.bottleneckLabel}
                                 </span>
-                              ) : null}
-                            </div>
-                            <div className="text-muted-foreground text-xs">
-                              {s.nodeCount} node{s.nodeCount === 1 ? "" : "s"} · {s.edgeCount} edge
-                              {s.edgeCount === 1 ? "" : "s"}
-                              {/* VROL-700 — last-run throughput chip for at-a-glance comparison. */}
-                              {history[0] ? (
-                                <span
-                                  className="text-foreground/80 ml-2 font-mono tabular-nums"
-                                  title={`Last run: ${history[0].completed.toLocaleString()} parts · OEE ${(history[0].lineOee * 100).toFixed(0)}%`}
-                                >
-                                  ·{" "}
-                                  {Math.round(
-                                    history[0].throughputLambda * 3_600_000,
-                                  ).toLocaleString()}
-                                  /h
-                                </span>
-                              ) : null}
-                            </div>
-                            {/* VROL-714 — bottleneck migration trail (oldest → newest). */}
-                            {history.some((h) => h.bottleneckLabel) ? (
-                              <div className="text-muted-foreground mt-1 flex flex-wrap gap-1 text-[10px]">
-                                <span className="text-[9px] tracking-wide uppercase">
-                                  Bottlenecks:
-                                </span>
-                                {[...history]
-                                  .reverse()
-                                  .filter((h) => h.bottleneckLabel)
-                                  .map((h, hi) => (
-                                    <span
-                                      key={String(h.runAtMs) + String(hi)}
-                                      className="bg-muted rounded px-1.5 py-0.5 font-mono text-[9px]"
-                                    >
-                                      {h.bottleneckLabel}
-                                    </span>
-                                  ))}
-                              </div>
-                            ) : null}
-                            {/* VROL-691 — scenario notes inline editor. */}
-                            <textarea
-                              aria-label={`Notes for ${s.name}`}
-                              placeholder="Add notes…"
-                              className="border-border bg-background focus-visible:ring-ring/40 mt-1.5 block w-full resize-y rounded-md border px-2 py-1 text-xs focus-visible:ring-2 focus-visible:outline-none"
-                              rows={2}
-                              value={notesDraft[s.name] ?? s.notes ?? ""}
-                              onChange={(e) => {
-                                setNotesDraft((d) => ({ ...d, [s.name]: e.target.value }));
-                              }}
-                              onBlur={(e) => {
-                                const next = e.target.value;
-                                if (next === (s.notes ?? "")) return;
-                                if (setScenarioNotes(s.name, next)) {
+                              ))}
+                          </div>
+                        ) : null}
+                        {/* VROL-691 — scenario notes inline editor. */}
+                        <textarea
+                          aria-label={`Notes for ${s.name}`}
+                          placeholder="Add notes…"
+                          className="border-border bg-background focus-visible:ring-ring/40 mt-1.5 block w-full resize-y rounded-md border px-2 py-1 text-xs focus-visible:ring-2 focus-visible:outline-none"
+                          rows={2}
+                          value={notesDraft[s.name] ?? s.notes ?? ""}
+                          onChange={(e) => {
+                            setNotesDraft((d) => ({ ...d, [s.name]: e.target.value }));
+                          }}
+                          onBlur={(e) => {
+                            const next = e.target.value;
+                            if (next === (s.notes ?? "")) return;
+                            if (setScenarioNotes(s.name, next)) {
+                              setScenarios(listScenarios());
+                            }
+                          }}
+                        />
+                      </div>
+                      <div className="flex gap-1">
+                        {confirmAction && confirmAction.scenario === s.name ? (
+                          <div
+                            ref={(el) => {
+                              confirmTargetRef.current = el;
+                            }}
+                            className="flex items-center gap-2 text-xs"
+                          >
+                            <span className="text-muted-foreground">
+                              {/* VROL-751 — phrase confirm by current dirty state. */}
+                              {confirmAction.kind === "load"
+                                ? activeScenarioIsModified
+                                  ? `Discard ${
+                                      activeScenarioDiff
+                                        ? `${String(
+                                            activeScenarioDiff.nodeChanges +
+                                              activeScenarioDiff.edgeChanges +
+                                              activeScenarioDiff.settingsChanges,
+                                          )} change${
+                                            activeScenarioDiff.nodeChanges +
+                                              activeScenarioDiff.edgeChanges +
+                                              activeScenarioDiff.settingsChanges ===
+                                            1
+                                              ? ""
+                                              : "s"
+                                          }`
+                                        : "your changes"
+                                    } and load?`
+                                  : "Load? Unsaved canvas lost."
+                                : confirmAction.kind === "load-run"
+                                  ? "Load + Run? Unsaved canvas lost."
+                                  : "Delete?"}
+                            </span>
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                const action = confirmAction;
+                                setConfirmAction(null);
+                                if (action.kind === "delete") {
+                                  deleteScenario(s.name);
                                   setScenarios(listScenarios());
+                                  setHistoryByScenario((prev) => {
+                                    const next = { ...prev };
+                                    delete next[s.name];
+                                    return next;
+                                  });
+                                  if (activeScenarioName === s.name) setActiveScenarioName(null);
+                                  toast.info(`Deleted "${s.name}"`);
+                                } else if (action.kind === "load") {
+                                  loadScenarioInto(s.name);
+                                } else if (action.kind === "load-run") {
+                                  if (loadScenarioInto(s.name)) {
+                                    setTimeout(() => {
+                                      handleRun();
+                                    }, 0);
+                                  }
                                 }
                               }}
-                            />
+                            >
+                              Yes
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setConfirmAction(null);
+                              }}
+                            >
+                              No
+                            </Button>
                           </div>
-                          <div className="flex gap-1">
-                            {confirmAction && confirmAction.scenario === s.name ? (
-                              <div
-                                ref={(el) => {
-                                  confirmTargetRef.current = el;
-                                }}
-                                className="flex items-center gap-2 text-xs"
+                        ) : (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setConfirmAction({ scenario: s.name, kind: "load" });
+                              }}
+                            >
+                              Load
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setConfirmAction({ scenario: s.name, kind: "load-run" });
+                              }}
+                            >
+                              Load + Run
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                handleCompare(s.name);
+                              }}
+                            >
+                              Compare
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                // VROL-665 — duplicate. Find a unique "name (copy)"
+                                // name; increment suffix if it already exists.
+                                const src = loadScenario(s.name);
+                                if (!src) {
+                                  toast.error(`Couldn't read "${s.name}"`);
+                                  return;
+                                }
+                                const existing = new Set(listScenarios().map((q) => q.name));
+                                let candidate = `${s.name} (copy)`;
+                                let n = 2;
+                                while (existing.has(candidate)) {
+                                  candidate = `${s.name} (copy ${String(n)})`;
+                                  n += 1;
+                                }
+                                saveScenario(candidate, {
+                                  graph: src.graph,
+                                  settings: src.settings,
+                                });
+                                setScenarios(listScenarios());
+                                toast.success(`Duplicated to "${candidate}"`);
+                              }}
+                              aria-label={`Duplicate ${s.name}`}
+                            >
+                              Duplicate
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={`Delete ${s.name}`}
+                              onClick={() => {
+                                setConfirmAction({ scenario: s.name, kind: "delete" });
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    {history.length > 0 ? (
+                      <details className="border-border border-t pt-2 text-xs">
+                        <summary className="text-muted-foreground cursor-pointer">
+                          {history.length} recent run{history.length === 1 ? "" : "s"}
+                        </summary>
+                        <ul className="mt-2 space-y-1">
+                          {history.map((h, idx) => {
+                            const canReplay = !!h.payload;
+                            const isConfirming =
+                              confirmReplay !== null &&
+                              confirmReplay.scenario === s.name &&
+                              confirmReplay.idx === idx;
+                            return (
+                              <li
+                                key={`${String(h.runAtMs)}-${String(idx)}`}
+                                className="text-muted-foreground flex items-center justify-between gap-2"
                               >
-                                <span className="text-muted-foreground">
-                                  {/* VROL-751 — phrase confirm by current dirty state. */}
-                                  {confirmAction.kind === "load"
-                                    ? activeScenarioIsModified
-                                      ? `Discard ${
-                                          activeScenarioDiff
-                                            ? `${String(
-                                                activeScenarioDiff.nodeChanges +
-                                                  activeScenarioDiff.edgeChanges +
-                                                  activeScenarioDiff.settingsChanges,
-                                              )} change${
-                                                activeScenarioDiff.nodeChanges +
-                                                  activeScenarioDiff.edgeChanges +
-                                                  activeScenarioDiff.settingsChanges ===
-                                                1
-                                                  ? ""
-                                                  : "s"
-                                              }`
-                                            : "your changes"
-                                        } and load?`
-                                      : "Load? Unsaved canvas lost."
-                                    : confirmAction.kind === "load-run"
-                                      ? "Load + Run? Unsaved canvas lost."
-                                      : "Delete?"}
+                                <span className="font-mono tabular-nums">
+                                  {new Date(h.runAtMs).toLocaleString()}
                                 </span>
-                                <Button
-                                  size="sm"
-                                  onClick={() => {
-                                    const action = confirmAction;
-                                    setConfirmAction(null);
-                                    if (action.kind === "delete") {
-                                      deleteScenario(s.name);
-                                      setScenarios(listScenarios());
-                                      setHistoryByScenario((prev) => {
-                                        const next = { ...prev };
-                                        delete next[s.name];
-                                        return next;
-                                      });
-                                      if (activeScenarioName === s.name)
-                                        setActiveScenarioName(null);
-                                      toast.info(`Deleted "${s.name}"`);
-                                    } else if (action.kind === "load") {
-                                      loadScenarioInto(s.name);
-                                    } else if (action.kind === "load-run") {
-                                      if (loadScenarioInto(s.name)) {
-                                        setTimeout(() => {
-                                          handleRun();
-                                        }, 0);
-                                      }
-                                    }
-                                  }}
-                                >
-                                  Yes
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    setConfirmAction(null);
-                                  }}
-                                >
-                                  No
-                                </Button>
-                              </div>
-                            ) : (
-                              <>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    setConfirmAction({ scenario: s.name, kind: "load" });
-                                  }}
-                                >
-                                  Load
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    setConfirmAction({ scenario: s.name, kind: "load-run" });
-                                  }}
-                                >
-                                  Load + Run
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    handleCompare(s.name);
-                                  }}
-                                >
-                                  Compare
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    // VROL-665 — duplicate. Find a unique "name (copy)"
-                                    // name; increment suffix if it already exists.
-                                    const src = loadScenario(s.name);
-                                    if (!src) {
-                                      toast.error(`Couldn't read "${s.name}"`);
-                                      return;
-                                    }
-                                    const existing = new Set(listScenarios().map((q) => q.name));
-                                    let candidate = `${s.name} (copy)`;
-                                    let n = 2;
-                                    while (existing.has(candidate)) {
-                                      candidate = `${s.name} (copy ${String(n)})`;
-                                      n += 1;
-                                    }
-                                    saveScenario(candidate, {
-                                      graph: src.graph,
-                                      settings: src.settings,
-                                    });
-                                    setScenarios(listScenarios());
-                                    toast.success(`Duplicated to "${candidate}"`);
-                                  }}
-                                  aria-label={`Duplicate ${s.name}`}
-                                >
-                                  Duplicate
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  aria-label={`Delete ${s.name}`}
-                                  onClick={() => {
-                                    setConfirmAction({ scenario: s.name, kind: "delete" });
-                                  }}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        {history.length > 0 ? (
-                          <details className="border-border border-t pt-2 text-xs">
-                            <summary className="text-muted-foreground cursor-pointer">
-                              {history.length} recent run{history.length === 1 ? "" : "s"}
-                            </summary>
-                            <ul className="mt-2 space-y-1">
-                              {history.map((h, idx) => {
-                                const canReplay = !!h.payload;
-                                const isConfirming =
-                                  confirmReplay !== null &&
-                                  confirmReplay.scenario === s.name &&
-                                  confirmReplay.idx === idx;
-                                return (
-                                  <li
-                                    key={`${String(h.runAtMs)}-${String(idx)}`}
-                                    className="text-muted-foreground flex items-center justify-between gap-2"
-                                  >
-                                    <span className="font-mono tabular-nums">
-                                      {new Date(h.runAtMs).toLocaleString()}
-                                    </span>
-                                    <span className="flex items-center gap-2">
-                                      <span>
-                                        {h.completed.toLocaleString()} parts ·{" "}
-                                        {(h.lineOee * 100).toFixed(1)}% OEE
+                                <span className="flex items-center gap-2">
+                                  <span>
+                                    {h.completed.toLocaleString()} parts ·{" "}
+                                    {(h.lineOee * 100).toFixed(1)}% OEE
+                                  </span>
+                                  {isConfirming ? (
+                                    <span
+                                      ref={(el) => {
+                                        confirmTargetRef.current = el;
+                                      }}
+                                      className="flex items-center gap-1"
+                                    >
+                                      <span className="text-muted-foreground">
+                                        Replay? Unsaved canvas lost.
                                       </span>
-                                      {isConfirming ? (
-                                        <span
-                                          ref={(el) => {
-                                            confirmTargetRef.current = el;
-                                          }}
-                                          className="flex items-center gap-1"
-                                        >
-                                          <span className="text-muted-foreground">
-                                            Replay? Unsaved canvas lost.
-                                          </span>
-                                          <Button
-                                            size="sm"
-                                            onClick={() => {
-                                              const p = h.payload;
-                                              setConfirmReplay(null);
-                                              if (!p) return;
-                                              setNodes(ensureStationKeys([...p.graph.nodes]));
-                                              setEdges([...p.graph.edges]);
-                                              setSettings(p.settings);
-                                              setSelectedNodeId(null);
-                                              setResult(null);
-                                              setRunMeta(null);
-                                              toast.success("Replayed canvas + settings");
-                                            }}
-                                          >
-                                            Yes
-                                          </Button>
-                                          <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => {
-                                              setConfirmReplay(null);
-                                            }}
-                                          >
-                                            No
-                                          </Button>
-                                        </span>
-                                      ) : (
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          disabled={!canReplay}
-                                          title={
-                                            canReplay
-                                              ? "Restore canvas + settings from this run"
-                                              : "Run too old — no snapshot was captured"
-                                          }
-                                          onClick={() => {
-                                            setConfirmReplay({ scenario: s.name, idx });
-                                          }}
-                                        >
-                                          Replay
-                                        </Button>
-                                      )}
+                                      <Button
+                                        size="sm"
+                                        onClick={() => {
+                                          const p = h.payload;
+                                          setConfirmReplay(null);
+                                          if (!p) return;
+                                          setNodes(ensureStationKeys([...p.graph.nodes]));
+                                          setEdges([...p.graph.edges]);
+                                          setSettings(p.settings);
+                                          setSelectedNodeId(null);
+                                          setResult(null);
+                                          setRunMeta(null);
+                                          toast.success("Replayed canvas + settings");
+                                        }}
+                                      >
+                                        Yes
+                                      </Button>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => {
+                                          setConfirmReplay(null);
+                                        }}
+                                      >
+                                        No
+                                      </Button>
                                     </span>
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </details>
-                        ) : null}
-                      </li>
-                    );
-                  })}
-              </ul>
-            )}
+                                  ) : (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={!canReplay}
+                                      title={
+                                        canReplay
+                                          ? "Restore canvas + settings from this run"
+                                          : "Run too old — no snapshot was captured"
+                                      }
+                                      onClick={() => {
+                                        setConfirmReplay({ scenario: s.name, idx });
+                                      }}
+                                    >
+                                      Replay
+                                    </Button>
+                                  )}
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </details>
+                    ) : null}
+                  </div>
+                );
+              }}
+            />
           </div>
         </SheetContent>
       </Sheet>

@@ -23,6 +23,12 @@ export interface ScenarioPayload {
   readonly savedAtMs: number;
   /** VROL-691 — freeform user notes attached to this scenario. */
   readonly notes?: string;
+  /**
+   * VROL-789 — wall-clock ms the scenario was last loaded or saved. Used by
+   * the Scenarios drawer to surface the 2 most-recently-used as primary
+   * buttons. Falls back to `savedAtMs` when missing (older entries).
+   */
+  readonly lastUsedAtMs?: number;
 }
 
 export interface ScenarioSummary {
@@ -31,6 +37,8 @@ export interface ScenarioSummary {
   readonly nodeCount: number;
   readonly edgeCount: number;
   readonly notes?: string;
+  /** VROL-789 — see ScenarioPayload.lastUsedAtMs. */
+  readonly lastUsedAtMs?: number;
 }
 
 type Store = Record<string, ScenarioPayload>;
@@ -83,8 +91,24 @@ export function listScenarios(): ScenarioSummary[] {
       nodeCount: p.graph.nodes.length,
       edgeCount: p.graph.edges.length,
       ...(p.notes !== undefined ? { notes: p.notes } : {}),
+      ...(p.lastUsedAtMs !== undefined ? { lastUsedAtMs: p.lastUsedAtMs } : {}),
     }))
     .sort((a, b) => b.savedAtMs - a.savedAtMs);
+}
+
+/**
+ * VROL-789 — bump the lastUsedAtMs marker on every load / save so the Scenarios
+ * drawer can highlight the 2 most-recently-used entries. Returns true if the
+ * named scenario existed and the mark was applied.
+ */
+export function markScenarioUsed(name: string, atMs: number = Date.now()): boolean {
+  const store = readStore();
+  const existing = store[name];
+  if (!existing) return false;
+  const next = { ...store };
+  next[name] = { ...existing, lastUsedAtMs: atMs };
+  writeStore(next);
+  return true;
 }
 
 /** VROL-691 — update notes without touching the graph or settings. */
@@ -127,6 +151,10 @@ export function saveScenario(
       : prevNotes !== undefined
         ? { notes: prevNotes }
         : {}),
+    // VROL-789 — saving counts as a "use"; this keeps fresh saves at the top of
+    // the Scenarios drawer even when their savedAtMs was injected manually
+    // (e.g., bundle import).
+    lastUsedAtMs: Date.now(),
   };
   writeStore(store);
 }

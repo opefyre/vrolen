@@ -22,15 +22,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
+// VROL-785 — sticky swatches in lockstep with src/components/canvas/sticky-note-node.tsx
+// STICKY_COLORS. Keep these two lists in sync.
 const STICKY_SWATCHES: ReadonlyArray<{
   readonly id: string;
   readonly label: string;
   readonly bg: string;
 }> = [
-  { id: "yellow", label: "Yellow", bg: "bg-sim-setup/40 border-sim-setup/60" },
-  { id: "blue", label: "Blue", bg: "bg-sim-running/30 border-sim-running/60" },
-  { id: "rose", label: "Rose", bg: "bg-sim-down/25 border-sim-down/60" },
-  { id: "gray", label: "Gray", bg: "bg-muted border-border" },
+  { id: "yellow", label: "Yellow", bg: "bg-amber-200 border-amber-300" },
+  { id: "blue", label: "Blue", bg: "bg-blue-200 border-blue-300" },
+  { id: "rose", label: "Rose", bg: "bg-rose-200 border-rose-300" },
+  { id: "green", label: "Green", bg: "bg-emerald-200 border-emerald-300" },
+  { id: "gray", label: "Gray", bg: "bg-zinc-200 border-zinc-300" },
 ];
 
 const FRAME_SWATCHES: ReadonlyArray<{
