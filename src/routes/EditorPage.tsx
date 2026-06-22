@@ -4995,77 +4995,82 @@ function EditorCanvas() {
           if (!open) setComparison(null);
         }}
       >
-        <SheetContent side="right" className="w-[28rem] sm:max-w-lg">
-          <SheetHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pr-7">
-            <div className="space-y-1">
-              <SheetTitle>Comparison</SheetTitle>
-              <SheetDescription>
-                Both scenarios were run with their own settings. Deltas are{" "}
-                <span className="font-medium">B − A</span> (current canvas vs saved scenario).
-              </SheetDescription>
-            </div>
+        <SheetContent
+          side="right"
+          className="flex w-[28rem] flex-col gap-0 overflow-y-auto sm:max-w-lg"
+        >
+          <SheetHeader className="space-y-1 pr-10">
+            <SheetTitle>Comparison</SheetTitle>
+            <SheetDescription>
+              Both scenarios were run with their own settings. Deltas are{" "}
+              <span className="font-medium">B − A</span> (current canvas vs saved scenario).
+            </SheetDescription>
+            {/* Flip + JSON export sit under the title so they can't collide
+                with the shadcn close (X) button. */}
             {comparison ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  // VROL-713 — flip A and B sides; persisted preference so users
-                  // who consistently want canvas-as-A see it that way next time.
-                  if (typeof window !== "undefined") {
-                    const v = window.localStorage?.getItem?.("vrolen.compare-flip") ?? "0";
-                    window.localStorage?.setItem?.("vrolen.compare-flip", v === "1" ? "0" : "1");
-                  }
-                  setComparison((c) =>
-                    c
-                      ? {
-                          aName: c.bName,
-                          aResult: c.bResult,
-                          aStationLabels: c.bStationLabels,
-                          bName: c.aName,
-                          bResult: c.aResult,
-                          bStationLabels: c.aStationLabels,
-                          horizonMs: c.horizonMs,
-                          warmupMs: c.warmupMs,
-                        }
-                      : null,
-                  );
-                }}
-              >
-                Flip A↔B
-              </Button>
-            ) : null}
-            {comparison ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  // VROL-668 — export comparison as JSON.
-                  const payload = {
-                    savedAtMs: Date.now(),
-                    horizonMs: comparison.horizonMs,
-                    warmupMs: comparison.warmupMs,
-                    a: {
-                      name: comparison.aName,
-                      stationLabels: comparison.aStationLabels,
-                      result: JSON.parse(chainResultToJsonString(comparison.aResult)) as unknown,
-                    },
-                    b: {
-                      name: comparison.bName,
-                      stationLabels: comparison.bStationLabels,
-                      result: JSON.parse(chainResultToJsonString(comparison.bResult)) as unknown,
-                    },
-                  };
-                  const stem = suggestedFilenameStem(`${comparison.aName}-vs-${comparison.bName}`);
-                  downloadFile(
-                    `${stem}-compare.json`,
-                    JSON.stringify(payload, null, 2),
-                    "application/json",
-                  );
-                }}
-              >
-                <Download className="mr-1 h-3.5 w-3.5" />
-                JSON
-              </Button>
+              <div className="flex gap-1 pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    // VROL-713 — flip A and B sides; persisted preference so users
+                    // who consistently want canvas-as-A see it that way next time.
+                    if (typeof window !== "undefined") {
+                      const v = window.localStorage?.getItem?.("vrolen.compare-flip") ?? "0";
+                      window.localStorage?.setItem?.("vrolen.compare-flip", v === "1" ? "0" : "1");
+                    }
+                    setComparison((c) =>
+                      c
+                        ? {
+                            aName: c.bName,
+                            aResult: c.bResult,
+                            aStationLabels: c.bStationLabels,
+                            bName: c.aName,
+                            bResult: c.aResult,
+                            bStationLabels: c.aStationLabels,
+                            horizonMs: c.horizonMs,
+                            warmupMs: c.warmupMs,
+                          }
+                        : null,
+                    );
+                  }}
+                >
+                  Flip A↔B
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    // VROL-668 — export comparison as JSON.
+                    const payload = {
+                      savedAtMs: Date.now(),
+                      horizonMs: comparison.horizonMs,
+                      warmupMs: comparison.warmupMs,
+                      a: {
+                        name: comparison.aName,
+                        stationLabels: comparison.aStationLabels,
+                        result: JSON.parse(chainResultToJsonString(comparison.aResult)) as unknown,
+                      },
+                      b: {
+                        name: comparison.bName,
+                        stationLabels: comparison.bStationLabels,
+                        result: JSON.parse(chainResultToJsonString(comparison.bResult)) as unknown,
+                      },
+                    };
+                    const stem = suggestedFilenameStem(
+                      `${comparison.aName}-vs-${comparison.bName}`,
+                    );
+                    downloadFile(
+                      `${stem}-compare.json`,
+                      JSON.stringify(payload, null, 2),
+                      "application/json",
+                    );
+                  }}
+                >
+                  <Download className="mr-1 h-3.5 w-3.5" />
+                  JSON
+                </Button>
+              </div>
             ) : null}
           </SheetHeader>
           {comparison ? (
@@ -5095,16 +5100,18 @@ function EditorCanvas() {
       </Sheet>
 
       <Sheet open={scenariosOpen} onOpenChange={setScenariosOpen}>
-        <SheetContent side="right" className="w-[24rem] sm:max-w-md">
-          <SheetHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pr-7">
-            <div className="space-y-1">
-              <SheetTitle>Scenarios</SheetTitle>
-              <SheetDescription>
-                Save and restore named scenarios. Persisted locally in your browser.
-              </SheetDescription>
-            </div>
-            {/* JSON bundle export + import. */}
-            <div className="flex shrink-0 gap-1">
+        <SheetContent
+          side="right"
+          className="flex w-[24rem] flex-col gap-0 overflow-y-auto sm:max-w-md"
+        >
+          <SheetHeader className="space-y-1 pr-10">
+            <SheetTitle>Scenarios</SheetTitle>
+            <SheetDescription>
+              Save and restore named scenarios. Persisted locally in your browser.
+            </SheetDescription>
+            {/* JSON bundle export + import. Placed under the title so they
+                can't collide with the shadcn close (X) button. */}
+            <div className="flex gap-1 pt-2">
               <Button
                 variant="outline"
                 size="sm"
