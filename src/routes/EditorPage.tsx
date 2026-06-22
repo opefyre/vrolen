@@ -75,7 +75,16 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { Accordion, AccordionStatus } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -85,6 +94,7 @@ import { DistributionField } from "@/components/ui/distribution-field";
 import { DurationInput } from "@/components/ui/duration-input";
 import { Input } from "@/components/ui/input";
 import { NumberField } from "@/components/ui/number-field";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   addComparison,
   type ComparisonEntry,
@@ -199,6 +209,42 @@ import {
   SetupTimeEditor,
   SkillsField,
 } from "@/editor/inspector-fields";
+
+/**
+ * VROL-773 — three-up Inspector tabs. Storage key is sessionStorage so the
+ * choice persists across station selections within a tab but resets when
+ * the browser tab closes.
+ */
+type InspectorTab = "basics" | "schedule" | "recipe-cost";
+const INSPECTOR_TAB_STORAGE_KEY = "vrolen:inspector-tab";
+const INSPECTOR_TAB_ORDER: readonly InspectorTab[] = ["basics", "schedule", "recipe-cost"];
+const INSPECTOR_TAB_LABEL: Record<InspectorTab, string> = {
+  basics: "Basics",
+  schedule: "Schedule",
+  "recipe-cost": "Recipe & cost",
+};
+/**
+ * Per-tab field-key allowlist for error-dot aggregation. A validation issue
+ * whose `path` ends with `.${fieldKey}` (and whose `nodeId` matches the
+ * selected node) contributes to that tab's dot.
+ */
+const INSPECTOR_TAB_FIELDS: Record<InspectorTab, readonly string[]> = {
+  basics: ["label", "cycleDistribution", "cycleMs", "defectRate", "capacity"],
+  schedule: [
+    "maintenanceWindows",
+    "skills",
+    "reworkTargetNodeId",
+    "reworkPassLimit",
+    "customParams",
+  ],
+  "recipe-cost": [
+    "cycleByProduct",
+    "costPerHour",
+    "costPerCycle",
+    "costPerScrap",
+    "revenuePerPart",
+  ],
+};
 
 interface PaletteItem {
   readonly stationType: string;
@@ -945,10 +991,31 @@ function EditorCanvas() {
     kind: "load" | "load-run" | "delete";
   } | null>(null);
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
-  /** VROL-633 — Inspector advanced section collapsed by default. */
-  const [inspectorAdvancedOpen, setInspectorAdvancedOpen] = useState<boolean>(false);
-  /** VROL-788 — Inspector cost & revenue accordion state. */
-  const [inspectorCostOpen, setInspectorCostOpen] = useState<boolean>(false);
+  /**
+   * VROL-773 — Inspector active tab. Persisted per session under
+   * `vrolen:inspector-tab` so flipping between stations keeps the same
+   * focused view. Falls back to "basics" when the stored value is unknown.
+   */
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>(() => {
+    if (typeof window === "undefined") return "basics";
+    try {
+      const stored = window.sessionStorage.getItem(INSPECTOR_TAB_STORAGE_KEY);
+      if (stored === "basics" || stored === "schedule" || stored === "recipe-cost") {
+        return stored;
+      }
+    } catch {
+      // sessionStorage may be unavailable; default to basics.
+    }
+    return "basics";
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.sessionStorage.setItem(INSPECTOR_TAB_STORAGE_KEY, inspectorTab);
+    } catch {
+      // sessionStorage may be unavailable / full; in-memory still works.
+    }
+  }, [inspectorTab]);
   /** VROL-635 — Drawer optional-sections expanded state (closed by default).
    *  VROL-AUDIT — schedule key removed when the accordion was deleted. */
   const [drawerSections, setDrawerSections] = useState<{
@@ -4207,495 +4274,574 @@ function EditorCanvas() {
                 <X className="h-4 w-4" />
               </Button>
             </CardHeader>
-            {/* VROL-669 — jump strip. Click scrolls the Inspector body to the
-                anchor; the actual sections still render in document order. */}
-            <div className="border-border flex gap-1 border-b px-3 pb-2 text-[11px]">
-              {(
-                [
-                  ["#insp-general", "General"],
-                  ["#insp-recipe", "Recipe"],
-                  ["#insp-custom", "Custom"],
-                  ["#insp-advanced", "Advanced"],
-                ] as const
-              ).map(([hash, label]) => (
-                <button
-                  key={hash}
-                  type="button"
-                  className="hover:bg-muted text-muted-foreground hover:text-foreground rounded px-2 py-0.5"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    const id = hash.slice(1);
-                    document.getElementById(id)?.scrollIntoView({
-                      behavior: "smooth",
-                      block: "start",
-                    });
+            {/* VROL-773 — tabbed inspector: Basics / Schedule / Recipe & cost.
+                Replaces the VROL-669 anchor strip + the long vertical accordion
+                stack. Per-tab error dots aggregate validation issues whose
+                `path` ends in one of INSPECTOR_TAB_FIELDS[tab]. */}
+            {(() => {
+              const allIssues = [...validation.errors, ...validation.warnings];
+              const tabIssues: Record<InspectorTab, readonly ValidationIssue[]> = {
+                basics: INSPECTOR_TAB_FIELDS.basics.flatMap((f) =>
+                  findIssuesForField(allIssues, selectedNode.id, f),
+                ),
+                schedule: INSPECTOR_TAB_FIELDS.schedule.flatMap((f) =>
+                  findIssuesForField(allIssues, selectedNode.id, f),
+                ),
+                "recipe-cost": INSPECTOR_TAB_FIELDS["recipe-cost"].flatMap((f) =>
+                  findIssuesForField(allIssues, selectedNode.id, f),
+                ),
+              };
+              const onTabKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
+                // VROL-773 — explicit ArrowLeft / ArrowRight wiring. base-ui's
+                // Tabs primitive supplies its own roving-tabindex behaviour but
+                // we hard-wire the spec'd contract here so the test can drive it
+                // without depending on the primitive's internals.
+                if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                e.preventDefault();
+                const idx = INSPECTOR_TAB_ORDER.indexOf(inspectorTab);
+                if (idx === -1) return;
+                const delta = e.key === "ArrowRight" ? 1 : -1;
+                const next =
+                  INSPECTOR_TAB_ORDER[
+                    (idx + delta + INSPECTOR_TAB_ORDER.length) % INSPECTOR_TAB_ORDER.length
+                  ];
+                if (next) setInspectorTab(next);
+              };
+              return (
+                <Tabs
+                  value={inspectorTab}
+                  onValueChange={(v) => {
+                    if (v === "basics" || v === "schedule" || v === "recipe-cost") {
+                      setInspectorTab(v);
+                    }
                   }}
+                  className="gap-0"
                 >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <CardContent id="insp-general" className="scroll-mt-4 space-y-3">
-              <div className="flex flex-col gap-1">
-                <label
-                  htmlFor="inspector-label"
-                  className="text-muted-foreground text-xs font-medium"
-                >
-                  Label
-                </label>
-                <Input
-                  id="inspector-label"
-                  type="text"
-                  value={String((selectedNode.data as { label?: unknown }).label ?? "")}
-                  onChange={(e) => {
-                    updateSelectedNodeData({ label: e.target.value });
-                  }}
-                />
-              </div>
-              <DistributionField
-                label="Cycle distribution"
-                id="inspector-dist-kind"
-                value={
-                  ((selectedNode.data as { cycleDistribution?: Distribution }).cycleDistribution ??
-                    constant(
-                      Number((selectedNode.data as { cycleMs?: unknown }).cycleMs ?? 100),
-                    )) as Distribution
-                }
-                onChange={(d) => {
-                  updateSelectedNodeData({ cycleDistribution: d });
-                }}
-              />
-              <div className="-mt-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setInputAnalyzerOpen(true);
-                  }}
-                  className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[11px] underline-offset-2 hover:underline"
-                  title="Open the Input Analyzer to fit a distribution to measured cycle times"
-                >
-                  🧪 Fit from real data…
-                </button>
-              </div>
-              {/* VROL-744 — show this station's cycle vs line median when a run exists. */}
-              {result && runMeta
-                ? (() => {
-                    const stationIdx = runMeta.chainNodeIds.indexOf(selectedNode.id);
-                    if (stationIdx === -1) return null;
-                    const ownCycle = result.perStationOee[stationIdx]?.idealCycleTimeMs ?? 0;
-                    if (ownCycle === 0) return null;
-                    const cs = cycleStats(result);
-                    const pct = cs.medianMs > 0 ? Math.round((ownCycle / cs.medianMs) * 100) : 100;
-                    const tone =
-                      pct >= 150
-                        ? "text-sim-down-foreground"
-                        : pct >= 110
-                          ? "text-sim-setup-foreground"
-                          : "text-muted-foreground";
-                    return (
-                      <div className={`text-xs ${tone}`}>
-                        Cycle: {Math.round(ownCycle)} ms · {String(pct)}% of line median (
-                        {Math.round(cs.medianMs)} ms)
-                      </div>
-                    );
-                  })()
-                : null}
-              <NumberField
-                id="inspector-defect"
-                label="Defect rate"
-                labelSuffix={
-                  <FieldErrorIndicator
-                    issues={findIssuesForField(
-                      [...validation.errors, ...validation.warnings],
-                      selectedNode.id,
-                      "defectRate",
-                    )}
-                  />
-                }
-                value={Number((selectedNode.data as { defectRate?: unknown }).defectRate ?? 0)}
-                min={0}
-                max={1}
-                step={0.01}
-                helperText="Probability that a finished part is defective (0–1). Raises scrap rate; drops Line OEE × Quality. Each defect cascades to scrap or rework."
-                inputClassName="font-mono tabular-nums w-32"
-                onChange={(n) => {
-                  updateSelectedNodeData({ defectRate: n });
-                }}
-              />
-              {/* VROL-788 — single collapse paradigm: was <details>, now shadcn
-                  Accordion to match the advanced section + Run settings drawer. */}
-              <Accordion
-                title="Cost & revenue (optional)"
-                expanded={inspectorCostOpen}
-                onToggle={() => {
-                  setInspectorCostOpen((v) => !v);
-                }}
-              >
-                <div className="grid grid-cols-2 gap-2">
-                  <NumberField
-                    id="inspector-cost-hour"
-                    label="$ / hour"
-                    value={Number(
-                      (selectedNode.data as { costPerHour?: unknown }).costPerHour ?? 0,
-                    )}
-                    min={0}
-                    step={1}
-                    inputClassName="font-mono tabular-nums"
-                    onChange={(n) => {
-                      updateSelectedNodeData({ costPerHour: n });
-                    }}
-                  />
-                  <NumberField
-                    id="inspector-cost-cycle"
-                    label="$ / cycle"
-                    value={Number(
-                      (selectedNode.data as { costPerCycle?: unknown }).costPerCycle ?? 0,
-                    )}
-                    min={0}
-                    step={0.001}
-                    inputClassName="font-mono tabular-nums"
-                    onChange={(n) => {
-                      updateSelectedNodeData({ costPerCycle: n });
-                    }}
-                  />
-                  <NumberField
-                    id="inspector-cost-scrap"
-                    label="$ / scrap"
-                    value={Number(
-                      (selectedNode.data as { costPerScrap?: unknown }).costPerScrap ?? 0,
-                    )}
-                    min={0}
-                    step={0.01}
-                    inputClassName="font-mono tabular-nums"
-                    onChange={(n) => {
-                      updateSelectedNodeData({ costPerScrap: n });
-                    }}
-                  />
-                  <NumberField
-                    id="inspector-revenue"
-                    label="$ / good part"
-                    value={Number(
-                      (selectedNode.data as { revenuePerPart?: unknown }).revenuePerPart ?? 0,
-                    )}
-                    min={0}
-                    step={0.01}
-                    inputClassName="font-mono tabular-nums"
-                    onChange={(n) => {
-                      updateSelectedNodeData({ revenuePerPart: n });
-                    }}
-                  />
-                </div>
-                <p className="text-muted-foreground mt-1.5 text-[11px]">
-                  Set $/h on machines, $/cycle on consumable stations, $/scrap on QC, and $/good
-                  part on the output sink. The Cost &amp; revenue card unlocks after the next Run.
-                </p>
-              </Accordion>
-              <NumberField
-                id="inspector-capacity"
-                label="Parallel cycles"
-                labelSuffix={
-                  <FieldErrorIndicator
-                    issues={findIssuesForField(
-                      [...validation.errors, ...validation.warnings],
-                      selectedNode.id,
-                      "capacity",
-                    )}
-                  />
-                }
-                value={Number((selectedNode.data as { capacity?: unknown }).capacity ?? 1)}
-                min={1}
-                max={10}
-                step={1}
-                helperText="Number of parts this station processes simultaneously. Lifts throughput linearly when this is the bottleneck. Default 1."
-                onChange={(n) => {
-                  const v = Math.max(1, Math.min(10, Math.floor(n)));
-                  updateSelectedNodeData({ capacity: v === 1 ? undefined : v });
-                }}
-              />
-              {/* VROL-281 — Description + Tags fill out the "all standard
-                  fields" set for the station property panel. Description is a
-                  textarea; tags are a comma-separated string stored as an array
-                  on data.tags. */}
-              <div className="flex flex-col gap-1.5">
-                <label
-                  htmlFor="inspector-description"
-                  className="text-muted-foreground text-xs font-medium"
-                >
-                  Description
-                </label>
-                <textarea
-                  id="inspector-description"
-                  rows={2}
-                  placeholder="Notes for this station…"
-                  className="border-border bg-background focus-visible:ring-ring/40 block w-full resize-y rounded-md border px-2 py-1 text-xs focus-visible:ring-2 focus-visible:outline-none"
-                  value={String((selectedNode.data as { description?: unknown }).description ?? "")}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    updateSelectedNodeData({
-                      description: value.trim() === "" ? undefined : value,
-                    });
-                  }}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label
-                  htmlFor="inspector-tags"
-                  className="text-muted-foreground text-xs font-medium"
-                >
-                  Tags
-                </label>
-                <Input
-                  id="inspector-tags"
-                  type="text"
-                  placeholder="comma,separated,tags"
-                  value={(() => {
-                    const t = (selectedNode.data as { tags?: unknown }).tags;
-                    return Array.isArray(t) ? t.join(", ") : "";
-                  })()}
-                  onChange={(e) => {
-                    const next = e.target.value
-                      .split(",")
-                      .map((s) => s.trim())
-                      .filter((s) => s.length > 0);
-                    updateSelectedNodeData({ tags: next.length === 0 ? undefined : next });
-                  }}
-                />
-              </div>
-              {/* VROL-293 — Recipe editor section. Visible when materials
-                  are enabled. The recipe applies to the station that's
-                  selected when Run fires. */}
-              {settings.materials.enabled ? (
-                <div id="insp-recipe" className="flex scroll-mt-4 flex-col gap-1.5">
-                  <div className="text-muted-foreground text-xs font-medium">Recipe</div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <NumberField
-                      id="inspector-recipe-bottles"
-                      label="Bottles / part"
-                      value={settings.materials.bottlesPerPart}
-                      min={0}
-                      step={1}
-                      onChange={(n) => {
-                        setSettings((s) => ({
-                          ...s,
-                          materials: { ...s.materials, bottlesPerPart: Math.max(0, n) },
-                        }));
+                  {/* Mobile: tabs collapse into a native select. The Tabs root
+                      still owns state so the panels render correctly. */}
+                  <div className="border-border border-b px-3 pb-2 sm:hidden">
+                    <label htmlFor="inspector-tab-select" className="sr-only">
+                      Inspector section
+                    </label>
+                    <select
+                      id="inspector-tab-select"
+                      data-testid="inspector-tab-select"
+                      value={inspectorTab}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === "basics" || v === "schedule" || v === "recipe-cost") {
+                          setInspectorTab(v);
+                        }
                       }}
-                    />
-                    <NumberField
-                      id="inspector-recipe-caps"
-                      label="Caps / part"
-                      value={settings.materials.capsPerPart}
-                      min={0}
-                      step={1}
-                      onChange={(n) => {
-                        setSettings((s) => ({
-                          ...s,
-                          materials: { ...s.materials, capsPerPart: Math.max(0, n) },
-                        }));
-                      }}
-                    />
-                  </div>
-                  <p className="text-muted-foreground text-[11px]">
-                    Applied to whichever station is selected when Run fires. Set a qty to 0 to drop
-                    that material from the recipe.
-                  </p>
-                </div>
-              ) : null}
-              {/* VROL-662 — CustomStation description. Only shown when the
-                  station is a "custom" type. */}
-              {(selectedNode.data as { stationType?: string }).stationType === "custom" ? (
-                <div className="flex flex-col gap-1">
-                  <label
-                    htmlFor="inspector-custom-description"
-                    className="text-muted-foreground text-xs font-medium"
-                  >
-                    What does this represent?
-                  </label>
-                  <textarea
-                    id="inspector-custom-description"
-                    rows={2}
-                    placeholder="e.g. Decanter, Mixing tank, Drying oven"
-                    value={
-                      (selectedNode.data as { customDescription?: string }).customDescription ?? ""
-                    }
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      updateSelectedNodeData({
-                        customDescription: v.length > 0 ? v : undefined,
-                      });
-                    }}
-                    className="border-input bg-background rounded-md border px-2 py-1.5 text-sm"
-                  />
-                </div>
-              ) : null}
-              {/* VROL-286 — customParams editor. Always available. */}
-              <div id="insp-custom" className="scroll-mt-4">
-                <CustomParamsField
-                  value={
-                    ((selectedNode.data as { customParams?: readonly CustomParam[] })
-                      .customParams ?? []) as readonly CustomParam[]
-                  }
-                  onChange={(next) => {
-                    updateSelectedNodeData({
-                      customParams: next.length > 0 ? next : undefined,
-                    });
-                  }}
-                />
-              </div>
-            </CardContent>
-            {/* VROL-633 — advanced settings collapsed by default. Power users
-                expand once; the toggle's open/closed state persists per
-                station via the inspectorAdvancedOpen useState below.
-                VROL-788 — was a custom button-plus-conditional, now a shadcn
-                Accordion to match the Cost & revenue section above. */}
-            <CardContent id="insp-advanced" className="border-border scroll-mt-4 border-t pt-3">
-              <Accordion
-                title="Advanced"
-                expanded={inspectorAdvancedOpen}
-                onToggle={() => {
-                  setInspectorAdvancedOpen((v) => !v);
-                }}
-              >
-                <SetupTimeEditor
-                  value={
-                    (selectedNode.data as { setupDistribution?: Distribution }).setupDistribution ??
-                    null
-                  }
-                  onChange={(d) => {
-                    updateSelectedNodeData({ setupDistribution: d ?? undefined });
-                  }}
-                />
-                {settings.products.enabled && settings.products.list.length > 0 ? (
-                  <PerProductCyclesEditor
-                    products={settings.products.list}
-                    value={
-                      (selectedNode.data as { cycleByProduct?: Record<string, Distribution> })
-                        .cycleByProduct ?? {}
-                    }
-                    onChange={(next) => {
-                      updateSelectedNodeData({
-                        cycleByProduct: Object.keys(next).length > 0 ? next : undefined,
-                      });
-                    }}
-                  />
-                ) : null}
-                <MaintenanceWindowsEditor
-                  value={
-                    Array.isArray(
-                      (selectedNode.data as { maintenanceWindows?: unknown }).maintenanceWindows,
-                    )
-                      ? ((
-                          selectedNode.data as {
-                            maintenanceWindows: { startMs: number; endMs: number }[];
-                          }
-                        ).maintenanceWindows ?? [])
-                      : []
-                  }
-                  onChange={(next) => {
-                    updateSelectedNodeData({ maintenanceWindows: next });
-                  }}
-                />
-                <div className="flex flex-col gap-1">
-                  {(() => {
-                    const skillIssues = findIssuesForField(
-                      [...validation.errors, ...validation.warnings],
-                      selectedNode.id,
-                      "skills",
-                    );
-                    return skillIssues.length > 0 ? (
-                      <div className="flex items-center gap-1.5">
-                        <FieldErrorIndicator issues={skillIssues} />
-                        <span className="text-muted-foreground text-[11px]">
-                          {skillIssues[0]?.message}
-                        </span>
-                      </div>
-                    ) : null;
-                  })()}
-                  <SkillsField
-                    value={
-                      Array.isArray((selectedNode.data as { skills?: unknown }).skills)
-                        ? ((selectedNode.data as { skills: string[] }).skills as string[])
-                        : []
-                    }
-                    onChange={(next) => {
-                      updateSelectedNodeData({ skills: next });
-                    }}
-                    label="Required skills"
-                    placeholder="e.g. capping, qc"
-                    id="inspector-skills"
-                    helpText="Empty = any worker on shift can take the station."
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label
-                    htmlFor="inspector-rework"
-                    className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium"
-                  >
-                    Rework target
-                    <FieldErrorIndicator
-                      issues={findIssuesForField(
-                        [...validation.errors, ...validation.warnings],
-                        selectedNode.id,
-                        "reworkTargetNodeId",
-                      )}
-                    />
-                  </label>
-                  <select
-                    id="inspector-rework"
-                    value={
-                      (selectedNode.data as { reworkTargetNodeId?: string }).reworkTargetNodeId ??
-                      ""
-                    }
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      updateSelectedNodeData({
-                        reworkTargetNodeId: v.length > 0 ? v : undefined,
-                      });
-                    }}
-                    className="border-input bg-background rounded-md border px-2 py-1.5 text-sm"
-                  >
-                    <option value="">None — scrap defects</option>
-                    {nodes
-                      .filter((n) => n.id !== selectedNode.id)
-                      .map((n) => {
-                        const d = n.data as { label?: string };
+                      className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+                    >
+                      {INSPECTOR_TAB_ORDER.map((tab) => {
+                        const hasError = tabIssues[tab].length > 0;
                         return (
-                          <option key={n.id} value={n.id}>
-                            {d.label ?? n.id}
+                          <option key={tab} value={tab}>
+                            {INSPECTOR_TAB_LABEL[tab]}
+                            {hasError ? " •" : ""}
                           </option>
                         );
                       })}
-                  </select>
-                  <p className="text-muted-foreground text-[11px]">
-                    Where defects route for another pass.
-                  </p>
-                </div>
-                {(selectedNode.data as { reworkTargetNodeId?: string }).reworkTargetNodeId ? (
-                  <NumberField
-                    id="inspector-rework-pass-limit"
-                    label="Max rework passes"
-                    labelSuffix={
-                      <FieldErrorIndicator
-                        issues={findIssuesForField(
-                          [...validation.errors, ...validation.warnings],
-                          selectedNode.id,
-                          "reworkPassLimit",
-                        )}
+                    </select>
+                  </div>
+                  <TabsList
+                    variant="line"
+                    className="border-border hidden h-9 w-full justify-start gap-0 rounded-none border-b px-3 sm:flex"
+                    data-testid="inspector-tabs"
+                  >
+                    {INSPECTOR_TAB_ORDER.map((tab) => {
+                      const issues = tabIssues[tab];
+                      return (
+                        <TabsTrigger
+                          key={tab}
+                          value={tab}
+                          onKeyDown={onTabKeyDown}
+                          data-testid={`inspector-tab-${tab}`}
+                          className="flex-none px-3"
+                        >
+                          <span>{INSPECTOR_TAB_LABEL[tab]}</span>
+                          {issues.length > 0 ? (
+                            <span
+                              data-testid={`inspector-tab-dot-${tab}`}
+                              className={`ml-1.5 inline-block h-1.5 w-1.5 rounded-full ${
+                                issues.some((i) => i.severity === "error")
+                                  ? "bg-sim-down"
+                                  : "bg-sim-setup"
+                              }`}
+                              aria-label={
+                                issues.some((i) => i.severity === "error")
+                                  ? "Validation error"
+                                  : "Validation warning"
+                              }
+                            />
+                          ) : null}
+                        </TabsTrigger>
+                      );
+                    })}
+                  </TabsList>
+                  <TabsContent value="basics">
+                    <CardContent className="space-y-3" data-testid="inspector-panel-basics">
+                      <div className="flex flex-col gap-1">
+                        <label
+                          htmlFor="inspector-label"
+                          className="text-muted-foreground text-xs font-medium"
+                        >
+                          Label
+                        </label>
+                        <Input
+                          id="inspector-label"
+                          type="text"
+                          value={String((selectedNode.data as { label?: unknown }).label ?? "")}
+                          onChange={(e) => {
+                            updateSelectedNodeData({ label: e.target.value });
+                          }}
+                        />
+                      </div>
+                      <DistributionField
+                        label="Cycle distribution"
+                        id="inspector-dist-kind"
+                        value={
+                          ((selectedNode.data as { cycleDistribution?: Distribution })
+                            .cycleDistribution ??
+                            constant(
+                              Number((selectedNode.data as { cycleMs?: unknown }).cycleMs ?? 100),
+                            )) as Distribution
+                        }
+                        onChange={(d) => {
+                          updateSelectedNodeData({ cycleDistribution: d });
+                        }}
                       />
-                    }
-                    value={(selectedNode.data as { reworkPassLimit?: number }).reworkPassLimit ?? 3}
-                    min={1}
-                    max={10}
-                    step={1}
-                    helperText="After this many passes, defects scrap. Default 3."
-                    onChange={(n) => {
-                      const v = Math.floor(n);
-                      updateSelectedNodeData({ reworkPassLimit: v === 3 ? undefined : v });
-                    }}
-                  />
-                ) : null}
-              </Accordion>
-            </CardContent>
+                      <div className="-mt-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInputAnalyzerOpen(true);
+                          }}
+                          className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[11px] underline-offset-2 hover:underline"
+                          title="Open the Input Analyzer to fit a distribution to measured cycle times"
+                        >
+                          🧪 Fit from real data…
+                        </button>
+                      </div>
+                      {/* VROL-744 — show this station's cycle vs line median when a run exists. */}
+                      {result && runMeta
+                        ? (() => {
+                            const stationIdx = runMeta.chainNodeIds.indexOf(selectedNode.id);
+                            if (stationIdx === -1) return null;
+                            const ownCycle =
+                              result.perStationOee[stationIdx]?.idealCycleTimeMs ?? 0;
+                            if (ownCycle === 0) return null;
+                            const cs = cycleStats(result);
+                            const pct =
+                              cs.medianMs > 0 ? Math.round((ownCycle / cs.medianMs) * 100) : 100;
+                            const tone =
+                              pct >= 150
+                                ? "text-sim-down-foreground"
+                                : pct >= 110
+                                  ? "text-sim-setup-foreground"
+                                  : "text-muted-foreground";
+                            return (
+                              <div className={`text-xs ${tone}`}>
+                                Cycle: {Math.round(ownCycle)} ms · {String(pct)}% of line median (
+                                {Math.round(cs.medianMs)} ms)
+                              </div>
+                            );
+                          })()
+                        : null}
+                      <NumberField
+                        id="inspector-defect"
+                        label="Defect rate"
+                        labelSuffix={
+                          <FieldErrorIndicator
+                            issues={findIssuesForField(allIssues, selectedNode.id, "defectRate")}
+                          />
+                        }
+                        value={Number(
+                          (selectedNode.data as { defectRate?: unknown }).defectRate ?? 0,
+                        )}
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        helperText="Probability that a finished part is defective (0–1). Raises scrap rate; drops Line OEE × Quality. Each defect cascades to scrap or rework."
+                        inputClassName="font-mono tabular-nums w-32"
+                        onChange={(n) => {
+                          updateSelectedNodeData({ defectRate: n });
+                        }}
+                      />
+                      <NumberField
+                        id="inspector-capacity"
+                        label="Parallel cycles"
+                        labelSuffix={
+                          <FieldErrorIndicator
+                            issues={findIssuesForField(allIssues, selectedNode.id, "capacity")}
+                          />
+                        }
+                        value={Number((selectedNode.data as { capacity?: unknown }).capacity ?? 1)}
+                        min={1}
+                        max={10}
+                        step={1}
+                        helperText="Number of parts this station processes simultaneously. Lifts throughput linearly when this is the bottleneck. Default 1."
+                        onChange={(n) => {
+                          const v = Math.max(1, Math.min(10, Math.floor(n)));
+                          updateSelectedNodeData({ capacity: v === 1 ? undefined : v });
+                        }}
+                      />
+                      <SetupTimeEditor
+                        value={
+                          (selectedNode.data as { setupDistribution?: Distribution })
+                            .setupDistribution ?? null
+                        }
+                        onChange={(d) => {
+                          updateSelectedNodeData({ setupDistribution: d ?? undefined });
+                        }}
+                      />
+                      {/* VROL-662 — CustomStation description. Only shown when
+                          the station is a "custom" type. Lives in Basics
+                          because it explains what the station represents. */}
+                      {(selectedNode.data as { stationType?: string }).stationType === "custom" ? (
+                        <div className="flex flex-col gap-1">
+                          <label
+                            htmlFor="inspector-custom-description"
+                            className="text-muted-foreground text-xs font-medium"
+                          >
+                            What does this represent?
+                          </label>
+                          <textarea
+                            id="inspector-custom-description"
+                            rows={2}
+                            placeholder="e.g. Decanter, Mixing tank, Drying oven"
+                            value={
+                              (selectedNode.data as { customDescription?: string })
+                                .customDescription ?? ""
+                            }
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              updateSelectedNodeData({
+                                customDescription: v.length > 0 ? v : undefined,
+                              });
+                            }}
+                            className="border-input bg-background rounded-md border px-2 py-1.5 text-sm"
+                          />
+                        </div>
+                      ) : null}
+                      {/* VROL-281 — Description + Tags fill out the "all standard
+                          fields" set for the station property panel. */}
+                      <div className="flex flex-col gap-1.5">
+                        <label
+                          htmlFor="inspector-description"
+                          className="text-muted-foreground text-xs font-medium"
+                        >
+                          Description
+                        </label>
+                        <textarea
+                          id="inspector-description"
+                          rows={2}
+                          placeholder="Notes for this station…"
+                          className="border-border bg-background focus-visible:ring-ring/40 block w-full resize-y rounded-md border px-2 py-1 text-xs focus-visible:ring-2 focus-visible:outline-none"
+                          value={String(
+                            (selectedNode.data as { description?: unknown }).description ?? "",
+                          )}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            updateSelectedNodeData({
+                              description: value.trim() === "" ? undefined : value,
+                            });
+                          }}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label
+                          htmlFor="inspector-tags"
+                          className="text-muted-foreground text-xs font-medium"
+                        >
+                          Tags
+                        </label>
+                        <Input
+                          id="inspector-tags"
+                          type="text"
+                          placeholder="comma,separated,tags"
+                          value={(() => {
+                            const t = (selectedNode.data as { tags?: unknown }).tags;
+                            return Array.isArray(t) ? t.join(", ") : "";
+                          })()}
+                          onChange={(e) => {
+                            const next = e.target.value
+                              .split(",")
+                              .map((s) => s.trim())
+                              .filter((s) => s.length > 0);
+                            updateSelectedNodeData({
+                              tags: next.length === 0 ? undefined : next,
+                            });
+                          }}
+                        />
+                      </div>
+                    </CardContent>
+                  </TabsContent>
+                  <TabsContent value="schedule">
+                    <CardContent className="space-y-3" data-testid="inspector-panel-schedule">
+                      <MaintenanceWindowsEditor
+                        value={
+                          Array.isArray(
+                            (selectedNode.data as { maintenanceWindows?: unknown })
+                              .maintenanceWindows,
+                          )
+                            ? ((
+                                selectedNode.data as {
+                                  maintenanceWindows: { startMs: number; endMs: number }[];
+                                }
+                              ).maintenanceWindows ?? [])
+                            : []
+                        }
+                        onChange={(next) => {
+                          updateSelectedNodeData({ maintenanceWindows: next });
+                        }}
+                      />
+                      <div className="flex flex-col gap-1">
+                        {(() => {
+                          const skillIssues = findIssuesForField(
+                            allIssues,
+                            selectedNode.id,
+                            "skills",
+                          );
+                          return skillIssues.length > 0 ? (
+                            <div className="flex items-center gap-1.5">
+                              <FieldErrorIndicator issues={skillIssues} />
+                              <span className="text-muted-foreground text-[11px]">
+                                {skillIssues[0]?.message}
+                              </span>
+                            </div>
+                          ) : null;
+                        })()}
+                        <SkillsField
+                          value={
+                            Array.isArray((selectedNode.data as { skills?: unknown }).skills)
+                              ? ((selectedNode.data as { skills: string[] }).skills as string[])
+                              : []
+                          }
+                          onChange={(next) => {
+                            updateSelectedNodeData({ skills: next });
+                          }}
+                          label="Required skills"
+                          placeholder="e.g. capping, qc"
+                          id="inspector-skills"
+                          helpText="Empty = any worker on shift can take the station."
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label
+                          htmlFor="inspector-rework"
+                          className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium"
+                        >
+                          Rework target
+                          <FieldErrorIndicator
+                            issues={findIssuesForField(
+                              allIssues,
+                              selectedNode.id,
+                              "reworkTargetNodeId",
+                            )}
+                          />
+                        </label>
+                        <select
+                          id="inspector-rework"
+                          value={
+                            (selectedNode.data as { reworkTargetNodeId?: string })
+                              .reworkTargetNodeId ?? ""
+                          }
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            updateSelectedNodeData({
+                              reworkTargetNodeId: v.length > 0 ? v : undefined,
+                            });
+                          }}
+                          className="border-input bg-background rounded-md border px-2 py-1.5 text-sm"
+                        >
+                          <option value="">None — scrap defects</option>
+                          {nodes
+                            .filter((n) => n.id !== selectedNode.id)
+                            .map((n) => {
+                              const d = n.data as { label?: string };
+                              return (
+                                <option key={n.id} value={n.id}>
+                                  {d.label ?? n.id}
+                                </option>
+                              );
+                            })}
+                        </select>
+                        <p className="text-muted-foreground text-[11px]">
+                          Where defects route for another pass.
+                        </p>
+                      </div>
+                      {(selectedNode.data as { reworkTargetNodeId?: string }).reworkTargetNodeId ? (
+                        <NumberField
+                          id="inspector-rework-pass-limit"
+                          label="Max rework passes"
+                          labelSuffix={
+                            <FieldErrorIndicator
+                              issues={findIssuesForField(
+                                allIssues,
+                                selectedNode.id,
+                                "reworkPassLimit",
+                              )}
+                            />
+                          }
+                          value={
+                            (selectedNode.data as { reworkPassLimit?: number }).reworkPassLimit ?? 3
+                          }
+                          min={1}
+                          max={10}
+                          step={1}
+                          helperText="After this many passes, defects scrap. Default 3."
+                          onChange={(n) => {
+                            const v = Math.floor(n);
+                            updateSelectedNodeData({
+                              reworkPassLimit: v === 3 ? undefined : v,
+                            });
+                          }}
+                        />
+                      ) : null}
+                      {/* VROL-286 — customParams editor. Lives in Schedule
+                          because most custom params are time-related. */}
+                      <CustomParamsField
+                        value={
+                          ((selectedNode.data as { customParams?: readonly CustomParam[] })
+                            .customParams ?? []) as readonly CustomParam[]
+                        }
+                        onChange={(next) => {
+                          updateSelectedNodeData({
+                            customParams: next.length > 0 ? next : undefined,
+                          });
+                        }}
+                      />
+                    </CardContent>
+                  </TabsContent>
+                  <TabsContent value="recipe-cost">
+                    <CardContent className="space-y-3" data-testid="inspector-panel-recipe-cost">
+                      {settings.products.enabled && settings.products.list.length > 0 ? (
+                        <PerProductCyclesEditor
+                          products={settings.products.list}
+                          value={
+                            (selectedNode.data as { cycleByProduct?: Record<string, Distribution> })
+                              .cycleByProduct ?? {}
+                          }
+                          onChange={(next) => {
+                            updateSelectedNodeData({
+                              cycleByProduct: Object.keys(next).length > 0 ? next : undefined,
+                            });
+                          }}
+                        />
+                      ) : null}
+                      {/* VROL-293 — Recipe editor section. Visible when materials
+                          are enabled. The recipe applies to the station that's
+                          selected when Run fires. */}
+                      {settings.materials.enabled ? (
+                        <div className="flex flex-col gap-1.5">
+                          <div className="text-muted-foreground text-xs font-medium">Recipe</div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <NumberField
+                              id="inspector-recipe-bottles"
+                              label="Bottles / part"
+                              value={settings.materials.bottlesPerPart}
+                              min={0}
+                              step={1}
+                              onChange={(n) => {
+                                setSettings((s) => ({
+                                  ...s,
+                                  materials: { ...s.materials, bottlesPerPart: Math.max(0, n) },
+                                }));
+                              }}
+                            />
+                            <NumberField
+                              id="inspector-recipe-caps"
+                              label="Caps / part"
+                              value={settings.materials.capsPerPart}
+                              min={0}
+                              step={1}
+                              onChange={(n) => {
+                                setSettings((s) => ({
+                                  ...s,
+                                  materials: { ...s.materials, capsPerPart: Math.max(0, n) },
+                                }));
+                              }}
+                            />
+                          </div>
+                          <p className="text-muted-foreground text-[11px]">
+                            Applied to whichever station is selected when Run fires. Set a qty to 0
+                            to drop that material from the recipe.
+                          </p>
+                        </div>
+                      ) : null}
+                      <div className="flex flex-col gap-1.5">
+                        <div className="text-muted-foreground text-xs font-medium">
+                          Cost & revenue
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <NumberField
+                            id="inspector-cost-hour"
+                            label="$ / hour"
+                            value={Number(
+                              (selectedNode.data as { costPerHour?: unknown }).costPerHour ?? 0,
+                            )}
+                            min={0}
+                            step={1}
+                            inputClassName="font-mono tabular-nums"
+                            onChange={(n) => {
+                              updateSelectedNodeData({ costPerHour: n });
+                            }}
+                          />
+                          <NumberField
+                            id="inspector-cost-cycle"
+                            label="$ / cycle"
+                            value={Number(
+                              (selectedNode.data as { costPerCycle?: unknown }).costPerCycle ?? 0,
+                            )}
+                            min={0}
+                            step={0.001}
+                            inputClassName="font-mono tabular-nums"
+                            onChange={(n) => {
+                              updateSelectedNodeData({ costPerCycle: n });
+                            }}
+                          />
+                          <NumberField
+                            id="inspector-cost-scrap"
+                            label="$ / scrap"
+                            value={Number(
+                              (selectedNode.data as { costPerScrap?: unknown }).costPerScrap ?? 0,
+                            )}
+                            min={0}
+                            step={0.01}
+                            inputClassName="font-mono tabular-nums"
+                            onChange={(n) => {
+                              updateSelectedNodeData({ costPerScrap: n });
+                            }}
+                          />
+                          <NumberField
+                            id="inspector-revenue"
+                            label="$ / good part"
+                            value={Number(
+                              (selectedNode.data as { revenuePerPart?: unknown }).revenuePerPart ??
+                                0,
+                            )}
+                            min={0}
+                            step={0.01}
+                            inputClassName="font-mono tabular-nums"
+                            onChange={(n) => {
+                              updateSelectedNodeData({ revenuePerPart: n });
+                            }}
+                          />
+                        </div>
+                        <p className="text-muted-foreground text-[11px]">
+                          Set $/h on machines, $/cycle on consumable stations, $/scrap on QC, and
+                          $/good part on the output sink. The Cost &amp; revenue card unlocks after
+                          the next Run.
+                        </p>
+                      </div>
+                    </CardContent>
+                  </TabsContent>
+                </Tabs>
+              );
+            })()}
           </Card>
         ) : null}
       </div>

@@ -7,50 +7,68 @@
  *   - Avg time-in-system vs buffer capacity (linear inflation past knee)
  *
  * Annotates the knee + current capacity + best-throughput points.
+ *
+ * VROL-849 — header / button / spinner / error states now live in
+ * AnalyticsCardShell. This file is the body only.
  */
 
-import { Play, TrendingUp } from "lucide-react";
+import { TrendingUp } from "lucide-react";
 
+import { AnalyticsCardShell } from "@/components/results/AnalyticsCardShell";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { WipCurveSummary } from "@/lib/wip-curve";
 
 interface WipCurveCardProps {
   readonly summary: WipCurveSummary | null;
   readonly running: boolean;
   readonly onRun: () => void;
+  readonly errorMessage?: string;
   readonly onApplyCapacity?: (capacity: number) => void;
 }
 
-export function WipCurveCard({ summary, running, onRun, onApplyCapacity }: WipCurveCardProps) {
+export function WipCurveCard({
+  summary,
+  running,
+  onRun,
+  errorMessage,
+  onApplyCapacity,
+}: WipCurveCardProps) {
+  const status = errorMessage
+    ? ("error" as const)
+    : running
+      ? ("running" as const)
+      : summary
+        ? ("done" as const)
+        : ("idle" as const);
   return (
-    <Card id="wip-curve">
-      <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
-        <div className="space-y-1">
-          <CardTitle className="font-heading flex items-center gap-2 text-base">
-            <TrendingUp className="h-4 w-4" aria-hidden /> Throughput vs WIP
-          </CardTitle>
-          <CardDescription>
-            Sweep inter-station buffer capacity and find the throughput knee. More WIP past the knee
-            only inflates time-in-system.
-          </CardDescription>
-        </div>
-        <Button size="sm" variant="outline" disabled={running} onClick={onRun} className="gap-1">
-          <Play className="h-3.5 w-3.5" aria-hidden />
-          {running ? "Scanning…" : summary ? "Re-run scan" : "Run scan"}
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {!summary ? (
-          <p className="text-muted-foreground text-sm">
-            Click <strong>Run scan</strong> to re-run the engine across buffer sizes
-            <span className="font-mono"> 1, 2, 4, 8, 16, 32, 64, 128</span> and plot the curve.
-          </p>
-        ) : (
-          <WipCurveBody summary={summary} onApplyCapacity={onApplyCapacity} />
-        )}
-      </CardContent>
-    </Card>
+    <AnalyticsCardShell
+      id="wip-curve"
+      title={
+        <>
+          <TrendingUp className="h-4 w-4" aria-hidden /> Throughput vs WIP
+        </>
+      }
+      description={
+        <>
+          Sweep inter-station buffer capacity and find the throughput knee. More WIP past the knee
+          only inflates time-in-system.
+        </>
+      }
+      status={status}
+      {...(running ? { statusLabel: "Scanning…" } : {})}
+      onRun={onRun}
+      runLabel="Run scan"
+      {...(errorMessage ? { errorMessage } : {})}
+    >
+      {!summary ? (
+        <p className="text-muted-foreground text-sm">
+          Click <strong>Run scan</strong> to re-run the engine across buffer sizes
+          <span className="font-mono"> 1, 2, 4, 8, 16, 32, 64, 128</span> and plot the curve.
+        </p>
+      ) : (
+        <WipCurveBody summary={summary} {...(onApplyCapacity ? { onApplyCapacity } : {})} />
+      )}
+    </AnalyticsCardShell>
   );
 }
 

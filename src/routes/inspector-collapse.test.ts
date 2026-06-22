@@ -1,11 +1,17 @@
 /**
  * VROL-788 — single-collapse-paradigm guard for the Inspector body.
  *
- * EditorPage's Inspector used to mix raw `<details>` HTML disclosure with
- * a hand-rolled button + conditional render for the "Advanced" section.
- * The story replaces both with shadcn `<Accordion>`. To keep a future
- * refactor from regressing the mix, this test reads the source and asserts
- * the Inspector body now consistently goes through Accordion.
+ * Originally guarded that the Inspector body consistently used shadcn
+ * `<Accordion>` for the Cost & revenue + Advanced disclosures (no raw
+ * `<details>` / hand-rolled toggles).
+ *
+ * VROL-773 — the Inspector is now tabbed (Basics / Schedule / Recipe & cost)
+ * and the Accordion disclosures have been replaced by tab panels. The
+ * remaining invariants worth pinning:
+ *   - no raw `<details>` JSX (the original paradigm regression we cared about);
+ *   - no hand-rolled "Show advanced" toggle (it stays gone);
+ *   - the three tab panels render so we don't accidentally collapse them
+ *     back into a single scroll under refactor.
  *
  * Scoped strictly to the Inspector body: the Scenarios drawer still uses
  * `<details>` for the per-scenario history panel, and that's intentional.
@@ -32,7 +38,7 @@ function inspectorBody(src: string): string {
   return src.slice(start, end);
 }
 
-describe("Inspector body collapse paradigm (VROL-788)", () => {
+describe("Inspector body collapse paradigm (VROL-788 / VROL-773)", () => {
   const src = readFileSync(EDITOR_PAGE_PATH, "utf8");
   const body = inspectorBody(src);
 
@@ -44,16 +50,14 @@ describe("Inspector body collapse paradigm (VROL-788)", () => {
     expect(body).not.toMatch(/<summary\s+className=/);
   });
 
-  it("uses the shadcn Accordion for Cost & revenue", () => {
-    expect(body).toMatch(/title="Cost & revenue \(optional\)"/);
-  });
-
-  it("uses the shadcn Accordion for the Advanced section", () => {
-    expect(body).toMatch(/title="Advanced"/);
-  });
-
   it("does not re-introduce the hand-rolled Show/Hide advanced toggle", () => {
     expect(body).not.toMatch(/Show.{0,5}advanced/);
     expect(body).not.toMatch(/Hide.{0,5}advanced/);
+  });
+
+  it("renders the three VROL-773 tab panels", () => {
+    expect(body).toMatch(/<TabsContent value="basics">/);
+    expect(body).toMatch(/<TabsContent value="schedule">/);
+    expect(body).toMatch(/<TabsContent value="recipe-cost">/);
   });
 });

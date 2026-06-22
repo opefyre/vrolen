@@ -7,12 +7,14 @@
  * The compute happens in the parent (engine access, baseline opts). This
  * card is the visual surface — pass `summary` for results, `onRun` to
  * fire the sweep, `running` for the spinner state.
+ *
+ * VROL-849 — header / button / spinner / error states now live in
+ * AnalyticsCardShell. This file is the body only.
  */
 
-import { Play, Tornado } from "lucide-react";
+import { Tornado } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { AnalyticsCardShell } from "@/components/results/AnalyticsCardShell";
 import type { SensitivityRow, SensitivitySummary } from "@/lib/sensitivity-sweep";
 import { classifyTornadoRow } from "@/lib/tornado-classify";
 
@@ -20,39 +22,54 @@ interface SensitivityCardProps {
   readonly summary: SensitivitySummary | null;
   readonly running: boolean;
   readonly onRun: () => void;
+  readonly errorMessage?: string;
   /** Click a tornado row → open the row drilldown sheet (preferred). */
   readonly onClickRow?: (row: SensitivityRow) => void;
 }
 
-export function SensitivityCard({ summary, running, onRun, onClickRow }: SensitivityCardProps) {
+export function SensitivityCard({
+  summary,
+  running,
+  onRun,
+  errorMessage,
+  onClickRow,
+}: SensitivityCardProps) {
+  const status = errorMessage
+    ? ("error" as const)
+    : running
+      ? ("running" as const)
+      : summary
+        ? ("done" as const)
+        : ("idle" as const);
   return (
-    <Card id="sensitivity">
-      <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
-        <div className="space-y-1">
-          <CardTitle className="font-heading flex items-center gap-2 text-base">
-            <Tornado className="h-4 w-4" aria-hidden /> Sensitivity · tornado
-          </CardTitle>
-          <CardDescription>
-            Vary each station&rsquo;s cycle time ±20% and rank by throughput swing. Widest bar =
-            biggest lever.
-          </CardDescription>
-        </div>
-        <Button size="sm" variant="outline" disabled={running} onClick={onRun} className="gap-1">
-          <Play className="h-3.5 w-3.5" aria-hidden />
-          {running ? "Sweeping…" : summary ? "Re-run sweep" : "Run sweep"}
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {!summary ? (
-          <p className="text-muted-foreground text-sm">
-            Click <strong>Run sweep</strong> to fan out 2 × stations engine runs and rank where
-            cycle-time changes hurt or help throughput most.
-          </p>
-        ) : (
-          <SensitivityBody summary={summary} {...(onClickRow ? { onClickRow } : {})} />
-        )}
-      </CardContent>
-    </Card>
+    <AnalyticsCardShell
+      id="sensitivity"
+      title={
+        <>
+          <Tornado className="h-4 w-4" aria-hidden /> Sensitivity · tornado
+        </>
+      }
+      description={
+        <>
+          Vary each station&rsquo;s cycle time ±20% and rank by throughput swing. Widest bar =
+          biggest lever.
+        </>
+      }
+      status={status}
+      {...(running ? { statusLabel: "Sweeping…" } : {})}
+      onRun={onRun}
+      runLabel="Run sweep"
+      {...(errorMessage ? { errorMessage } : {})}
+    >
+      {!summary ? (
+        <p className="text-muted-foreground text-sm">
+          Click <strong>Run sweep</strong> to fan out 2 × stations engine runs and rank where
+          cycle-time changes hurt or help throughput most.
+        </p>
+      ) : (
+        <SensitivityBody summary={summary} {...(onClickRow ? { onClickRow } : {})} />
+      )}
+    </AnalyticsCardShell>
   );
 }
 

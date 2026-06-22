@@ -5,13 +5,16 @@
  *
  * Renders a heatmap grid so the buyer can see the response surface, plus the
  * winner with deltas vs current setting and a runner-up for comparison.
+ *
+ * VROL-849 — header / button / spinner / error states now live in
+ * AnalyticsCardShell. This file is the body only.
  */
 
-import { Crown, Play } from "lucide-react";
+import { Crown } from "lucide-react";
 import { useState } from "react";
 
+import { AnalyticsCardShell } from "@/components/results/AnalyticsCardShell";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { OptimizationCandidate, OptimizationSummary } from "@/lib/optimization-search";
 
 import { HeatmapCellDrilldown } from "./DrilldownSheets";
@@ -20,38 +23,53 @@ interface OptimizationCardProps {
   readonly summary: OptimizationSummary | null;
   readonly running: boolean;
   readonly onRun: () => void;
+  readonly errorMessage?: string;
   readonly onApply?: (candidate: OptimizationCandidate) => void;
 }
 
-export function OptimizationCard({ summary, running, onRun, onApply }: OptimizationCardProps) {
+export function OptimizationCard({
+  summary,
+  running,
+  onRun,
+  errorMessage,
+  onApply,
+}: OptimizationCardProps) {
+  const status = errorMessage
+    ? ("error" as const)
+    : running
+      ? ("running" as const)
+      : summary
+        ? ("done" as const)
+        : ("idle" as const);
   return (
-    <Card id="optimization">
-      <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
-        <div className="space-y-1">
-          <CardTitle className="font-heading flex items-center gap-2 text-base">
-            <Crown className="h-4 w-4" aria-hidden /> Optimization · best combo
-          </CardTitle>
-          <CardDescription>
-            2-D grid-search over buffer capacity × cycle-time on the bottleneck. Averaged across
-            seeds; the highest-throughput cell wins.
-          </CardDescription>
-        </div>
-        <Button size="sm" variant="outline" disabled={running} onClick={onRun} className="gap-1">
-          <Play className="h-3.5 w-3.5" aria-hidden />
-          {running ? "Searching…" : summary ? "Re-run search" : "Run search"}
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {!summary ? (
-          <p className="text-muted-foreground text-sm">
-            Click <strong>Run search</strong> to fire a 2-D sweep (buffer levels × cycle multipliers
-            on the bottleneck) and surface the best combo for this line.
-          </p>
-        ) : (
-          <OptimizationBody summary={summary} onApply={onApply} />
-        )}
-      </CardContent>
-    </Card>
+    <AnalyticsCardShell
+      id="optimization"
+      title={
+        <>
+          <Crown className="h-4 w-4" aria-hidden /> Optimization · best combo
+        </>
+      }
+      description={
+        <>
+          2-D grid-search over buffer capacity × cycle-time on the bottleneck. Averaged across
+          seeds; the highest-throughput cell wins.
+        </>
+      }
+      status={status}
+      {...(running ? { statusLabel: "Searching…" } : {})}
+      onRun={onRun}
+      runLabel="Run search"
+      {...(errorMessage ? { errorMessage } : {})}
+    >
+      {!summary ? (
+        <p className="text-muted-foreground text-sm">
+          Click <strong>Run search</strong> to fire a 2-D sweep (buffer levels × cycle multipliers
+          on the bottleneck) and surface the best combo for this line.
+        </p>
+      ) : (
+        <OptimizationBody summary={summary} {...(onApply ? { onApply } : {})} />
+      )}
+    </AnalyticsCardShell>
   );
 }
 

@@ -5,6 +5,10 @@
  *
  * Reference: Banks et al., "Discrete-Event System Simulation" Ch. 12;
  * Arena uses the same t-distribution half-width on every reported KPI.
+ *
+ * VROL-850 — `seeds: number[]` now ride along on the summary so the
+ * Replications card can decide between a paired t-test (matched seeds)
+ * vs a Welch t-test (independent samples) when comparing to a baseline.
  */
 
 import type { ChainResult } from "@/engine";
@@ -30,6 +34,11 @@ export interface ReplicationKpi {
 export interface ReplicationSummary {
   /** How many replications were averaged. */
   readonly n: number;
+  /**
+   * PRNG seed used for each replication, aligned 1:1 with each KPI's
+   * `values` array. Lets the consumer decide paired vs independent stats.
+   */
+  readonly seeds: readonly number[];
   readonly kpis: readonly ReplicationKpi[];
 }
 
@@ -109,8 +118,15 @@ function buildKpi(
  * Summarise a batch of replications. The first replication is treated as
  * canonical for the canvas/playback layers; this function only crunches
  * cross-replication stats for the UI to display.
+ *
+ * `seeds` MUST be aligned 1:1 with `results`. If callers omit it (legacy
+ * path), we fall back to indices so paired-vs-Welch flip still works
+ * deterministically (each entry is unique).
  */
-export function summarizeReplications(results: readonly ChainResult[]): ReplicationSummary {
+export function summarizeReplications(
+  results: readonly ChainResult[],
+  seeds?: readonly number[],
+): ReplicationSummary {
   const n = results.length;
   const completed = results.map((r) => r.completed);
   const throughputPerHr = results.map((r) => r.throughputLambda * 3_600_000);
@@ -121,8 +137,11 @@ export function summarizeReplications(results: readonly ChainResult[]): Replicat
   const ms = (x: number) => `${Math.round(x).toLocaleString()} ms`;
   const pct = (x: number) => `${x.toFixed(1)}%`;
   const perHr = (x: number) => `${Math.round(x).toLocaleString()} /h`;
+  const seedList: readonly number[] =
+    seeds && seeds.length === n ? [...seeds] : Array.from({ length: n }, (_, i) => i);
   return {
     n,
+    seeds: seedList,
     kpis: [
       buildKpi("Completed", completed, intFmt),
       buildKpi("Throughput", throughputPerHr, perHr),
@@ -142,4 +161,22 @@ export function noisinessSignal(summary: ReplicationSummary): number {
   if (!throughput) return 0;
   if (throughput.mean === 0) return 0;
   return throughput.stddev / throughput.mean;
+}
+
+/**
+ * VROL-850 — does the seed list on each side match exactly (same values
+ * in the same order)? Used by the Replications card to pick paired-t by
+ * default when both runs used the same seeds (CRN), Welch otherwise.
+ */
+export function seedsMatch(
+  a: readonly number[] | undefined,
+  b: readonly number[] | undefined,
+): boolean {
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+  if (a.length === 0) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
