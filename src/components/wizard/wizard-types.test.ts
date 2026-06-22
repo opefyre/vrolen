@@ -21,8 +21,18 @@ import {
 } from "./wizard-types";
 
 describe("Wizard step validators (VROL-871)", () => {
-  it("validateShape passes for the default draft", () => {
-    expect(validateShape(defaultDraft()).valid).toBe(true);
+  it("validateShape fails for the default draft — no silent preselect (VROL-821)", () => {
+    // VROL-821 — the user must click a shape card before they can leave
+    // step 1. The default draft seeds `shapeKind: null` so this validator
+    // reports an error and the wizard's Next button stays disabled.
+    const result = validateShape(defaultDraft());
+    expect(result.valid).toBe(false);
+    expect(result.errors["shapeKind"]).toMatch(/shape/i);
+  });
+
+  it("validateShape passes once the user picks a known shape kind (VROL-821)", () => {
+    const result = validateShape({ ...defaultDraft(), shapeKind: "single-line" });
+    expect(result.valid).toBe(true);
   });
 
   it("validateShape fails when shapeKind is not one of the known kinds", () => {
@@ -189,8 +199,11 @@ describe("Wizard step validators (VROL-871)", () => {
     expect(result.errors["step-6"]).toBeDefined();
   });
 
-  it("validateReview passes for the default draft", () => {
-    expect(validateReview(defaultDraft()).valid).toBe(true);
+  it("validateReview passes once shape is picked and the draft is otherwise default", () => {
+    // VROL-821 — review rolls up validateShape, so we have to seed a real
+    // shapeKind for the rollup to pass.
+    const draft = { ...defaultDraft(), shapeKind: "single-line" as const };
+    expect(validateReview(draft).valid).toBe(true);
   });
 
   it("linearConnections builds N-1 edges for N stations", () => {

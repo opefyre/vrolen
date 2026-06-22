@@ -10,6 +10,15 @@
  * If `whenVisible()` later flips false, the tip auto-dismisses (no manual
  * close needed). The "Don't show again" link writes the tip id to the
  * persisted dismissed set via `dismissCoachTip`.
+ *
+ * VROL-813 — the coach renders nothing until the user has Skipped or
+ * Finished the first-run OnboardingTour. Both surfaces firing on the
+ * same /editor visit overwhelmed first-time users; the tour teaches the
+ * core workflow and the coach hands out follow-on micro-nudges, so the
+ * coach now waits politely behind `hasSeenOnboarding()`. If the user
+ * restarts the tour via the help icon later, the tour-seen flag is
+ * already sticky, so the coach keeps running — only the genuine first
+ * visit suppresses both surfaces at once.
  */
 
 import type { ReactNode } from "react";
@@ -20,7 +29,9 @@ import { Lightbulb } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { dismissCoachTip, getCoachDismissed } from "@/lib/coach-state";
+import { useReducedMotion } from "@/lib/use-reduced-motion";
 import { cn } from "@/lib/utils";
+import { hasSeenOnboarding } from "@/routes/onboarding-state";
 
 export interface CoachTipAction {
   readonly label: string;
@@ -44,6 +55,20 @@ export function Coach({ tips, className }: CoachProps): ReactNode {
   // Bumping this counter forces a re-read of the dismissed set so the
   // active tip falls away after the user clicks "Don't show again".
   const [dismissedNonce, setDismissedNonce] = useState(0);
+  // VROL-801 — skip the right-slide animation when the user prefers
+  // reduced motion. The tip still appears; it just doesn't translate in.
+  const reducedMotion = useReducedMotion();
+
+  // VROL-813 — suppress the coach entirely until the user has Skipped or
+  // Finished the first-run OnboardingTour. The tour and the coach used
+  // to fire on the same visit, which felt noisy; defer the coach until
+  // the tour's persistence flag flips so a brand-new user only sees the
+  // tour. After the tour is done (Skip or Finish both call
+  // `markOnboardingSeen`) `hasSeenOnboarding()` returns true on the
+  // next render and the coach starts surfacing tips normally. The
+  // check sits after the hooks above so the Rules of Hooks aren't
+  // violated by a conditional early return.
+  if (!hasSeenOnboarding()) return null;
 
   const dismissed = getCoachDismissed();
   void dismissedNonce; // keep React aware of the dependency
@@ -65,7 +90,7 @@ export function Coach({ tips, className }: CoachProps): ReactNode {
       aria-live="polite"
       className={cn(
         "absolute right-3 bottom-20 z-30 max-w-[280px] shadow-md",
-        "animate-in slide-in-from-right-2 fade-in-0 duration-300",
+        reducedMotion ? null : "animate-in slide-in-from-right-2 fade-in-0 duration-300",
         className,
       )}
     >

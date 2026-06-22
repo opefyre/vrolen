@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useReducedMotion } from "@/lib/use-reduced-motion";
 
 import {
   clearOnboardingStep,
@@ -101,6 +102,10 @@ export function OnboardingTour({ open, onClose }: OnboardingTourProps) {
   // there the in-memory cache + saveOnboardingStep keep it in sync.
   const [stepIdx, setStepIdx] = useState<number>(() => clampStep(loadOnboardingStep()));
   const [rect, setRect] = useState<TargetRect | null>(null);
+  // VROL-801 — drop the pulse + position-transition on the target ring so
+  // a user with vestibular sensitivity isn't pulled around the screen as
+  // the tour steps swap targets.
+  const reducedMotion = useReducedMotion();
 
   const step = useMemo<TourStep | null>(
     () => (stepIdx < STEPS.length ? (STEPS[stepIdx] ?? null) : null),
@@ -309,13 +314,17 @@ export function OnboardingTour({ open, onClose }: OnboardingTourProps) {
           can see what's being pointed at. Skipped on the welcome step. */}
       {rect ? (
         <div
-          className="ring-primary pointer-events-none fixed z-40 animate-pulse rounded-md ring-2 ring-offset-2 ring-offset-transparent"
+          className={
+            reducedMotion
+              ? "ring-primary pointer-events-none fixed z-40 rounded-md ring-2 ring-offset-2 ring-offset-transparent"
+              : "ring-primary pointer-events-none fixed z-40 animate-pulse rounded-md ring-2 ring-offset-2 ring-offset-transparent"
+          }
           style={{
             top: rect.top - 4,
             left: rect.left - 4,
             width: rect.width + 8,
             height: rect.height + 8,
-            transition: "all 200ms ease",
+            transition: reducedMotion ? undefined : "all 200ms ease",
           }}
           aria-hidden
         />

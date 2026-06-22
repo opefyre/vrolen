@@ -1,15 +1,15 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 
 import { AppShell } from "@/components/AppShell";
 import { GlobalCommandPalette } from "@/components/global-command-palette";
 import { RouteAnnouncer } from "@/components/RouteAnnouncer";
 import { Toaster } from "@/components/Toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { usePathname } from "@/lib/spa-nav";
+import { navigate, usePathname } from "@/lib/spa-nav";
 import DemoPage from "@/routes/DemoPage";
 import DesignTokens from "@/routes/DesignTokens";
-import HelpPage from "@/routes/HelpPage";
 import LandingPage from "@/routes/LandingPage";
+import LearnPage from "@/routes/LearnPage";
 import RunPage from "@/routes/RunPage";
 import TemplatesPage from "@/routes/TemplatesPage";
 
@@ -33,9 +33,20 @@ export default function App() {
   // VROL-829 — pathname comes from the SPA-nav store so route changes via
   // history.pushState (no full reload) re-render the page tree.
   const pathname = usePathname();
+
+  // VROL-834 — /help is the legacy route. Redirect to /learn?section=glossary
+  // and replace the entry so back doesn't bounce. Runs as an effect so the
+  // first render still mounts a valid page (the LearnPage) instead of an
+  // intermediate blank frame.
+  useEffect(() => {
+    if (pathname === "/help") {
+      navigate("/learn?section=glossary", { replace: true });
+    }
+  }, [pathname]);
+
   let page;
   if (pathname === "/design-tokens") page = <DesignTokens />;
-  else if (pathname === "/help") page = <HelpPage />;
+  else if (pathname === "/learn" || pathname === "/help") page = <LearnPage />;
   else if (pathname === "/templates") page = <TemplatesPage />;
   else if (pathname === "/demo") page = <DemoPage />;
   else if (pathname === "/run") page = <RunPage />;

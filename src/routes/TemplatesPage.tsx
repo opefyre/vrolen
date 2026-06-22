@@ -6,13 +6,21 @@
  *
  * VROL-446 — explicit "Bottling line" hero block at the top so the
  * canonical example is the first thing a visitor sees.
+ *
+ * VROL-804 — adds a free-text filter so a long preset list stays
+ * scannable. When the filter matches nothing, renders the shared
+ * `EmptyState` primitive with a single "Clear filter" CTA per the
+ * canonical CTA tree (primary → optional secondary → tertiary link).
  */
 
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, SearchX } from "lucide-react";
+import { useMemo, useState } from "react";
 
+import { EmptyState } from "@/components/EmptyState";
 import { TopologyPreview } from "@/components/landing/topology-preview";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { PRESETS, setPendingPreset, type Preset } from "@/lib/presets";
 import { navigate } from "@/lib/spa-nav";
 
@@ -22,6 +30,12 @@ function loadInto(presetId: string): void {
   // VROL-829 — SPA nav so the editor's lazy chunk is reused (no full reload).
   setPendingPreset(presetId);
   navigate("/editor");
+}
+
+function matchesFilter(preset: Preset, query: string): boolean {
+  if (query.length === 0) return true;
+  const haystack = `${preset.title} ${preset.blurb} ${preset.highlight}`.toLowerCase();
+  return haystack.includes(query);
 }
 
 function PresetRow({ preset }: { readonly preset: Preset }) {
@@ -54,8 +68,13 @@ function PresetRow({ preset }: { readonly preset: Preset }) {
 }
 
 export default function TemplatesPage() {
-  const hero = PRESETS.find((p) => p.id === HERO_ID);
-  const rest = PRESETS.filter((p) => p.id !== HERO_ID);
+  const [filter, setFilter] = useState<string>("");
+  const trimmed = filter.trim().toLowerCase();
+
+  const filtered = useMemo(() => PRESETS.filter((p) => matchesFilter(p, trimmed)), [trimmed]);
+  const hero = filtered.find((p) => p.id === HERO_ID);
+  const rest = filtered.filter((p) => p.id !== HERO_ID);
+
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
       <div>
@@ -65,6 +84,48 @@ export default function TemplatesPage() {
           run settings with the preset's editable copy.
         </p>
       </div>
+      <div>
+        <label htmlFor="templates-filter" className="sr-only">
+          Filter templates
+        </label>
+        <Input
+          id="templates-filter"
+          type="search"
+          placeholder="Filter templates (e.g. bottling, parallel, breakdown)"
+          value={filter}
+          onChange={(e) => {
+            setFilter(e.target.value);
+          }}
+          autoComplete="off"
+          data-testid="templates-filter"
+        />
+      </div>
+
+      {filtered.length === 0 ? (
+        <EmptyState
+          icon={SearchX}
+          title="No templates match"
+          body={
+            <>
+              Nothing matches &ldquo;{filter.trim()}&rdquo;. Try a shorter query or clear the filter
+              to see every template.
+            </>
+          }
+          action={
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                setFilter("");
+              }}
+              data-testid="templates-clear-filter"
+            >
+              Clear filter
+            </Button>
+          }
+        />
+      ) : null}
+
       {hero ? (
         <section className="space-y-2">
           <h2 className="font-heading flex items-center gap-2 text-lg font-semibold">
@@ -77,14 +138,18 @@ export default function TemplatesPage() {
           <PresetRow preset={hero} />
         </section>
       ) : null}
-      <section className="space-y-2">
-        <h2 className="font-heading text-lg font-semibold">More templates</h2>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {rest.map((p) => (
-            <PresetRow key={p.id} preset={p} />
-          ))}
-        </div>
-      </section>
+      {rest.length > 0 ? (
+        <section className="space-y-2">
+          <h2 className="font-heading text-lg font-semibold">
+            {hero ? "More templates" : "Templates"}
+          </h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {rest.map((p) => (
+              <PresetRow key={p.id} preset={p} />
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

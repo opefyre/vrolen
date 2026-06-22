@@ -16,6 +16,7 @@ describe("route-meta (VROL-806)", () => {
       "/",
       "/editor",
       "/templates",
+      "/learn",
       "/help",
       "/run",
       "/iso-demo",
@@ -37,7 +38,7 @@ describe("route-meta (VROL-806)", () => {
   });
 
   it("getRouteMeta returns the matching entry for a known path", () => {
-    expect(getRouteMeta("/help")).toEqual(ROUTE_META["/help"]);
+    expect(getRouteMeta("/learn")).toEqual(ROUTE_META["/learn"]);
     expect(getRouteMeta("/editor")).toEqual(ROUTE_META["/editor"]);
   });
 

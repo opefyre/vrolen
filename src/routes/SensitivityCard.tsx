@@ -14,6 +14,7 @@ import { Play, Tornado } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { SensitivityRow, SensitivitySummary } from "@/lib/sensitivity-sweep";
+import { classifyTornadoRow } from "@/lib/tornado-classify";
 
 interface SensitivityCardProps {
   readonly summary: SensitivitySummary | null;
@@ -76,6 +77,10 @@ function SensitivityBody({
   // expressed as a fraction of (maxSwing). Center = baselinePerHour.
   const base = summary.baselinePerHour;
   const halfBarWidthPct = 45; // bar can span 45% on each side of center
+  // VROL-793 — sort by absolute magnitude descending so noise-floor bars
+  // sink to the bottom. The sweep already sorts that way, but sorting here
+  // too means we're robust to upstream changes.
+  const sortedRows = [...summary.rows].sort((a, b) => b.swingPerHour - a.swingPerHour);
   return (
     <div className="space-y-2">
       <div className="text-muted-foreground flex items-center justify-between text-[11px]">
@@ -89,15 +94,26 @@ function SensitivityBody({
         </span>
       </div>
       <div className="space-y-1.5">
-        {summary.rows.map((row) => {
+        {sortedRows.map((row) => {
           const lowOffset = row.lowPerHour - base;
           const highOffset = row.highPerHour - base;
           const lowPct = maxSwing > 0 ? (lowOffset / maxSwing) * halfBarWidthPct : 0;
           const highPct = maxSwing > 0 ? (highOffset / maxSwing) * halfBarWidthPct : 0;
           const left = 50 + Math.min(lowPct, highPct);
           const width = Math.abs(highPct - lowPct);
-          const helpsWhenSlower = row.lowPerHour < row.highPerHour;
-          const barColor = helpsWhenSlower ? "bg-sim-running/70" : "bg-sim-down/70";
+          const tone = classifyTornadoRow(row, maxSwing);
+          const barColor =
+            tone === "positive"
+              ? "bg-sim-running/70"
+              : tone === "negative"
+                ? "bg-sim-down/70"
+                : "bg-muted-foreground/30";
+          const toneLabel =
+            tone === "positive"
+              ? "Speeding up helps throughput"
+              : tone === "negative"
+                ? "Slowing down helps throughput"
+                : "Below noise floor — not statistically meaningful for this run";
           const Wrapper = onClickRow ? "button" : "div";
           const wrapperProps = onClickRow
             ? {
@@ -113,9 +129,12 @@ function SensitivityBody({
             <Wrapper
               key={row.stationLabel}
               {...wrapperProps}
-              title={`${row.stationLabel}: ${fmt(row.lowPerHour)}/h (low) → ${fmt(row.highPerHour)}/h (high)${onClickRow ? " · click for detail" : ""}`}
+              data-tone={tone}
+              title={`${row.stationLabel}: ${fmt(row.lowPerHour)}/h (low) → ${fmt(row.highPerHour)}/h (high) · ${toneLabel}${onClickRow ? " · click for detail" : ""}`}
             >
-              <div className="text-foreground/80 w-28 shrink-0 truncate text-right font-medium">
+              <div
+                className={`w-28 shrink-0 truncate text-right font-medium ${tone === "noise" ? "text-muted-foreground" : "text-foreground/80"}`}
+              >
                 {row.stationLabel}
               </div>
               <div className="bg-muted/40 relative h-4 flex-1 rounded">
@@ -130,7 +149,13 @@ function SensitivityBody({
                 ±{fmt(row.swingPerHour / 2)}/h
               </div>
               <div
-                className={`w-12 shrink-0 text-right font-mono tabular-nums ${row.swingPct >= 5 ? "text-foreground" : "text-muted-foreground"}`}
+                className={`w-12 shrink-0 text-right font-mono tabular-nums ${
+                  tone === "noise"
+                    ? "text-muted-foreground"
+                    : row.swingPct >= 5
+                      ? "text-foreground"
+                      : "text-muted-foreground"
+                }`}
               >
                 {row.swingPct.toFixed(1)}%
               </div>
@@ -138,10 +163,23 @@ function SensitivityBody({
           );
         })}
       </div>
-      <p className="text-muted-foreground text-[10px]">
-        Bars span the throughput between the low and high run. Color = does slowing it down help
-        (green) or hurt (red) throughput.
-      </p>
+      {/* VROL-793 — colour-key legend so the divergent scale + noise-floor
+          grey are self-explanatory. Sits below the bars where the user
+          looks once they've scanned the chart. */}
+      <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
+        <span className="flex items-center gap-1.5">
+          <span className="bg-sim-running/70 inline-block h-2 w-3 rounded-sm" aria-hidden />
+          <span>Speed up = more throughput</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="bg-sim-down/70 inline-block h-2 w-3 rounded-sm" aria-hidden />
+          <span>Slow down = less</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="bg-muted-foreground/30 inline-block h-2 w-3 rounded-sm" aria-hidden />
+          <span>Below noise floor</span>
+        </span>
+      </div>
     </div>
   );
 }

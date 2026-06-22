@@ -195,6 +195,34 @@ export function ThroughputChart({
     return plotYFor(primaryRate[i]?.ratePerHour ?? 0);
   };
 
+  // VROL-807 — keyboard-driven hover. Tab into the SVG then ArrowLeft /
+  // ArrowRight to step through samples; the existing tooltip + live region
+  // narrate the active value.
+  const setHoverByIdx = (idx: number): void => {
+    if (hoverSeriesLength === 0) return;
+    const clamped = Math.max(0, Math.min(hoverSeriesLength - 1, idx));
+    const x = hoverXAtIdx(clamped);
+    // x is in view units; the tooltip overlay scales viewBox → pixel via
+    // the chart wrapper's flex sizing. We pass the view-unit X through
+    // because the tooltip absolute-positions off the SVG itself.
+    setHover({ idx: clamped, x });
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<SVGSVGElement>): void => {
+    if (hoverSeriesLength === 0) return;
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const last = hoverSeriesLength - 1;
+    const current = hover ? hover.idx : last;
+    const delta = e.key === "ArrowRight" ? 1 : -1;
+    setHoverByIdx(current + delta);
+  };
+  const onFocus = (): void => {
+    if (hover === null && hoverSeriesLength > 0) {
+      setHoverByIdx(hoverSeriesLength - 1);
+    }
+  };
+
   const onMove = (e: React.MouseEvent<SVGSVGElement>): void => {
     if (hoverSeriesLength === 0) return;
     const svg = e.currentTarget;
@@ -318,9 +346,24 @@ export function ThroughputChart({
         ref={svgRef}
         viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
         preserveAspectRatio="none"
-        className="text-sim-running block h-44 w-full"
+        className="focus-visible:ring-ring text-sim-running block h-44 w-full focus-visible:rounded-sm focus-visible:ring-2 focus-visible:outline-none"
         onMouseMove={onMove}
         onMouseLeave={onLeave}
+        role="img"
+        tabIndex={0}
+        aria-label={(() => {
+          // VROL-807 — concise chart summary so screen readers don't try
+          // to read every path/circle. Includes peak so the user has a
+          // sense of scale before stepping through with arrow keys.
+          const peak = view === "cumulative" ? maxY : Math.round(maxY);
+          const peakUnit = view === "cumulative" ? "parts" : "parts per hour";
+          const horizonSec = Math.round(horizonMs / 1000);
+          const last = samples.at(-1);
+          const totalParts = last ? last.lineCompleted : 0;
+          return `Throughput over time, ${view === "cumulative" ? "cumulative" : "instantaneous rate"} view: ${String(totalParts.toLocaleString())} parts completed across ${String(horizonSec)} seconds, peak ${String(peak.toLocaleString())} ${peakUnit}. Use arrow keys to step through samples.`;
+        })()}
+        onFocus={onFocus}
+        onKeyDown={onKeyDown}
       >
         {/* VROL-622 — Y-axis gridlines at 0, max/2, max. Label-less inside
             the SVG; the bottom row carries the numbers. */}
@@ -417,6 +460,16 @@ export function ThroughputChart({
           />
         ) : null}
       </svg>
+      {/* VROL-807 — visually-hidden live region. Mirrors the visible
+          tooltip so keyboard-only / screen-reader users hear the active
+          sample as it changes from ArrowLeft/ArrowRight. */}
+      <span className="sr-only" aria-live="polite">
+        {hoveredSample
+          ? `Sample at ${(hoveredSample.tMs / 1000).toFixed(1)} seconds: ${hoveredSample.lineCompleted.toLocaleString()} parts completed.`
+          : hoveredRate
+            ? `Sample at ${(hoveredRate.tMs / 1000).toFixed(1)} seconds: ${Math.round(hoveredRate.ratePerHour).toLocaleString()} parts per hour.`
+            : ""}
+      </span>
       <div className="text-muted-foreground mt-1 flex items-center justify-between text-[10px]">
         <span className="font-mono tabular-nums">
           {warmupMs > 0 ? `${(warmupMs / 1000).toFixed(1)}s` : "0s"}

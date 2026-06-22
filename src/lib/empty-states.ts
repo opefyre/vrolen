@@ -113,10 +113,65 @@ export const EMPTY_STATES: Readonly<Record<string, EmptyStateCopy>> = {
     title: "No templates available",
     body: "Built-in templates will appear here as we add them. In the meantime, build from scratch in the editor.",
   },
+  // VROL-804 — search-yielded-zero variants for surfaces with a filter.
+  "templates-filter-empty": {
+    title: "No templates match",
+    body: "Nothing matches the current filter. Try a shorter query, or clear the filter to see every template.",
+    cta: BUTTONS.CLEAR,
+  },
+  "learn-search-empty": {
+    title: "No matches",
+    body: "Nothing in the glossary matches your search. Try a shorter or different query.",
+    cta: BUTTONS.CLEAR,
+  },
+
+  // Learn / help --------------------------------------------------------
+  "learn-concepts-coming-soon": {
+    title: "Concepts coming soon",
+    body: "Worked walkthroughs of bottlenecks, Little's Law, and buffer sizing will land in v1.1.",
+  },
+  "learn-examples-coming-soon": {
+    title: "Examples coming soon",
+    body: "Step-by-step worked examples — load a preset, run, interpret — will land in v1.1.",
+  },
 } as const;
 
 /** Surface id type, derived so consumers get autocompletion + a typo guard. */
 export type EmptyStateId = keyof typeof EMPTY_STATES;
+
+/**
+ * VROL-804 — Canonical CTA tree shape.
+ *
+ * Every `<EmptyState>` action region matches this shape:
+ *  - `primary` (required when any CTA is offered) — the most useful next
+ *    action; rendered as a solid `Button`.
+ *  - `secondary` (optional) — a complementary action rendered as an outline
+ *    `Button`. Use when the user might reasonably want either; e.g. "Clear
+ *    filter" vs. "Browse all".
+ *  - `tertiary` (optional) — a low-emphasis link, typically routing
+ *    elsewhere ("See docs", "Back to glossary").
+ *
+ * No empty state ships with more than these three. The shape is exported so
+ * future call-sites can type their CTA bundle and a future lint can flag
+ * overflowing surfaces.
+ */
+export interface EmptyStateCtaTree {
+  readonly primary?: { readonly label: string; readonly onSelect: () => void };
+  readonly secondary?: { readonly label: string; readonly onSelect: () => void };
+  readonly tertiary?: { readonly label: string; readonly href: string };
+}
+
+/** Compile-time guard — every CTA bundle obeys the ≤ 3-action tree. */
+export function assertCtaTree(tree: EmptyStateCtaTree): EmptyStateCtaTree {
+  let count = 0;
+  if (tree.primary) count += 1;
+  if (tree.secondary) count += 1;
+  if (tree.tertiary) count += 1;
+  if (count > 3) {
+    throw new Error("EmptyState CTA tree exceeds 3 actions (primary + secondary + tertiary).");
+  }
+  return tree;
+}
 
 /**
  * Lookup helper. Returns the copy bundle for the given surface id; throws at

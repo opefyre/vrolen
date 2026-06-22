@@ -117,6 +117,27 @@ export function ReworkOverTimeChart({
     };
   }, [samples, secondarySamples, horizonMs, warmupMs, VIEW_W, VIEW_H]);
 
+  // VROL-807 — keyboard nav. ArrowLeft / ArrowRight steps through samples.
+  const setHoverByIdx = (idx: number): void => {
+    if (samples.length === 0) return;
+    const clamped = Math.max(0, Math.min(samples.length - 1, idx));
+    setHover({ idx: clamped });
+  };
+  const onKeyDown = (e: React.KeyboardEvent<SVGSVGElement>): void => {
+    if (samples.length === 0) return;
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const last = samples.length - 1;
+    const current = hover ? hover.idx : last;
+    const delta = e.key === "ArrowRight" ? 1 : -1;
+    setHoverByIdx(current + delta);
+  };
+  const onFocus = (): void => {
+    if (hover === null && samples.length > 0) {
+      setHoverByIdx(samples.length - 1);
+    }
+  };
+
   const onMove = (e: React.MouseEvent<SVGSVGElement>): void => {
     if (samples.length === 0) return;
     const svg = e.currentTarget;
@@ -204,9 +225,20 @@ export function ReworkOverTimeChart({
         ref={svgRef}
         viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
         preserveAspectRatio="none"
-        className="block h-44 w-full"
+        className="focus-visible:ring-ring block h-44 w-full focus-visible:rounded-sm focus-visible:ring-2 focus-visible:outline-none"
         onMouseMove={onMove}
         onMouseLeave={onLeave}
+        role="img"
+        tabIndex={0}
+        aria-label={(() => {
+          // VROL-807 — summarise the chart so screen readers don't read every
+          // path. Includes peak + active-station count so the reader knows
+          // what they're stepping through with arrow keys.
+          const horizonSec = Math.round(horizonMs / 1000);
+          return `Rework over time: ${String(activeStations.length)} station${activeStations.length === 1 ? "" : "s"} with rework, peak ${String(maxY.toLocaleString())} cumulative rework parts across ${String(horizonSec)} seconds. Use arrow keys to step through samples.`;
+        })()}
+        onFocus={onFocus}
+        onKeyDown={onKeyDown}
       >
         {[0, 0.5, 1].map((frac) => {
           const y = PAD_Y + (VIEW_H - PAD_Y * 2) * (1 - frac);
@@ -294,6 +326,18 @@ export function ReworkOverTimeChart({
             })
           : null}
       </svg>
+      {/* VROL-807 — live region for keyboard-driven sample navigation. */}
+      <span className="sr-only" aria-live="polite">
+        {hovered
+          ? `Sample at ${(hovered.tMs / 1000).toFixed(1)} seconds: ${activeStations
+              .map((stn) => {
+                const label = stationLabels[stn] ?? `Station ${String(stn + 1)}`;
+                const v = hovered.perStationRework[stn] ?? 0;
+                return `${label} ${String(v)} cumulative rework`;
+              })
+              .join(", ")}.`
+          : ""}
+      </span>
       <div className="text-muted-foreground mt-1 flex items-center justify-between text-[10px]">
         <span className="font-mono tabular-nums">
           {warmupMs > 0 ? `${(warmupMs / 1000).toFixed(1)}s` : "0s"}

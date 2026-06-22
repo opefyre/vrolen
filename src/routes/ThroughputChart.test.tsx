@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { ThroughputChart } from "./ThroughputChart";
@@ -125,6 +125,55 @@ describe("ThroughputChart (VROL-613)", () => {
     expect(container.textContent).toMatch(/1\.0s/);
     // Max-Y label on the right of the second row shows the peak count.
     expect(container.textContent).toContain("20");
+  });
+
+  it("exposes the SVG as a focusable role=img with a descriptive aria-label (VROL-807)", () => {
+    const samples = Array.from({ length: 5 }, (_, i) => ({
+      tMs: (i + 1) * 1000,
+      lineCompleted: (i + 1) * 10,
+      perStationCompleted: [(i + 1) * 10],
+      perEdgeBufferFill: [] as number[],
+      perStationStateMs: [] as Readonly<Record<string, number>>[],
+      perStationRework: [] as number[],
+    }));
+    const { container } = render(
+      <ThroughputChart samples={samples} horizonMs={5_000} warmupMs={0} />,
+    );
+    const svg = container.querySelector("svg");
+    expect(svg).not.toBeNull();
+    expect(svg?.getAttribute("role")).toBe("img");
+    expect(svg?.getAttribute("tabindex")).toBe("0");
+    const label = svg?.getAttribute("aria-label") ?? "";
+    expect(label).toMatch(/Throughput over time/i);
+    expect(label).toMatch(/50 parts/);
+    expect(label).toMatch(/arrow keys/i);
+  });
+
+  it("steps through samples with ArrowRight + ArrowLeft (VROL-807)", () => {
+    const samples = Array.from({ length: 4 }, (_, i) => ({
+      tMs: (i + 1) * 1000,
+      lineCompleted: (i + 1) * 5,
+      perStationCompleted: [(i + 1) * 5],
+      perEdgeBufferFill: [] as number[],
+      perStationStateMs: [] as Readonly<Record<string, number>>[],
+      perStationRework: [] as number[],
+    }));
+    const { container } = render(
+      <ThroughputChart samples={samples} horizonMs={4_000} warmupMs={0} />,
+    );
+    const svg = container.querySelector("svg")!;
+    // Focus → defaults to the last sample (lineCompleted=20 at t=4s).
+    fireEvent.focus(svg);
+    expect(container.textContent).toMatch(/t=4\.0s · 20 parts/);
+    // ArrowLeft once → 3rd sample (lineCompleted=15 at t=3s).
+    fireEvent.keyDown(svg, { key: "ArrowLeft" });
+    expect(container.textContent).toMatch(/t=3\.0s · 15 parts/);
+    // ArrowLeft once more → 2nd sample (lineCompleted=10 at t=2s).
+    fireEvent.keyDown(svg, { key: "ArrowLeft" });
+    expect(container.textContent).toMatch(/t=2\.0s · 10 parts/);
+    // ArrowRight goes back forward.
+    fireEvent.keyDown(svg, { key: "ArrowRight" });
+    expect(container.textContent).toMatch(/t=3\.0s · 15 parts/);
   });
 
   it("scales the chart so the largest lineCompleted reaches the top of the inner plot", () => {

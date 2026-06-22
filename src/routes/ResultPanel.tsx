@@ -288,9 +288,26 @@ function WarmupWelchSparkline({
         ref={svgRef}
         viewBox={`0 0 ${String(W)} ${String(H)}`}
         preserveAspectRatio="none"
-        className="text-sim-running block h-20 w-full"
+        className="focus-visible:ring-ring text-sim-running block h-20 w-full focus-visible:rounded-sm focus-visible:ring-2 focus-visible:outline-none"
         role="img"
-        aria-label="Warm-up Welch sparkline"
+        tabIndex={0}
+        aria-label={(() => {
+          // VROL-807 — describe what the sparkline conveys: the per-sample
+          // throughput rate plus the Welch-recommended and current warm-up
+          // markers so a screen-reader user gets the same takeaway sighted
+          // users do from the visual.
+          const recLabel =
+            recommendedMs !== null
+              ? recommendedMs >= 1000
+                ? `${(recommendedMs / 1000).toFixed(1)} seconds`
+                : `${recommendedMs.toFixed(0)} milliseconds`
+              : "not available";
+          const curLabel =
+            currentMs >= 1000
+              ? `${(currentMs / 1000).toFixed(1)} seconds`
+              : `${currentMs.toFixed(0)} milliseconds`;
+          return `Warm-up Welch sparkline: throughput rate over time. Recommended warm-up ${recLabel}, current warm-up ${curLabel}.`;
+        })()}
       >
         <path d={rawPath} stroke="currentColor" strokeOpacity={0.25} strokeWidth={1} fill="none" />
         <path d={meanPath} stroke="currentColor" strokeWidth={1.5} fill="none" />

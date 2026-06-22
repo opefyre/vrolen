@@ -57,7 +57,7 @@ export function StepReview({
   const lines: readonly ReviewLineSpec[] = [
     {
       label: "Topology",
-      value: draft.shapeKind.replace("-", " "),
+      value: draft.shapeKind ? draft.shapeKind.replace("-", " ") : "—",
       stepIdx: 0,
       testId: "review-shape",
     },

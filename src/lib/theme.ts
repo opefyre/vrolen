@@ -9,7 +9,9 @@
  * "system" preference resolves dynamically from prefers-color-scheme and
  * updates if the OS preference changes mid-session.
  *
- * Persisted under key `vrolen.theme` so we don't fight with other apps.
+ * Persisted under key `vrolen:theme-pref` (VROL-835). The legacy
+ * `vrolen.theme` key is read once on startup so users who picked a theme on a
+ * prior build don't get reset.
  */
 
 import { useEffect, useSyncExternalStore } from "react";
@@ -17,7 +19,8 @@ import { useEffect, useSyncExternalStore } from "react";
 export type ThemePreference = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
 
-const STORAGE_KEY = "vrolen.theme";
+const STORAGE_KEY = "vrolen:theme-pref";
+const LEGACY_STORAGE_KEY = "vrolen.theme";
 
 const DEFAULT_PREFERENCE: ThemePreference = "system";
 
@@ -31,6 +34,10 @@ function readPreference(): ThemePreference {
   try {
     const raw = window.localStorage?.getItem?.(STORAGE_KEY);
     if (raw === "light" || raw === "dark" || raw === "system") return raw;
+    // VROL-835 — fall back to the legacy key so existing users keep their
+    // pick on first load with the new key.
+    const legacy = window.localStorage?.getItem?.(LEGACY_STORAGE_KEY);
+    if (legacy === "light" || legacy === "dark" || legacy === "system") return legacy;
   } catch {
     // happy-dom test env, private mode, or other environments without
     // localStorage — fall through to default.

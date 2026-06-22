@@ -1,0 +1,148 @@
+/**
+ * VROL-793 — tornado chart divergent colour scale + noise-floor grey.
+ *
+ * Exercises the `classifyTornadoRow` pure helper for the three tone outcomes
+ * (positive / negative / noise) and asserts the rendered card paints the
+ * bars accordingly and surfaces the legend underneath.
+ */
+
+import { render } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+
+import type { SensitivityRow, SensitivitySummary } from "@/lib/sensitivity-sweep";
+import { classifyTornadoRow } from "@/lib/tornado-classify";
+
+import { SensitivityCard } from "./SensitivityCard";
+
+function row(overrides: Partial<SensitivityRow>): SensitivityRow {
+  return {
+    stationLabel: "Filler",
+    stationIdx: 0,
+    baselinePerHour: 1_000,
+    lowPerHour: 1_200,
+    highPerHour: 800,
+    swingPerHour: 400,
+    swingPct: 40,
+    ...overrides,
+  };
+}
+
+describe("classifyTornadoRow (VROL-793)", () => {
+  it("returns 'positive' when speeding up the station (low multiplier) increases throughput", () => {
+    const r = row({ lowPerHour: 1_200, highPerHour: 800, swingPerHour: 400 });
+    expect(classifyTornadoRow(r, 400)).toBe("positive");
+  });
+
+  it("returns 'negative' when slowing the station down (high multiplier) increases throughput", () => {
+    const r = row({ lowPerHour: 800, highPerHour: 1_200, swingPerHour: 400 });
+    expect(classifyTornadoRow(r, 400)).toBe("negative");
+  });
+
+  it("returns 'noise' when swing is below 1% of the widest bar", () => {
+    const r = row({ swingPerHour: 50 });
+    expect(classifyTornadoRow(r, 10_000)).toBe("noise");
+  });
+
+  it("returns 'noise' when absolute swing is under 5 parts/h", () => {
+    const r = row({ swingPerHour: 3 });
+    // Even when this is the widest bar, it's still smaller than the absolute floor.
+    expect(classifyTornadoRow(r, 3)).toBe("noise");
+  });
+});
+
+describe("SensitivityCard tornado rendering (VROL-793)", () => {
+  function makeSummary(rows: SensitivityRow[]): SensitivitySummary {
+    return {
+      baselinePerHour: 1_000,
+      rows,
+      lowMultiplier: 0.8,
+      highMultiplier: 1.2,
+      elapsedMs: 42,
+    };
+  }
+
+  it("colours positive-impact bars green and negative-impact bars red, and tags noise rows muted", () => {
+    const summary = makeSummary([
+      row({
+        stationLabel: "Filler",
+        lowPerHour: 1_200,
+        highPerHour: 800,
+        swingPerHour: 400,
+        swingPct: 40,
+      }),
+      row({
+        stationLabel: "Capper",
+        lowPerHour: 900,
+        highPerHour: 1_100,
+        swingPerHour: 200,
+        swingPct: 20,
+      }),
+      row({
+        stationLabel: "Labeler",
+        lowPerHour: 1_001,
+        highPerHour: 1_001.5,
+        swingPerHour: 0.5,
+        swingPct: 0.05,
+      }),
+    ]);
+    const { container } = render(
+      <SensitivityCard summary={summary} running={false} onRun={() => undefined} />,
+    );
+    const rowsWithTone = container.querySelectorAll("[data-tone]");
+    const tones = Array.from(rowsWithTone).map((el) => el.getAttribute("data-tone"));
+    // Sorted descending by absolute swing — Filler first, then Capper, then Labeler.
+    expect(tones).toEqual(["positive", "negative", "noise"]);
+  });
+
+  it("sorts bars by absolute swing magnitude descending so noise drops to the bottom", () => {
+    const summary = makeSummary([
+      row({
+        stationLabel: "Labeler",
+        lowPerHour: 1_000.5,
+        highPerHour: 1_001,
+        swingPerHour: 0.5,
+        swingPct: 0.05,
+      }),
+      row({
+        stationLabel: "Filler",
+        lowPerHour: 1_200,
+        highPerHour: 800,
+        swingPerHour: 400,
+        swingPct: 40,
+      }),
+      row({
+        stationLabel: "Capper",
+        lowPerHour: 900,
+        highPerHour: 1_100,
+        swingPerHour: 200,
+        swingPct: 20,
+      }),
+    ]);
+    const { container } = render(
+      <SensitivityCard summary={summary} running={false} onRun={() => undefined} />,
+    );
+    const labels = Array.from(container.querySelectorAll("[data-tone]")).map((el) => {
+      const label = el.querySelector("div")?.textContent ?? "";
+      return label.trim();
+    });
+    expect(labels).toEqual(["Filler", "Capper", "Labeler"]);
+  });
+
+  it("renders the divergent-colour legend underneath the bars", () => {
+    const summary = makeSummary([
+      row({
+        stationLabel: "Filler",
+        lowPerHour: 1_200,
+        highPerHour: 800,
+        swingPerHour: 400,
+        swingPct: 40,
+      }),
+    ]);
+    const { container } = render(
+      <SensitivityCard summary={summary} running={false} onRun={() => undefined} />,
+    );
+    expect(container.textContent).toContain("Speed up = more throughput");
+    expect(container.textContent).toContain("Slow down = less");
+    expect(container.textContent).toContain("Below noise floor");
+  });
+});

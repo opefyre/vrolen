@@ -18,6 +18,9 @@ interface SparklineProps {
 
 export function Sparkline({ series, width = 60, height = 20, unit = "" }: SparklineProps) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  // VROL-807 — when focused, capture the previous keyboard-driven announcement
+  // so it's exposed in an aria-live region tucked under the sparkline.
+  const [focused, setFocused] = useState<boolean>(false);
 
   const geom = useMemo(() => {
     if (series.length < 2) return null;
@@ -73,9 +76,31 @@ export function Sparkline({ series, width = 60, height = 20, unit = "" }: Sparkl
         viewBox={`0 0 ${String(width)} ${String(height)}`}
         width={width}
         height={height}
-        className="text-sim-running block"
+        className="focus-visible:ring-ring text-sim-running block focus-visible:rounded-sm focus-visible:ring-2 focus-visible:outline-none"
         role="img"
-        aria-label={`Series with peak ${geom.peak.toLocaleString()} ${unit}`.trim()}
+        tabIndex={0}
+        aria-label={
+          hoverPt
+            ? `Sparkline, sample ${String((hoverIdx ?? 0) + 1)} of ${String(series.length)}: ${hoverVal.toLocaleString()} ${unit}`.trim()
+            : `Sparkline series with peak ${geom.peak.toLocaleString()} ${unit}, min ${geom.min.toLocaleString()} ${unit}, ${String(series.length)} samples`.trim()
+        }
+        onFocus={() => {
+          setFocused(true);
+          if (hoverIdx === null) setHoverIdx(geom.linePts.length - 1);
+        }}
+        onBlur={() => {
+          setFocused(false);
+          setHoverIdx(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          e.preventDefault();
+          const last = geom.linePts.length - 1;
+          const current = hoverIdx ?? last;
+          const delta = e.key === "ArrowRight" ? 1 : -1;
+          const next = Math.max(0, Math.min(last, current + delta));
+          setHoverIdx(next);
+        }}
         onMouseMove={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
           const ratio = width / rect.width;
@@ -129,6 +154,14 @@ export function Sparkline({ series, width = 60, height = 20, unit = "" }: Sparkl
           {hoverVal.toLocaleString()} {unit}
         </span>
       ) : null}
+      {/* VROL-807 — announce the focused sample for screen readers. The
+          visible tooltip handles sighted users; this is a polite live
+          region tucked off-screen for keyboard-only navigation. */}
+      <span className="sr-only" aria-live="polite">
+        {focused && hoverPt
+          ? `Sample ${String((hoverIdx ?? 0) + 1)} of ${String(series.length)}: ${hoverVal.toLocaleString()} ${unit}`.trim()
+          : ""}
+      </span>
     </span>
   );
 }

@@ -37,9 +37,16 @@ export const ROUTE_META: Record<string, RouteMeta> = {
     title: "Templates · Vrolen",
     description: "Start from a curated production-line scenario.",
   },
+  "/learn": {
+    title: "Learn · Vrolen",
+    description: "Glossary, concepts, and worked examples for the simulator.",
+  },
+  // VROL-834 — /help is the legacy slug; App.tsx redirects to /learn. Keep
+  // the entry so the brief window between mount and redirect still
+  // announces a sensible title rather than the generic Vrolen fallback.
   "/help": {
-    title: "Help · Vrolen",
-    description: "Glossary of KPIs and station states used across the simulator.",
+    title: "Learn · Vrolen",
+    description: "Glossary, concepts, and worked examples for the simulator.",
   },
   "/run": {
     title: "Run · Vrolen",

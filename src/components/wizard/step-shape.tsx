@@ -5,10 +5,18 @@
  * parallel lines / branching DAG / custom blank) instead of three named
  * presets. The picker also resets the station + connection lists to the
  * preset's defaults so the user can fast-forward by clicking Next.
+ *
+ * VROL-821 — no silent preselect. The draft starts with `shapeKind === null`
+ * so the four cards render without a selected ring; Next stays disabled
+ * (via `validateShape`) until the user clicks one. The pick is mirrored
+ * to `sessionStorage` under `vrolen:wizard-shape-resume` so a mid-wizard
+ * reload restores it without touching the localStorage draft path (which
+ * is the Save-&-exit storage).
  */
 
 import { Check, GitBranch, Layers, Square, Workflow } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useEffect } from "react";
 
 import { FieldError } from "./field-error";
 import { SHAPE_PRESETS, type ShapeKind, type WizardDraft } from "./wizard-types";
@@ -20,6 +28,32 @@ const SHAPE_ICONS: Record<ShapeKind, LucideIcon> = {
   custom: Square,
 };
 
+/** VROL-821 — sessionStorage key for the resume-pick. Scoped per-tab so a
+ *  fresh tab starts unselected even if another tab is mid-wizard. */
+export const SHAPE_RESUME_KEY = "vrolen:wizard-shape-resume";
+
+const VALID_KINDS: readonly ShapeKind[] = ["single-line", "two-lines", "branching", "custom"];
+
+function readResumeShape(): ShapeKind | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage?.getItem?.(SHAPE_RESUME_KEY);
+    if (raw === null || raw === undefined) return null;
+    return VALID_KINDS.includes(raw as ShapeKind) ? (raw as ShapeKind) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeResumeShape(kind: ShapeKind): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage?.setItem?.(SHAPE_RESUME_KEY, kind);
+  } catch {
+    // best-effort
+  }
+}
+
 export function StepShape({
   draft,
   update,
@@ -30,6 +64,23 @@ export function StepShape({
   readonly errors?: Readonly<Record<string, string>>;
 }) {
   const shapeError = errors?.["shapeKind"];
+  /** VROL-821 — restore from sessionStorage on mount when the live draft
+   *  has no pick yet. Runs exactly once per mount; subsequent edits
+   *  flow through the click handler below. */
+  useEffect(() => {
+    if (draft.shapeKind !== null) return;
+    const resumed = readResumeShape();
+    if (!resumed) return;
+    const preset = SHAPE_PRESETS.find((p) => p.kind === resumed);
+    if (!preset) return;
+    const stations = preset.buildStations();
+    const connections = preset.buildConnections(stations);
+    update({ shapeKind: resumed, stations, connections });
+    // We intentionally only run this on mount — the rehydrate is a
+    // one-shot. Reading draft.shapeKind on every render would clobber
+    // user interactions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <div className="space-y-3">
       <p className="text-foreground/80 text-sm">
@@ -51,10 +102,12 @@ export function StepShape({
               type="button"
               role="radio"
               aria-checked={isSelected}
+              data-testid={`shape-card-${preset.kind}`}
               onClick={() => {
                 const stations = preset.buildStations();
                 const connections = preset.buildConnections(stations);
                 update({ shapeKind: preset.kind, stations, connections });
+                writeResumeShape(preset.kind);
               }}
               className={`group relative flex flex-col gap-2 rounded-lg border p-3 text-left transition-all ${
                 isSelected

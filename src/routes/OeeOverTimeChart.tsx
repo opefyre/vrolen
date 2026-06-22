@@ -191,6 +191,36 @@ export function OeeOverTimeChart({
     return STATE_ORDER.map((s) => ({ state: s, pct: ((deltas[s] ?? 0) / total) * 100 }));
   }, [hoverIdx, samples, safeIdx]);
 
+  // VROL-807 — keyboard nav. ArrowLeft / ArrowRight step through samples;
+  // ArrowUp / ArrowDown switch between stations (this chart's "series").
+  const setHoverByIdx = (idx: number): void => {
+    if (samples.length === 0) return;
+    const clamped = Math.max(0, Math.min(samples.length - 1, idx));
+    setHoverIdx(clamped);
+  };
+  const onKeyDown = (e: React.KeyboardEvent<SVGSVGElement>): void => {
+    if (samples.length === 0) return;
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      const last = samples.length - 1;
+      const current = hoverIdx ?? last;
+      const delta = e.key === "ArrowRight" ? 1 : -1;
+      setHoverByIdx(current + delta);
+      return;
+    }
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && stationLabels.length > 1) {
+      e.preventDefault();
+      const delta = e.key === "ArrowDown" ? 1 : -1;
+      const next = (safeIdx + delta + stationLabels.length) % stationLabels.length;
+      setStationIdx(next);
+    }
+  };
+  const onFocus = (): void => {
+    if (hoverIdx === null && samples.length > 0) {
+      setHoverByIdx(samples.length - 1);
+    }
+  };
+
   const onMove = (e: React.MouseEvent<SVGSVGElement>): void => {
     if (samples.length === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -261,11 +291,21 @@ export function OeeOverTimeChart({
           ref={svgRef}
           viewBox={`0 0 ${String(VIEW_W)} ${String(VIEW_H)}`}
           preserveAspectRatio="none"
-          className="block h-44 w-full"
+          className="focus-visible:ring-ring block h-44 w-full focus-visible:rounded-sm focus-visible:ring-2 focus-visible:outline-none"
           onMouseMove={onMove}
           onMouseLeave={onLeave}
+          onFocus={onFocus}
+          onKeyDown={onKeyDown}
+          tabIndex={0}
           role="img"
-          aria-label={`State-mix over time for ${stationLabel}`}
+          aria-label={(() => {
+            const horizonSec = Math.round(horizonMs / 1000);
+            const seriesHint =
+              stationLabels.length > 1
+                ? " Use left and right arrows to step through samples, up and down to switch station."
+                : " Use left and right arrows to step through samples.";
+            return `State mix over time for ${stationLabel} across ${String(horizonSec)} seconds.${seriesHint}`;
+          })()}
         >
           {paths.map(({ state, d }) =>
             hiddenStates.has(state) ? null : (
@@ -339,6 +379,18 @@ export function OeeOverTimeChart({
           </div>
         ) : null}
       </div>
+      {/* VROL-807 — live region for keyboard-driven sample/series nav. */}
+      <span className="sr-only" aria-live="polite">
+        {hoverIdx !== null && hoveredFractions.length > 0
+          ? `${stationLabel} at ${((samples[hoverIdx]?.tMs ?? 0) / 1000).toFixed(1)} seconds: ${hoveredFractions
+              .filter((f) => f.pct > 0.5)
+              .map(
+                (f) =>
+                  `${STATE_DISPLAY_NAME[f.state as (typeof STATE_ORDER)[number]]} ${f.pct.toFixed(0)} percent`,
+              )
+              .join(", ")}.`
+          : ""}
+      </span>
       <div className="text-muted-foreground flex items-center justify-between text-[10px]">
         <span className="font-mono tabular-nums">
           {warmupMs > 0 ? `${(warmupMs / 1000).toFixed(1)}s` : "0s"}

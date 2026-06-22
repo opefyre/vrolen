@@ -340,7 +340,7 @@ export default function LandingPage() {
           [
             { href: "/editor", label: "Editor" },
             { href: "/run", label: "Run logs" },
-            { href: "/help", label: "Help & shortcuts" },
+            { href: "/learn", label: "Learn" },
             { href: "/design-tokens", label: "Design tokens" },
           ] as const
         ).map(({ href, label }) => (

@@ -1,7 +1,7 @@
 import {
-  BookOpen,
   Boxes,
   Factory,
+  GraduationCap,
   LayoutGrid,
   Layers,
   Menu,
@@ -46,7 +46,7 @@ const NAV_ITEMS: readonly NavItem[] = [
   // active so the work is one click away; expected to graduate into /editor
   // once VROL-203/207 land.
   { href: "/iso-demo", label: "Iso demo", icon: Boxes },
-  { href: "/help", label: "Glossary", icon: BookOpen, shortcut: "g g" },
+  { href: "/learn", label: "Learn", icon: GraduationCap, shortcut: "g g" },
   // VROL-825 — Design tokens moved out of the primary nav. It's a debug
   // surface, not a user-facing route. Reachable via Cmd+K and the footer.
 ];

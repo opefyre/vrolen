@@ -290,3 +290,24 @@
 .vrolen-handle {
   cursor: crosshair !important;
 }
+
+/* VROL-801 — kill the decorative opacity/transition on the handles when the
+ * user prefers reduced motion. The handles still appear / disappear on
+ * hover (visibility-state changes are functional, not decorative), but
+ * the 120ms ease-out fade is skipped. */
+@media (prefers-reduced-motion: reduce) {
+  .vrolen-handle {
+    transition: none !important;
+  }
+  /* tw-animate-css emits keyframed animations for animate-in / fade-in-0 /
+   * zoom-in-50 / slide-in-from-*. Those are decorative — under reduced
+   * motion show the element instantly instead. */
+  .animate-in,
+  .animate-out,
+  .animate-pulse,
+  .animate-spin,
+  .animate-bounce,
+  .animate-ping {
+    animation: none !important;
+  }
+}

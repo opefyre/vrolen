@@ -112,11 +112,11 @@ function baselineActions(): CommandAction[] {
     },
     {
       id: "go-glossary",
-      label: "Open Glossary",
-      hint: "Definitions + concepts",
+      label: "Open Learn",
+      hint: "Glossary, concepts, and worked examples",
       group: "Navigate",
       shortcut: "g g",
-      run: go("/help"),
+      run: go("/learn?section=glossary"),
     },
     {
       id: "go-design-tokens",

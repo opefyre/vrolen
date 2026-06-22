@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import type { ChainResult } from "@/engine";
+import { useReducedMotion } from "@/lib/use-reduced-motion";
 
 interface PlaybackControllerProps {
   readonly result: ChainResult;
@@ -69,6 +70,11 @@ export function PlaybackController({
   const speedRef = useRef<number>(speed);
   const onChangeRef = useRef(onPlaybackChange);
   const playbackRef = useRef<number>(playbackMs);
+  // VROL-801 — when the user prefers reduced motion, skip the per-digit
+  // zoom/fade animation on the countdown overlay and shrink the total
+  // countdown duration from ~2.4s to ~600ms so the wait feels intentional
+  // rather than decorative.
+  const reducedMotion = useReducedMotion();
 
   // Keep refs synced inside an effect (per react-hooks/refs rule).
   useEffect(() => {
@@ -85,13 +91,18 @@ export function PlaybackController({
     if (result.samples.length < 2) return;
     let cancelled = false;
     const timers: ReturnType<typeof setTimeout>[] = [];
+    // VROL-801 — reduced-motion users get a ~200ms-per-digit countdown
+    // (total ~600ms) without the zoom/fade per number. The default
+    // experience keeps the 800ms-per-digit cinematic feel.
+    const stepMs = reducedMotion ? 200 : 800;
+    const totalMs = stepMs * 3;
     // Schedule every state mutation — including the initial "3" — through
     // a timer so the effect body itself doesn't synchronously setState.
     [3, 2, 1].forEach((n, i) => {
       timers.push(
         setTimeout(() => {
           if (!cancelled) setCountdown(n);
-        }, 800 * i),
+        }, stepMs * i),
       );
     });
     timers.push(
@@ -101,7 +112,7 @@ export function PlaybackController({
           onChangeRef.current(0);
           setPlaying(true);
         }
-      }, 2400),
+      }, totalMs),
     );
     return () => {
       cancelled = true;
@@ -109,7 +120,7 @@ export function PlaybackController({
         clearTimeout(t);
       });
     };
-  }, [autoPlayNonce, result]);
+  }, [autoPlayNonce, result, reducedMotion]);
 
   useEffect(() => {
     if (!playing) {
@@ -150,7 +161,11 @@ export function PlaybackController({
         >
           <div
             key={countdown}
-            className="font-heading text-foreground/90 bg-card/80 ring-border animate-in zoom-in-50 fade-in-0 flex h-32 w-32 items-center justify-center rounded-full text-7xl font-bold tabular-nums shadow-2xl ring-1 backdrop-blur duration-300"
+            className={
+              reducedMotion
+                ? "font-heading text-foreground/90 bg-card/80 ring-border flex h-32 w-32 items-center justify-center rounded-full text-7xl font-bold tabular-nums shadow-2xl ring-1 backdrop-blur"
+                : "font-heading text-foreground/90 bg-card/80 ring-border animate-in zoom-in-50 fade-in-0 flex h-32 w-32 items-center justify-center rounded-full text-7xl font-bold tabular-nums shadow-2xl ring-1 backdrop-blur duration-300"
+            }
           >
             {countdown}
           </div>

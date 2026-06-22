@@ -125,8 +125,14 @@ export interface WizardRunWindow {
 }
 
 export interface WizardDraft {
-  /** Shape kind chosen on step 1. */
-  readonly shapeKind: ShapeKind;
+  /**
+   * Shape kind chosen on step 1.
+   *
+   * VROL-821 — defaults to `null` so the picker shows no selection until
+   * the user explicitly clicks a card. `validateShape` blocks Next while
+   * this is null.
+   */
+  readonly shapeKind: ShapeKind | null;
   /** Stations the wizard is composing. */
   readonly stations: readonly WizardStation[];
   /** Edges authored on step 3. */
@@ -223,7 +229,11 @@ export function defaultDraft(): WizardDraft {
     defaultStation("s4", "Packer", "packaging", 1_000),
   ];
   return {
-    shapeKind: "single-line",
+    // VROL-821 — no silent preselect. The user must click a shape card on
+    // step 1; the stations/connections list above is a placeholder, only
+    // committed once a card is picked (the picker rebuilds both lists
+    // from the chosen preset).
+    shapeKind: null,
     stations,
     connections: linearConnections(stations),
     productsEnabled: false,
@@ -374,7 +384,7 @@ function isFiniteNumber(n: number): boolean {
 export function validateShape(draft: WizardDraft): WizardStepValidation {
   const errors: Record<string, string> = {};
   const kinds: ShapeKind[] = ["single-line", "two-lines", "branching", "custom"];
-  if (!kinds.includes(draft.shapeKind)) {
+  if (draft.shapeKind === null || !kinds.includes(draft.shapeKind)) {
     errors["shapeKind"] = "Pick a starting shape to continue.";
   }
   return { step: 0, valid: Object.keys(errors).length === 0, errors };

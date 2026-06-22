@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetCoachTipsForTests } from "@/lib/coach-state";
+import { _resetOnboardingCacheForTests, markOnboardingSeen } from "@/routes/onboarding-state";
 
 import { Coach, type CoachTip } from "./coach";
 
@@ -15,11 +16,17 @@ import { Coach, type CoachTip } from "./coach";
 describe("Coach (VROL-819)", () => {
   beforeEach(() => {
     resetCoachTipsForTests();
+    _resetOnboardingCacheForTests();
     try {
       window.localStorage?.clear?.();
     } catch {
       // ignore
     }
+    // VROL-813 — the coach is now suppressed until the user has seen the
+    // tour. Mark it seen so the legacy coach specs continue to test the
+    // post-tour rendering path. A dedicated spec below covers the
+    // suppression behaviour.
+    markOnboardingSeen();
   });
 
   function makeTips(overrides: Partial<Record<string, Partial<CoachTip>>> = {}): CoachTip[] {
@@ -107,5 +114,48 @@ describe("Coach (VROL-819)", () => {
     const { container } = render(<Coach tips={tips} />);
     fireEvent.click(screen.getByTestId("coach-dismiss"));
     expect(container.firstChild).toBeNull();
+  });
+});
+
+describe("Coach (VROL-813) tour suppression", () => {
+  beforeEach(() => {
+    resetCoachTipsForTests();
+    _resetOnboardingCacheForTests();
+    try {
+      window.localStorage?.clear?.();
+    } catch {
+      // ignore
+    }
+    // Intentionally do NOT call markOnboardingSeen — these specs cover
+    // the pre-tour state where the coach must stay silent.
+  });
+
+  it("renders nothing while the onboarding tour has not been seen", () => {
+    const tips: CoachTip[] = [
+      {
+        id: "tip-a",
+        title: "Tip A",
+        body: "Body A",
+        whenVisible: () => true,
+      },
+    ];
+    const { container } = render(<Coach tips={tips} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("starts rendering tips once markOnboardingSeen has fired", () => {
+    const tips: CoachTip[] = [
+      {
+        id: "tip-a",
+        title: "Tip A",
+        body: "Body A",
+        whenVisible: () => true,
+      },
+    ];
+    const { rerender, container } = render(<Coach tips={tips} />);
+    expect(container.firstChild).toBeNull();
+    markOnboardingSeen();
+    rerender(<Coach tips={tips} />);
+    expect(screen.getByText("Tip A")).toBeInTheDocument();
   });
 });

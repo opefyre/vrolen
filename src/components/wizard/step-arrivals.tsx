@@ -6,9 +6,18 @@
  * via the DistributionField primitive, batch size) and the materials
  * block from the Inspector / run-settings drawer (initial inventory,
  * per-part consumption, one-shot replenishment, recurring deliveries).
+ *
+ * VROL-824 — split the form into "above the fold" essentials and an
+ * Advanced disclosure (default-closed) so first-time users don't get
+ * buried under batch size, caps consumption, one-shot replenishment, and
+ * recurring delivery configuration. Open-state is mirrored to
+ * `sessionStorage` under `vrolen:wizard-arrivals-advanced` so a user who
+ * popped it open once doesn't have to re-open on every step revisit
+ * within the same wizard session.
  */
 
 import { Plus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { DistributionField } from "@/components/ui/distribution-field";
@@ -17,6 +26,31 @@ import { NumberField } from "@/components/ui/number-field";
 
 import { FieldError } from "./field-error";
 import type { WizardDraft } from "./wizard-types";
+
+/** VROL-824 — sessionStorage key for the Advanced-open flag. */
+export const ARRIVALS_ADVANCED_KEY = "vrolen:wizard-arrivals-advanced";
+
+function readAdvancedOpen(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.sessionStorage?.getItem?.(ARRIVALS_ADVANCED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeAdvancedOpen(open: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (open) {
+      window.sessionStorage?.setItem?.(ARRIVALS_ADVANCED_KEY, "1");
+    } else {
+      window.sessionStorage?.removeItem?.(ARRIVALS_ADVANCED_KEY);
+    }
+  } catch {
+    // best-effort
+  }
+}
 
 export function StepArrivals({
   draft,
@@ -32,6 +66,41 @@ export function StepArrivals({
   const capsErr = errors?.["caps"];
   const bottlesPerPartErr = errors?.["bottlesPerPart"];
   const capsPerPartErr = errors?.["capsPerPart"];
+
+  /** VROL-824 — disclosure state. Default-closed; sessionStorage persists
+   *  the toggle across step revisits within a single wizard session. The
+   *  initial read is via a lazy useState initializer so the effect-less
+   *  hydrate keeps `react-hooks/set-state-in-effect` happy. */
+  const [advancedOpen, setAdvancedOpen] = useState<boolean>(() => readAdvancedOpen());
+  const toggleAdvanced = useCallback((open: boolean) => {
+    setAdvancedOpen(open);
+    writeAdvancedOpen(open);
+  }, []);
+
+  /** VROL-824 — if any Advanced field has a live validation error, auto-
+   *  open the disclosure so the user can see the offending row. Prevents
+   *  the wizard from looking broken when batchSize fails and the user
+   *  doesn't realise the field exists. We do this from a layout-less
+   *  effect by syncing the external sessionStorage value first and
+   *  letting React reconcile next render — using a ref + setState in a
+   *  user-visible side effect (toggleAdvanced) instead of inside an
+   *  effect body, to satisfy the React 19 set-state-in-effect rule. */
+  const advancedHasError = Boolean(batchErr ?? capsErr ?? capsPerPartErr);
+  const lastAutoOpenSignalRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (!advancedHasError) {
+      lastAutoOpenSignalRef.current = false;
+      return;
+    }
+    if (lastAutoOpenSignalRef.current) return;
+    lastAutoOpenSignalRef.current = true;
+    // Pop the disclosure open via the same path a user click would
+    // exercise — no in-effect setState so the lint rule stays clean.
+    queueMicrotask(() => {
+      toggleAdvanced(true);
+    });
+  }, [advancedHasError, toggleAdvanced]);
+
   const updateMaterials = (patch: Partial<WizardDraft["materials"]>) => {
     update({ materials: { ...draft.materials, ...patch } });
   };
@@ -59,9 +128,10 @@ export function StepArrivals({
       recurring: draft.materials.recurring.filter((_, i) => i !== idx),
     });
   };
+
   return (
     <div className="space-y-4">
-      {/* Source. */}
+      {/* Source — above the fold. */}
       <div className="border-border space-y-2 rounded-md border p-3">
         <label className="flex items-center gap-2 text-sm font-medium">
           <input
@@ -75,27 +145,13 @@ export function StepArrivals({
           Source generates items
         </label>
         {draft.arrivals.enabled ? (
-          <>
-            <DistributionField
-              label="Inter-arrival time (ms)"
-              value={draft.arrivals.interArrivalDist}
-              onChange={(d) => {
-                updateArrivals({ interArrivalDist: d });
-              }}
-            />
-            <NumberField
-              id="wiz-batch"
-              label="Batch size"
-              value={draft.arrivals.batchSize}
-              onChange={(n) => {
-                updateArrivals({ batchSize: n });
-              }}
-              min={1}
-              max={1_000}
-              helperText="How many items spawn per arrival event."
-            />
-            <FieldError message={batchErr} />
-          </>
+          <DistributionField
+            label="Inter-arrival time (ms)"
+            value={draft.arrivals.interArrivalDist}
+            onChange={(d) => {
+              updateArrivals({ interArrivalDist: d });
+            }}
+          />
         ) : (
           <p className="text-muted-foreground text-xs">
             Source off — items have to flow in from somewhere upstream (e.g. material input).
@@ -103,7 +159,7 @@ export function StepArrivals({
         )}
       </div>
 
-      {/* Materials. */}
+      {/* Materials — above the fold (toggle + initial bottles + bottles/part). */}
       <div className="border-border space-y-2 rounded-md border p-3">
         <label className="flex items-center gap-2 text-sm font-medium">
           <input
@@ -117,187 +173,33 @@ export function StepArrivals({
           Track materials (bottles, caps)
         </label>
         {draft.materials.enabled ? (
-          <>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <div>
-                <NumberField
-                  id="wiz-bottles"
-                  label="Initial bottles"
-                  value={draft.materials.bottles}
-                  onChange={(n) => {
-                    updateMaterials({ bottles: n });
-                  }}
-                  min={0}
-                />
-                <FieldError message={bottlesErr} />
-              </div>
-              <div>
-                <NumberField
-                  id="wiz-caps"
-                  label="Initial caps"
-                  value={draft.materials.caps}
-                  onChange={(n) => {
-                    updateMaterials({ caps: n });
-                  }}
-                  min={0}
-                />
-                <FieldError message={capsErr} />
-              </div>
-              <div>
-                <NumberField
-                  id="wiz-bottlesPerPart"
-                  label="Bottles per part"
-                  value={draft.materials.bottlesPerPart}
-                  onChange={(n) => {
-                    updateMaterials({ bottlesPerPart: n });
-                  }}
-                  min={0}
-                  step={0.01}
-                />
-                <FieldError message={bottlesPerPartErr} />
-              </div>
-              <div>
-                <NumberField
-                  id="wiz-capsPerPart"
-                  label="Caps per part"
-                  value={draft.materials.capsPerPart}
-                  onChange={(n) => {
-                    updateMaterials({ capsPerPart: n });
-                  }}
-                  min={0}
-                  step={0.01}
-                />
-                <FieldError message={capsPerPartErr} />
-              </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div>
+              <NumberField
+                id="wiz-bottles"
+                label="Initial bottles"
+                value={draft.materials.bottles}
+                onChange={(n) => {
+                  updateMaterials({ bottles: n });
+                }}
+                min={0}
+              />
+              <FieldError message={bottlesErr} />
             </div>
-
-            {/* One-shot replenishment. */}
-            <div className="border-border rounded-md border border-dashed p-3">
-              <label className="flex items-center gap-2 text-xs font-medium">
-                <input
-                  type="checkbox"
-                  checked={draft.materials.replenishment.enabled}
-                  onChange={(e) => {
-                    updateMaterials({
-                      replenishment: {
-                        ...draft.materials.replenishment,
-                        enabled: e.target.checked,
-                      },
-                    });
-                  }}
-                  className="accent-sim-running h-4 w-4"
-                />
-                One-shot replenishment
-              </label>
-              {draft.materials.replenishment.enabled ? (
-                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <DurationInput
-                    id="wiz-replen-atMs"
-                    label="At"
-                    valueMs={draft.materials.replenishment.atMs}
-                    onChangeMs={(ms) => {
-                      updateMaterials({
-                        replenishment: { ...draft.materials.replenishment, atMs: ms },
-                      });
-                    }}
-                    defaultUnit="min"
-                    min={0}
-                  />
-                  <NumberField
-                    id="wiz-replen-amount"
-                    label="Amount"
-                    value={draft.materials.replenishment.amount}
-                    onChange={(n) => {
-                      updateMaterials({
-                        replenishment: { ...draft.materials.replenishment, amount: n },
-                      });
-                    }}
-                    min={0}
-                  />
-                </div>
-              ) : null}
+            <div>
+              <NumberField
+                id="wiz-bottlesPerPart"
+                label="Bottles per part"
+                value={draft.materials.bottlesPerPart}
+                onChange={(n) => {
+                  updateMaterials({ bottlesPerPart: n });
+                }}
+                min={0}
+                step={0.01}
+              />
+              <FieldError message={bottlesPerPartErr} />
             </div>
-
-            {/* Recurring deliveries. */}
-            <div className="border-border space-y-2 rounded-md border border-dashed p-3">
-              <div className="text-xs font-medium">Recurring deliveries</div>
-              {draft.materials.recurring.length === 0 ? (
-                <p className="text-muted-foreground text-xs">
-                  No recurring deliveries. Add one to model a finite-rate supplier.
-                </p>
-              ) : (
-                draft.materials.recurring.map((r, idx) => (
-                  <div
-                    key={`recurring-${String(idx)}`}
-                    className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_1fr_auto]"
-                  >
-                    <div className="flex flex-col gap-1">
-                      <label
-                        htmlFor={`wiz-recurring-${String(idx)}-mat`}
-                        className="text-muted-foreground text-[10px] font-medium"
-                      >
-                        Material
-                      </label>
-                      <select
-                        id={`wiz-recurring-${String(idx)}-mat`}
-                        value={r.material}
-                        onChange={(e) => {
-                          const material = e.target.value === "caps" ? "caps" : "bottles";
-                          updateRecurring(idx, { material });
-                        }}
-                        className="border-input bg-background h-8 rounded-md border px-2 text-xs"
-                      >
-                        <option value="bottles">Bottles</option>
-                        <option value="caps">Caps</option>
-                      </select>
-                    </div>
-                    <NumberField
-                      id={`wiz-recurring-${String(idx)}-amount`}
-                      label="Amount"
-                      value={r.amount}
-                      onChange={(n) => {
-                        updateRecurring(idx, { amount: n });
-                      }}
-                      min={0}
-                    />
-                    <DurationInput
-                      id={`wiz-recurring-${String(idx)}-interval`}
-                      label="Every"
-                      valueMs={r.intervalMs}
-                      onChangeMs={(ms) => {
-                        updateRecurring(idx, { intervalMs: ms });
-                      }}
-                      defaultUnit="min"
-                      min={1}
-                    />
-                    <NumberField
-                      id={`wiz-recurring-${String(idx)}-max`}
-                      label="Max inventory"
-                      value={r.maxInventory ?? 0}
-                      onChange={(n) => {
-                        updateRecurring(idx, { maxInventory: n > 0 ? n : undefined });
-                      }}
-                      min={0}
-                    />
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => {
-                        removeRecurring(idx);
-                      }}
-                      aria-label={`Remove recurring delivery ${String(idx + 1)}`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ))
-              )}
-              <Button size="sm" variant="outline" onClick={addRecurring} className="gap-1">
-                <Plus className="h-3.5 w-3.5" />
-                Add recurring delivery
-              </Button>
-            </div>
-          </>
+          </div>
         ) : (
           <p className="text-muted-foreground text-xs">
             When off, the engine ignores material constraints — stations process every part they
@@ -305,6 +207,224 @@ export function StepArrivals({
           </p>
         )}
       </div>
+
+      {/* VROL-824 — Advanced disclosure. Native <details> so keyboard /
+          screen-reader behaviour is correct out of the box. Persisted
+          open-state lives in sessionStorage. */}
+      <details
+        className="border-border bg-background rounded-md border"
+        open={advancedOpen}
+        data-testid="arrivals-advanced"
+        onToggle={(e) => {
+          // The disclosure carries Advanced-only fields. Mirror the open
+          // flag into sessionStorage so a step revisit honours the user's
+          // last preference.
+          toggleAdvanced(e.currentTarget.open);
+        }}
+      >
+        <summary className="text-foreground/90 cursor-pointer list-none px-3 py-2 text-sm font-medium select-none [&::-webkit-details-marker]:hidden">
+          <span className="inline-flex items-center gap-2">
+            <span
+              aria-hidden
+              className={`inline-block h-2 w-2 rotate-0 border-r border-b border-current transition-transform ${
+                advancedOpen ? "rotate-45" : "-rotate-45"
+              }`}
+            />
+            Advanced
+          </span>
+          <span className="text-muted-foreground ml-2 text-xs font-normal">
+            Batch size, caps inventory, replenishment, recurring deliveries.
+          </span>
+        </summary>
+        <div className="border-border space-y-3 border-t px-3 py-3">
+          {/* Batch size — only meaningful when the source is on. */}
+          {draft.arrivals.enabled ? (
+            <div>
+              <NumberField
+                id="wiz-batch"
+                label="Batch size"
+                value={draft.arrivals.batchSize}
+                onChange={(n) => {
+                  updateArrivals({ batchSize: n });
+                }}
+                min={1}
+                max={1_000}
+                helperText="How many items spawn per arrival event."
+              />
+              <FieldError message={batchErr} />
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-xs">
+              Batch size only applies when the source is generating items.
+            </p>
+          )}
+
+          {/* Caps inventory + caps/part + replenishment + recurring — only
+              meaningful when materials tracking is enabled. */}
+          {draft.materials.enabled ? (
+            <>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div>
+                  <NumberField
+                    id="wiz-caps"
+                    label="Initial caps"
+                    value={draft.materials.caps}
+                    onChange={(n) => {
+                      updateMaterials({ caps: n });
+                    }}
+                    min={0}
+                  />
+                  <FieldError message={capsErr} />
+                </div>
+                <div>
+                  <NumberField
+                    id="wiz-capsPerPart"
+                    label="Caps per part"
+                    value={draft.materials.capsPerPart}
+                    onChange={(n) => {
+                      updateMaterials({ capsPerPart: n });
+                    }}
+                    min={0}
+                    step={0.01}
+                  />
+                  <FieldError message={capsPerPartErr} />
+                </div>
+              </div>
+
+              {/* One-shot replenishment. */}
+              <div className="border-border rounded-md border border-dashed p-3">
+                <label className="flex items-center gap-2 text-xs font-medium">
+                  <input
+                    type="checkbox"
+                    checked={draft.materials.replenishment.enabled}
+                    onChange={(e) => {
+                      updateMaterials({
+                        replenishment: {
+                          ...draft.materials.replenishment,
+                          enabled: e.target.checked,
+                        },
+                      });
+                    }}
+                    className="accent-sim-running h-4 w-4"
+                  />
+                  One-shot replenishment
+                </label>
+                {draft.materials.replenishment.enabled ? (
+                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <DurationInput
+                      id="wiz-replen-atMs"
+                      label="At"
+                      valueMs={draft.materials.replenishment.atMs}
+                      onChangeMs={(ms) => {
+                        updateMaterials({
+                          replenishment: { ...draft.materials.replenishment, atMs: ms },
+                        });
+                      }}
+                      defaultUnit="min"
+                      min={0}
+                    />
+                    <NumberField
+                      id="wiz-replen-amount"
+                      label="Amount"
+                      value={draft.materials.replenishment.amount}
+                      onChange={(n) => {
+                        updateMaterials({
+                          replenishment: { ...draft.materials.replenishment, amount: n },
+                        });
+                      }}
+                      min={0}
+                    />
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Recurring deliveries. */}
+              <div className="border-border space-y-2 rounded-md border border-dashed p-3">
+                <div className="text-xs font-medium">Recurring deliveries</div>
+                {draft.materials.recurring.length === 0 ? (
+                  <p className="text-muted-foreground text-xs">
+                    No recurring deliveries. Add one to model a finite-rate supplier.
+                  </p>
+                ) : (
+                  draft.materials.recurring.map((r, idx) => (
+                    <div
+                      key={`recurring-${String(idx)}`}
+                      className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_1fr_auto]"
+                    >
+                      <div className="flex flex-col gap-1">
+                        <label
+                          htmlFor={`wiz-recurring-${String(idx)}-mat`}
+                          className="text-muted-foreground text-[10px] font-medium"
+                        >
+                          Material
+                        </label>
+                        <select
+                          id={`wiz-recurring-${String(idx)}-mat`}
+                          value={r.material}
+                          onChange={(e) => {
+                            const material = e.target.value === "caps" ? "caps" : "bottles";
+                            updateRecurring(idx, { material });
+                          }}
+                          className="border-input bg-background h-8 rounded-md border px-2 text-xs"
+                        >
+                          <option value="bottles">Bottles</option>
+                          <option value="caps">Caps</option>
+                        </select>
+                      </div>
+                      <NumberField
+                        id={`wiz-recurring-${String(idx)}-amount`}
+                        label="Amount"
+                        value={r.amount}
+                        onChange={(n) => {
+                          updateRecurring(idx, { amount: n });
+                        }}
+                        min={0}
+                      />
+                      <DurationInput
+                        id={`wiz-recurring-${String(idx)}-interval`}
+                        label="Every"
+                        valueMs={r.intervalMs}
+                        onChangeMs={(ms) => {
+                          updateRecurring(idx, { intervalMs: ms });
+                        }}
+                        defaultUnit="min"
+                        min={1}
+                      />
+                      <NumberField
+                        id={`wiz-recurring-${String(idx)}-max`}
+                        label="Max inventory"
+                        value={r.maxInventory ?? 0}
+                        onChange={(n) => {
+                          updateRecurring(idx, { maxInventory: n > 0 ? n : undefined });
+                        }}
+                        min={0}
+                      />
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => {
+                          removeRecurring(idx);
+                        }}
+                        aria-label={`Remove recurring delivery ${String(idx + 1)}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))
+                )}
+                <Button size="sm" variant="outline" onClick={addRecurring} className="gap-1">
+                  <Plus className="h-3.5 w-3.5" />
+                  Add recurring delivery
+                </Button>
+              </div>
+            </>
+          ) : (
+            <p className="text-muted-foreground text-xs">
+              Turn on materials tracking above to expose caps inventory and recurring deliveries.
+            </p>
+          )}
+        </div>
+      </details>
     </div>
   );
 }

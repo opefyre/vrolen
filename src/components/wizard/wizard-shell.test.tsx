@@ -50,10 +50,13 @@ describe("WizardShell (VROL-820)", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("Next is enabled for the default draft because the preset is preselected", () => {
+  it("Next is disabled until the user picks a shape (VROL-821)", () => {
     render(<WizardShell open onClose={() => {}} onFinish={() => {}} />);
     const next = screen.getByRole("button", { name: /Next/i });
-    expect(next).not.toBeDisabled();
+    expect(next).toBeDisabled();
+    // Clicking any shape card unblocks Next.
+    fireEvent.click(screen.getByTestId("shape-card-single-line"));
+    expect(screen.getByRole("button", { name: /Next/i })).not.toBeDisabled();
   });
 
   it("Save & exit persists the draft and calls onClose", () => {
@@ -92,8 +95,9 @@ describe("WizardShell (VROL-783) a11y focus management", () => {
 
   it("the last step exposes Create scenario (not Run simulation) — VROL-871", async () => {
     const { rerender } = render(<WizardShell open onClose={() => {}} onFinish={() => {}} />);
-    // Click the last stepper dot directly. Future steps are disabled, so we
-    // need to advance through each step using Next.
+    // VROL-821 — step 1 starts with no shape selected; click one before
+    // walking through the rest of the wizard.
+    fireEvent.click(screen.getByTestId("shape-card-single-line"));
     const user = userEvent.setup();
     for (let i = 0; i < 7; i++) {
       const next = screen.getByRole("button", { name: /Next/i });
@@ -172,5 +176,47 @@ describe("WizardShell (VROL-783) a11y focus management", () => {
     await user.tab({ shift: true });
     expect(dialog.contains(document.activeElement)).toBe(true);
     expect(document.activeElement).not.toBe(first);
+  });
+});
+
+describe("WizardShell (VROL-827) in-modal progress sequence", () => {
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", makeMemoryStorage());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("clicking Create scenario advances through the 4-step progress sequence and lands on success", async () => {
+    const onFinish = vi.fn();
+    const onClose = vi.fn();
+    render(<WizardShell open onClose={onClose} onFinish={onFinish} progressPhaseMs={0} />);
+    // Pick a shape and walk through the wizard.
+    fireEvent.click(screen.getByTestId("shape-card-single-line"));
+    const user = userEvent.setup();
+    for (let i = 0; i < 7; i++) {
+      const next = screen.getByRole("button", { name: /Next/i });
+      await user.click(next);
+    }
+    // Trigger the progress sequence.
+    const create = screen.getByRole("button", { name: /Create scenario/i });
+    await user.click(create);
+    // Modal must NOT close yet — we are showing the progress sequence.
+    expect(onClose).not.toHaveBeenCalled();
+    // The 4-step indicator is present.
+    expect(await screen.findByTestId("wizard-progress-indicator")).toBeInTheDocument();
+    // Eventually the success-screen CTA appears.
+    const openBtn = await screen.findByTestId("wizard-open-scenario");
+    expect(openBtn).toBeInTheDocument();
+    // Clicking it hands off to the host and closes the modal.
+    await user.click(openBtn);
+    expect(onFinish).toHaveBeenCalledTimes(1);
+    expect(onFinish.mock.calls[0]![1]).toBe("run");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("the progress indicator is not present while the user is authoring", () => {
+    render(<WizardShell open onClose={() => {}} onFinish={() => {}} />);
+    expect(screen.queryByTestId("wizard-progress-indicator")).not.toBeInTheDocument();
   });
 });

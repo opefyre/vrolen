@@ -45,7 +45,9 @@ function isStr(v: unknown): v is string {
 
 function isWizardDraft(value: unknown): value is WizardDraft {
   if (!isObj(value)) return false;
-  if (!isStr(value["shapeKind"])) return false;
+  // VROL-821 — shapeKind is `ShapeKind | null` (null until the user has
+  // explicitly picked a shape card on step 1).
+  if (value["shapeKind"] !== null && !isStr(value["shapeKind"])) return false;
   if (!Array.isArray(value["stations"])) return false;
   if (!Array.isArray(value["connections"])) return false;
   if (typeof value["productsEnabled"] !== "boolean") return false;
