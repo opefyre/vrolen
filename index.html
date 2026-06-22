@@ -9,9 +9,55 @@
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <meta name="theme-color" content="#22c55e" />
     <title>Vrolen</title>
+    <!-- VROL-809 — SEO meta + Open Graph + Twitter card. -->
+    <meta
+      name="description"
+      content="Vrolen is a browser-based discrete-event simulator for production lines — build, tune, and stress-test factory layouts without leaving the tab."
+    />
+    <meta property="og:title" content="Vrolen — production-line simulator" />
+    <meta
+      property="og:description"
+      content="Browser-based discrete-event simulation for production lines. Build, tune, and stress-test factory layouts in seconds."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://vrolen.app/" />
+    <meta property="og:image" content="/vrolen-og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Vrolen — production-line simulator" />
+    <meta
+      name="twitter:description"
+      content="Browser-based discrete-event simulation for production lines."
+    />
+    <meta name="twitter:image" content="/vrolen-og.png" />
   </head>
   <body>
     <div id="root"></div>
+    <!-- VROL-809 — Polite fallback when JavaScript is disabled. -->
+    <noscript>
+      <div
+        style="
+          max-width: 32rem;
+          margin: 4rem auto;
+          padding: 1.5rem;
+          font-family:
+            system-ui,
+            -apple-system,
+            Segoe UI,
+            sans-serif;
+          line-height: 1.5;
+          color: #111;
+          background: #fafafa;
+          border: 1px solid #e5e5e5;
+          border-radius: 0.75rem;
+          text-align: center;
+        "
+      >
+        <h1 style="margin: 0 0 0.5rem; font-size: 1.25rem">Vrolen needs JavaScript</h1>
+        <p style="margin: 0">
+          Vrolen runs in your browser using JavaScript. Enable JavaScript to use the simulator.
+        </p>
+      </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

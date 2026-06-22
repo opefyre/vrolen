@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 
 import { AppShell } from "@/components/AppShell";
 import { GlobalCommandPalette } from "@/components/global-command-palette";
+import { RouteAnnouncer } from "@/components/RouteAnnouncer";
 import { Toaster } from "@/components/Toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { usePathname } from "@/lib/spa-nav";
@@ -56,6 +57,7 @@ export default function App() {
     <TooltipProvider>
       <GlobalCommandPalette>
         <AppShell>{page}</AppShell>
+        <RouteAnnouncer />
         <Toaster />
       </GlobalCommandPalette>
     </TooltipProvider>
