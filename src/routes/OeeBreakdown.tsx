@@ -37,6 +37,16 @@ function Segment({ label, pct, colorClass }: SegmentProps) {
 
 export function OeeBreakdown({ result }: OeeBreakdownProps) {
   if (result.perStationOee.length === 0) return null;
+  // Pull running-share per station from the bottlenecks array (sorted by
+  // runningPct desc). We need a stationId -> runningPct map so each OEE row
+  // can show its own utilisation. OEE on its own measures efficiency WHEN
+  // running and hides starvation / blocking; showing Utilisation next to
+  // it is what tells the user "this station is actually idle 60% of the
+  // time" — without it, an idle station can read as OEE 100% and look fine.
+  const stationIds = result.bottlenecks.map((b) => b.stationId);
+  const utilisationByStationId = new Map(
+    result.bottlenecks.map((b) => [b.stationId, b.runningPct] as const),
+  );
   return (
     <div className="space-y-3" data-testid="oee-breakdown">
       {result.perStationOee.map((oee, idx) => {
@@ -45,17 +55,42 @@ export function OeeBreakdown({ result }: OeeBreakdownProps) {
           result.bottlenecks[idx]?.label ??
           `Station ${String(idx)}`;
         const total = Math.round(oee.oee * 100);
+        // Try to match by stationId via the chainNodeIds order; fall back
+        // to the bottleneck at the same idx.
+        const stationId = stationIds[idx];
+        const util =
+          (stationId !== undefined ? utilisationByStationId.get(stationId) : undefined) ??
+          result.bottlenecks[idx]?.runningPct ??
+          0;
+        const utilPct = Math.round(util * 100);
+        const lowUtil = util < 0.7;
         return (
           <div
             key={`${label}-${String(idx)}`}
             className="border-border bg-card space-y-2 rounded-md border p-3"
           >
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-foreground text-sm font-medium">{label}</span>
-              <span className="font-mono text-sm tabular-nums" title="A × P × Q">
-                OEE {total}%
-              </span>
+              <div className="flex items-center gap-3 font-mono text-sm tabular-nums">
+                <span
+                  className={lowUtil ? "text-sim-down-foreground" : "text-muted-foreground"}
+                  title="Share of the measurement window the station was actually in the Running state. Independent of OEE — captures starvation + blocking too."
+                >
+                  Util {utilPct}%
+                </span>
+                <span title="Availability × Performance × Quality. Measures losses while the station is allowed to run — does NOT include starvation / blocking.">
+                  OEE {total}%
+                </span>
+              </div>
             </div>
+            {lowUtil ? (
+              <p className="text-muted-foreground text-[11px]">
+                OEE looks high because it ignores starvation + blocking. This station only ran{" "}
+                <span className="text-foreground font-mono tabular-nums">{utilPct}%</span> of the
+                window — feeding it faster (or trimming downstream) is what would lift line
+                throughput here.
+              </p>
+            ) : null}
             <div className="flex gap-3">
               <Segment label="Availability" pct={oee.availability} colorClass="bg-sim-running" />
               <Segment label="Performance" pct={oee.performance} colorClass="bg-sim-setup" />

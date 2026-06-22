@@ -127,7 +127,12 @@ describe("narrateRun (VROL-640)", () => {
     expect(sentences[1]).toContain("25%");
   });
 
-  it("falls back to an excellent-OEE sentence when no other hint fires", () => {
+  it("emits 'bottleneck-bound' when line OEE is high but stations idle too much", () => {
+    // High line OEE with a station that only runs 40% of the time. We used
+    // to claim 'Excellent OEE — well balanced' here, which was a lie — OEE
+    // hides starvation + blocking, so 'high OEE' alone doesn't mean
+    // balanced. The fix downgrades that line to a 'bottleneck-bound' hint
+    // and surfaces the worst utilisation %.
     const sentences = narrateRun(
       fakeResult({
         lineOee: 0.9,
@@ -147,7 +152,40 @@ describe("narrateRun (VROL-640)", () => {
       }),
     );
     expect(sentences).toHaveLength(2);
-    expect(sentences[1]).toContain("Excellent OEE");
+    expect(sentences[1]).toContain("bottleneck-bound");
+    expect(sentences[1]).toContain("Capper");
+    expect(sentences[1]).toContain("40%");
+  });
+
+  it("still emits 'well balanced' when every station's runningPct >= 70%", () => {
+    // primaryReason !== "running" so capacityHint + headroomSentence don't
+    // fire and the OEE-band sentence reaches the output. All stations are
+    // running >= 70%, so the new 'well balanced' branch should hit.
+    const sentences = narrateRun(
+      fakeResult({
+        lineOee: 0.92,
+        bottlenecks: [
+          {
+            stationId: "s1" as unknown as ChainResult["bottlenecks"][number]["stationId"],
+            label: "A",
+            runningPct: 0.95,
+            primaryReason: "starvation",
+            primaryReasonPct: 0.05,
+            breakdown: [{ state: "Running", pct: 0.95 }],
+          },
+          {
+            stationId: "s2" as unknown as ChainResult["bottlenecks"][number]["stationId"],
+            label: "B",
+            runningPct: 0.85,
+            primaryReason: "blocking",
+            primaryReasonPct: 0.15,
+            breakdown: [{ state: "Running", pct: 0.85 }],
+          },
+        ],
+      }),
+    );
+    expect(sentences[sentences.length - 1]).toContain("Excellent OEE");
+    expect(sentences[sentences.length - 1]).toContain("well balanced");
   });
 
   it("capacity hint switches to 'already at capacity N' when capacity > 1 (VROL-652)", () => {

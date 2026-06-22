@@ -99,8 +99,25 @@ function oeeBandSentence(result: ChainResult): string | undefined {
   if (result.lineOee < LOW_OEE_BAND) {
     return `Low utilization (${String(pct)}% line OEE) — look at the bottleneck.`;
   }
+  // "Well balanced" is a strong claim — only emit when EVERY station is
+  // actually running a high % of the time. OEE alone hides starvation +
+  // blocking, so a 100% line OEE can sit on top of a chain where some
+  // stations sit idle most of the time. Require every station's running
+  // share to be >= 70% before we say balanced.
   if (result.lineOee >= HIGH_OEE_BAND) {
-    return `Excellent OEE (${String(pct)}%) — line is well balanced.`;
+    const minRunning = result.bottlenecks.reduce((m, b) => Math.min(m, b.runningPct), 1);
+    if (minRunning >= 0.7) {
+      return `Excellent OEE (${String(pct)}%) — line is well balanced.`;
+    }
+    // High OEE but not balanced — the line is bottleneck-bound. Surface that
+    // truth instead of mislabelling it as balanced. Find the least-running
+    // station so the user sees the spread.
+    const least = result.bottlenecks.reduce(
+      (worst, b) => (b.runningPct < worst.runningPct ? b : worst),
+      result.bottlenecks[0]!,
+    );
+    const leastPct = Math.round(least.runningPct * 100);
+    return `OEE ${String(pct)}% looks high, but the line is bottleneck-bound — ${least.label ?? "downstream"} only runs ${String(leastPct)}% of the time.`;
   }
   return undefined;
 }
