@@ -227,8 +227,8 @@ export function AppShell({ children }: AppShellProps) {
           return (
             <Tooltip key={item.href}>
               <TooltipTrigger render={link} />
-              <TooltipContent>
-                <span className="inline-flex items-center gap-2">
+              <TooltipContent side="right" sideOffset={12} className="px-2 py-1 text-xs">
+                <span className="inline-flex items-center gap-1.5">
                   {item.label}
                   {item.shortcut ? (
                     <kbd className="border-border bg-card text-foreground rounded-sm border px-1 font-mono text-[10px]">

@@ -3,12 +3,11 @@
  * BEHIND regular station nodes. Holds no engine state; lives purely as
  * a visual grouping affordance ("Packing line", "QA loop", …).
  *
- * Resizing: a bottom-right grip emits pointer-move deltas that update
- * data.width / data.height. The node mounts a transparent rounded
- * rectangle with the label pinned to the top-left.
- *
- * Re-parenting nodes onto a frame is intentionally NOT modeled — the
- * frame is visual only. That keeps the engine translator untouched.
+ * Resizing: 8 grips — 4 corners + 4 edges — emit pointer-move deltas that
+ * update width / height (and for the anchors that pull a top/left edge,
+ * the node's position too). Each grip lives in a slot with the `nodrag`
+ * className so React Flow doesn't also start a node-drag when the user
+ * grabs the grip.
  */
 
 import type { NodeProps } from "@xyflow/react";
@@ -39,6 +38,33 @@ interface FrameData {
 const MIN_W = 160;
 const MIN_H = 80;
 
+/** Which sides of the frame this grip pulls. Corners pull two sides. */
+type Anchor = "tl" | "t" | "tr" | "r" | "br" | "b" | "bl" | "l";
+
+const ANCHOR_CURSORS: Record<Anchor, string> = {
+  tl: "cursor-nwse-resize",
+  t: "cursor-ns-resize",
+  tr: "cursor-nesw-resize",
+  r: "cursor-ew-resize",
+  br: "cursor-nwse-resize",
+  b: "cursor-ns-resize",
+  bl: "cursor-nesw-resize",
+  l: "cursor-ew-resize",
+};
+
+/** Tailwind positioning for each grip. Corners are 8px squares; edge
+ *  grips run the length of the edge but stay thin (4px deep). */
+const ANCHOR_CLASSES: Record<Anchor, string> = {
+  tl: "h-2.5 w-2.5 -top-1 -left-1",
+  t: "h-1 left-2 right-2 -top-0.5",
+  tr: "h-2.5 w-2.5 -top-1 -right-1",
+  r: "w-1 top-2 bottom-2 -right-0.5",
+  br: "h-2.5 w-2.5 -bottom-1 -right-1",
+  b: "h-1 left-2 right-2 -bottom-0.5",
+  bl: "h-2.5 w-2.5 -bottom-1 -left-1",
+  l: "w-1 top-2 bottom-2 -left-0.5",
+};
+
 export function FrameNode(props: NodeProps) {
   const data = (props.data ?? {}) as FrameData;
   const label = data.label ?? "Section";
@@ -51,24 +77,37 @@ export function FrameNode(props: NodeProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<string>(label);
 
-  // Pointer-drag resize from the bottom-right grip. Tracks deltas in
-  // flow coords (translated via React Flow's screenToFlowPosition).
+  // Pointer-drag resize. Tracks the starting box (top-left position +
+  // size) so corner/edge anchors can shift both dimensions and position
+  // consistently regardless of which edge is being pulled.
   const resizeStartRef = useRef<{
+    anchor: Anchor;
     wPx: number;
     hPx: number;
+    xPx: number;
+    yPx: number;
     clientX: number;
     clientY: number;
   } | null>(null);
-  const onResizePointerDown = (e: React.PointerEvent): void => {
-    e.stopPropagation();
-    resizeStartRef.current = {
-      wPx: width,
-      hPx: height,
-      clientX: e.clientX,
-      clientY: e.clientY,
+
+  const onResizePointerDown =
+    (anchor: Anchor) =>
+    (e: React.PointerEvent): void => {
+      e.stopPropagation();
+      e.preventDefault();
+      const node = flow.getNode(props.id);
+      resizeStartRef.current = {
+        anchor,
+        wPx: width,
+        hPx: height,
+        xPx: node?.position.x ?? 0,
+        yPx: node?.position.y ?? 0,
+        clientX: e.clientX,
+        clientY: e.clientY,
+      };
+      (e.target as Element).setPointerCapture?.(e.pointerId);
     };
-    (e.target as Element).setPointerCapture?.(e.pointerId);
-  };
+
   const onResizePointerMove = (e: React.PointerEvent): void => {
     const start = resizeStartRef.current;
     if (!start) return;
@@ -76,13 +115,39 @@ export function FrameNode(props: NodeProps) {
     const zoom = flow.getZoom();
     const dx = (e.clientX - start.clientX) / zoom;
     const dy = (e.clientY - start.clientY) / zoom;
-    const nextW = Math.max(MIN_W, Math.round(start.wPx + dx));
-    const nextH = Math.max(MIN_H, Math.round(start.hPx + dy));
+    // Decompose anchor into which edges move. left/top edges also shift
+    // the node's position; right/bottom edges only change size.
+    const pullLeft = start.anchor === "tl" || start.anchor === "l" || start.anchor === "bl";
+    const pullRight = start.anchor === "tr" || start.anchor === "r" || start.anchor === "br";
+    const pullTop = start.anchor === "tl" || start.anchor === "t" || start.anchor === "tr";
+    const pullBottom = start.anchor === "bl" || start.anchor === "b" || start.anchor === "br";
+    let nextW = start.wPx;
+    let nextH = start.hPx;
+    let nextX = start.xPx;
+    let nextY = start.yPx;
+    if (pullRight) nextW = start.wPx + dx;
+    if (pullLeft) {
+      // Clamp dx so the resulting width never drops below MIN_W.
+      const clampedDx = Math.min(dx, start.wPx - MIN_W);
+      nextW = start.wPx - clampedDx;
+      nextX = start.xPx + clampedDx;
+    }
+    if (pullBottom) nextH = start.hPx + dy;
+    if (pullTop) {
+      const clampedDy = Math.min(dy, start.hPx - MIN_H);
+      nextH = start.hPx - clampedDy;
+      nextY = start.yPx + clampedDy;
+    }
+    nextW = Math.max(MIN_W, Math.round(nextW));
+    nextH = Math.max(MIN_H, Math.round(nextH));
+    nextX = Math.round(nextX);
+    nextY = Math.round(nextY);
     flow.setNodes((ns) =>
       ns.map((n) =>
         n.id === props.id
           ? {
               ...n,
+              position: { x: nextX, y: nextY },
               data: { ...(n.data as Record<string, unknown>), width: nextW, height: nextH },
               width: nextW,
               height: nextH,
@@ -91,6 +156,7 @@ export function FrameNode(props: NodeProps) {
       ),
     );
   };
+
   const onResizePointerUp = (e: React.PointerEvent): void => {
     resizeStartRef.current = null;
     (e.target as Element).releasePointerCapture?.(e.pointerId);
@@ -109,6 +175,8 @@ export function FrameNode(props: NodeProps) {
     );
     setEditing(false);
   };
+
+  const ANCHORS: readonly Anchor[] = ["tl", "t", "tr", "r", "br", "b", "bl", "l"];
 
   return (
     <div
@@ -156,17 +224,22 @@ export function FrameNode(props: NodeProps) {
           </button>
         )}
       </div>
-      {/* Bottom-right resize grip. */}
-      <div
-        role="separator"
-        aria-label="Resize frame"
-        onPointerDown={onResizePointerDown}
-        onPointerMove={onResizePointerMove}
-        onPointerUp={onResizePointerUp}
-        onPointerCancel={onResizePointerUp}
-        className="bg-foreground/60 absolute right-0 bottom-0 h-3 w-3 cursor-nwse-resize rounded-br-md"
-        style={{ touchAction: "none" }}
-      />
+      {/* 8 resize grips. Each has the `nodrag` className so React Flow
+          doesn't also start a node-drag when the user grabs a grip
+          (that was the source of the position-drift bug). */}
+      {ANCHORS.map((anchor) => (
+        <div
+          key={anchor}
+          role="separator"
+          aria-label={`Resize frame ${anchor}`}
+          onPointerDown={onResizePointerDown(anchor)}
+          onPointerMove={onResizePointerMove}
+          onPointerUp={onResizePointerUp}
+          onPointerCancel={onResizePointerUp}
+          className={`nodrag bg-foreground/40 hover:bg-foreground/70 absolute z-10 rounded-sm ${ANCHOR_CLASSES[anchor]} ${ANCHOR_CURSORS[anchor]}`}
+          style={{ touchAction: "none" }}
+        />
+      ))}
     </div>
   );
 }

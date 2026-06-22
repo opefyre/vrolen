@@ -174,10 +174,13 @@ export function AnimatedEdge(props: EdgeProps) {
     },
   };
   // VROL-615 — render the buffer-fill sparkline above the edge midpoint when
-  // the run carried a sampler. Stays visible even when animation / flow dots
-  // are off — sparklines are a per-run summary, not a live effect.
+  // the run carried a sampler AND the buffer actually filled at some point.
+  // Without the peak>0 guard the wrapper renders an empty styled box even
+  // though Sparkline internally returns null for all-zero series.
+  const seriesPeak =
+    Array.isArray(series) && series.length > 1 ? series.reduce((m, v) => (v > m ? v : m), 0) : 0;
   const sparkline =
-    Array.isArray(series) && series.length > 1 ? (
+    Array.isArray(series) && series.length > 1 && seriesPeak > 0 ? (
       <EdgeLabelRenderer>
         <div
           style={{

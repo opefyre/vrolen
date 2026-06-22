@@ -188,7 +188,12 @@ function checkTopology(
   edges: readonly Edge[],
   out: ValidationIssue[],
 ): void {
-  if (nodes.length === 0) {
+  // Sticky notes and section frames are visual-only — they don't
+  // participate in the simulation graph. Topology checks must ignore them
+  // or the user gets "orphan / multiple-source / multiple-sink" warnings
+  // for every annotation they drop on the canvas.
+  const stationNodes = nodes.filter((n) => n.type !== "sticky" && n.type !== "frame");
+  if (stationNodes.length === 0) {
     out.push({
       code: "TOPO_EMPTY",
       severity: "error",
@@ -200,7 +205,7 @@ function checkTopology(
   }
   const incoming = new Map<string, string[]>();
   const outgoing = new Map<string, string[]>();
-  for (const n of nodes) {
+  for (const n of stationNodes) {
     incoming.set(n.id, []);
     outgoing.set(n.id, []);
   }
@@ -210,16 +215,18 @@ function checkTopology(
     outgoing.get(e.source)!.push(e.target);
   }
   // Orphan stations: no inputs AND no outputs (and not the lone station).
-  if (nodes.length > 1) {
-    nodes.forEach((n, i) => {
+  if (stationNodes.length > 1) {
+    stationNodes.forEach((n, i) => {
       const ins = incoming.get(n.id) ?? [];
       const outs = outgoing.get(n.id) ?? [];
       if (ins.length === 0 && outs.length === 0) {
+        const labelData = (n.data ?? {}) as { label?: string };
+        const label = typeof labelData.label === "string" ? labelData.label : n.id;
         out.push({
           code: "TOPO_ORPHAN_NODE",
           severity: "warning",
           category: "topology",
-          message: `Station "${n.id}" has no connections — it won't run`,
+          message: `Station "${label}" has no connections — it won't run`,
           path: `nodes[${String(i)}]`,
           fix: `Connect it to the chain or delete it`,
           nodeId: n.id,
@@ -247,7 +254,7 @@ function checkTopology(
     }
     stack.delete(id);
   };
-  for (const n of nodes) dfs(n.id);
+  for (const n of stationNodes) dfs(n.id);
   if (inCycle.size > 0) {
     out.push({
       code: "TOPO_CYCLE_DETECTED",
@@ -260,8 +267,8 @@ function checkTopology(
   // Source / sink uniqueness: many scenarios have a single source + sink.
   // We flag multiple of either as a warning (engine throws if topology mode
   // has > 1 source or sink).
-  const sources = nodes.filter((n) => (incoming.get(n.id) ?? []).length === 0);
-  const sinks = nodes.filter((n) => (outgoing.get(n.id) ?? []).length === 0);
+  const sources = stationNodes.filter((n) => (incoming.get(n.id) ?? []).length === 0);
+  const sinks = stationNodes.filter((n) => (outgoing.get(n.id) ?? []).length === 0);
   if (sources.length > 1) {
     out.push({
       code: "TOPO_MULTIPLE_SOURCES",

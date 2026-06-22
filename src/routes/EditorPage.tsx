@@ -3688,7 +3688,12 @@ function EditorCanvas() {
           >
             <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
             <CanvasControls />
-            <MiniMap pannable zoomable />
+            <MiniMap
+              pannable
+              zoomable
+              position="top-right"
+              style={{ marginTop: 12, marginRight: 12 }}
+            />
             <AlignmentGuidesOverlay guideLines={alignmentGuides.guideLines} />
             {nodesForFlow.length === 0 ? (
               <div

@@ -232,7 +232,11 @@
 .vrolen-handle:hover,
 .vrolen-handle.connectingfrom,
 .vrolen-handle.connectingto {
-  transform: scale(1.4);
+  /* Scale was 1.4 (40% bigger) — paired with a -6px offset that anchored
+   * the handle outside the node, the center-origin scale produced a
+   * visible drift that read as the handle "moving" on hover. 1.15 is
+   * still discoverable but stays in place. */
+  transform: scale(1.15);
   opacity: 1 !important;
 }
 
