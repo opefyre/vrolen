@@ -9,6 +9,8 @@
 
 import {
   Activity,
+  AlertTriangle,
+  ArrowUpRight,
   Award,
   Boxes,
   Layers,
@@ -496,6 +498,121 @@ function KpiCiBand({ kpi }: { readonly kpi: import("@/lib/replications").Replica
   );
 }
 
+/**
+ * VROL-841 — Hero Result Card.
+ *
+ * The audit found the Overview tab was a row of equal-weight tiles, so the
+ * single most important number (throughput) didn't stand out and the user
+ * couldn't see at a glance what to look at. This card promotes throughput to
+ * a large hero number, attaches the bottleneck attribution directly
+ * underneath ("X is the bottleneck — Y% running"), and demotes the other
+ * three KPIs to a small secondary row.
+ *
+ * Throughput is the universal headline: it's the rate the line is delivering
+ * customer-facing parts. OEE / TIS / Completed are supporting context.
+ */
+function HeroResultCard({
+  throughputFormatted,
+  throughputRepKpi,
+  onThroughputDrilldown,
+  bottleneck,
+  onFocusBottleneck,
+}: {
+  readonly throughputFormatted: string;
+  readonly throughputRepKpi: import("@/lib/replications").ReplicationKpi | null;
+  readonly onThroughputDrilldown: (() => void) | null;
+  readonly bottleneck: {
+    readonly label: string;
+    readonly runningPct: number;
+    readonly stationIdx?: number;
+  } | null;
+  readonly onFocusBottleneck: ((stationIdx: number) => void) | null;
+}) {
+  const throughputClickable = onThroughputDrilldown !== null;
+  const bottleneckClickable =
+    bottleneck !== null && typeof bottleneck.stationIdx === "number" && onFocusBottleneck !== null;
+  return (
+    <Card className="border-primary/30 from-primary/5 via-card to-card bg-gradient-to-br">
+      <CardContent className="space-y-4 p-5">
+        <div className="text-muted-foreground flex items-center justify-between text-[11px] font-medium tracking-wide uppercase">
+          <span>Throughput</span>
+          {throughputRepKpi && throughputRepKpi.values.length > 1 ? (
+            <span className="font-mono text-[10px] normal-case">
+              n = {throughputRepKpi.values.length} replications
+            </span>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            if (onThroughputDrilldown) onThroughputDrilldown();
+          }}
+          disabled={!throughputClickable}
+          aria-label={throughputClickable ? "Open throughput drilldown" : undefined}
+          className={`block w-full text-left ${
+            throughputClickable
+              ? "group hover:text-primary cursor-pointer transition-colors"
+              : "cursor-default"
+          }`}
+        >
+          <div className="flex items-baseline gap-3">
+            <span className="font-heading font-mono text-5xl font-bold tracking-tight tabular-nums">
+              {throughputFormatted}
+            </span>
+            <span className="text-muted-foreground text-sm">parts / hour</span>
+            {throughputClickable ? (
+              <ArrowUpRight
+                className="text-muted-foreground group-hover:text-primary ml-auto h-4 w-4 transition-colors"
+                aria-hidden
+              />
+            ) : null}
+          </div>
+          {throughputRepKpi && throughputRepKpi.values.length > 1 ? (
+            <KpiCiBand kpi={throughputRepKpi} />
+          ) : null}
+        </button>
+        {bottleneck ? (
+          <button
+            type="button"
+            onClick={() => {
+              if (
+                bottleneckClickable &&
+                typeof bottleneck.stationIdx === "number" &&
+                onFocusBottleneck
+              ) {
+                onFocusBottleneck(bottleneck.stationIdx);
+              }
+            }}
+            disabled={!bottleneckClickable}
+            aria-label={
+              bottleneckClickable
+                ? `Locate ${bottleneck.label} on the canvas`
+                : `${bottleneck.label} is the bottleneck`
+            }
+            className={`border-sim-blocked/30 bg-sim-blocked/5 flex w-full items-center gap-2 rounded-md border p-2.5 text-left text-sm ${
+              bottleneckClickable
+                ? "hover:border-sim-blocked/60 hover:bg-sim-blocked/10 cursor-pointer transition-colors"
+                : "cursor-default"
+            }`}
+          >
+            <AlertTriangle className="text-sim-blocked-foreground h-4 w-4 shrink-0" aria-hidden />
+            <span className="min-w-0">
+              <strong className="font-medium">{bottleneck.label}</strong> is the bottleneck —{" "}
+              <span className="font-mono tabular-nums">
+                {(bottleneck.runningPct * 100).toFixed(1)}%
+              </span>{" "}
+              running. Whatever drives its rate caps the line.
+            </span>
+            {bottleneckClickable ? (
+              <span className="text-muted-foreground ml-auto shrink-0 text-xs">Locate →</span>
+            ) : null}
+          </button>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function ResultPanel({
   result,
   runMeta,
@@ -669,11 +786,41 @@ export function ResultPanel({
   })();
   return (
     <div className="space-y-3">
+      {/* VROL-841 — Hero Result Card: throughput as the single headline,
+          bottleneck attribution inline, with the other 3 KPIs demoted to
+          a thinner secondary row. Replaces the previous 4-equal-tile grid
+          that gave the user no visual hierarchy. */}
+      <HeroResultCard
+        throughputFormatted={fmt(throughputPerHour, 0)}
+        throughputRepKpi={replicationKpiFor("Throughput")}
+        onThroughputDrilldown={
+          replicationKpiFor("Throughput")
+            ? () => {
+                const k = replicationKpiFor("Throughput");
+                if (k) setKpiDrilldown(k);
+              }
+            : null
+        }
+        bottleneck={(() => {
+          if (result.bottlenecks.length === 0) return null;
+          const sorted = [...result.bottlenecks].sort((a, b) => b.runningPct - a.runningPct);
+          const head = sorted[0];
+          if (!head) return null;
+          return {
+            label: head.label ?? "the bottleneck",
+            runningPct: head.runningPct,
+            stationIdx:
+              typeof result.bottleneckStationIdx === "number"
+                ? result.bottleneckStationIdx
+                : undefined,
+          };
+        })()}
+        onFocusBottleneck={onFocusStation ?? null}
+      />
       <InsightsBanner result={result} />
       {cycleStrip}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-3 gap-3">
         {tile("Completed", result.completed.toLocaleString(), "during measurement window")}
-        {tile("Throughput", fmt(throughputPerHour, 0), "parts / hour")}
         {tile("Line OEE", `${fmt(result.lineOee * 100)}%`, "geometric mean")}
         {tile("Time-in-system", `${fmt(result.avgTimeInSystemW, 0)} ms`, "average W per part")}
       </div>
