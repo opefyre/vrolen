@@ -24,6 +24,12 @@ interface PlaybackControllerProps {
    * undefined to opt out.
    */
   readonly autoPlayNonce?: number;
+  /**
+   * VROL-779 — when set, the scrubber renders a shaded band over the
+   * [0, warmupMs] region to communicate that those samples are excluded
+   * from KPI math. Visual only; the user can still scrub into the band.
+   */
+  readonly warmupMs?: number;
 }
 
 const SPEEDS: readonly { readonly label: string; readonly factor: number }[] = [
@@ -53,6 +59,7 @@ export function PlaybackController({
   playbackMs,
   onPlaybackChange,
   autoPlayNonce,
+  warmupMs,
 }: PlaybackControllerProps) {
   const [playing, setPlaying] = useState<boolean>(false);
   const [speed, setSpeed] = useState<number>(5);
@@ -203,20 +210,44 @@ export function PlaybackController({
         >
           <Rewind className="h-4 w-4" />
         </Button>
-        <input
-          type="range"
-          aria-label="Scrub playback"
-          min={0}
-          max={horizonMs}
-          step={Math.max(1, Math.floor(horizonMs / 1000))}
-          value={Math.round(playbackMs)}
-          disabled={disabled}
-          onChange={(e) => {
-            setPlaying(false);
-            onPlaybackChange(Number(e.target.value));
-          }}
-          className="accent-sim-running min-w-32 flex-1"
-        />
+        {/* VROL-779 — wrap the range input so we can overlay a warmup
+            band + a marker line at warmup-end. pointer-events-none on
+            the decorations so the user can still scrub through them. */}
+        <div className="relative min-w-32 flex-1">
+          {warmupMs !== undefined && warmupMs > 0 && horizonMs > 0 ? (
+            <>
+              <div
+                aria-hidden
+                className="bg-muted-foreground/15 pointer-events-none absolute inset-y-1.5 left-0 rounded-l-sm"
+                style={{
+                  width: `${String(Math.min(100, (warmupMs / horizonMs) * 100))}%`,
+                }}
+                title={`Warm-up (${warmupMs >= 1000 ? `${(warmupMs / 1000).toFixed(1)}s` : `${warmupMs.toFixed(0)}ms`}) excluded from KPIs`}
+              />
+              <div
+                aria-hidden
+                className="bg-muted-foreground/40 pointer-events-none absolute inset-y-1 w-px"
+                style={{
+                  left: `${String(Math.min(100, (warmupMs / horizonMs) * 100))}%`,
+                }}
+              />
+            </>
+          ) : null}
+          <input
+            type="range"
+            aria-label="Scrub playback"
+            min={0}
+            max={horizonMs}
+            step={Math.max(1, Math.floor(horizonMs / 1000))}
+            value={Math.round(playbackMs)}
+            disabled={disabled}
+            onChange={(e) => {
+              setPlaying(false);
+              onPlaybackChange(Number(e.target.value));
+            }}
+            className="accent-sim-running relative w-full"
+          />
+        </div>
         <span className="text-muted-foreground min-w-24 text-right font-mono text-xs tabular-nums">
           {fmtTime(playbackMs)} / {fmtTime(horizonMs)}
         </span>

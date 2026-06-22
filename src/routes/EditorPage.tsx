@@ -3745,6 +3745,7 @@ function EditorCanvas() {
                 playbackMs={playbackMs}
                 onPlaybackChange={setPlaybackMs}
                 autoPlayNonce={runNonce}
+                warmupMs={Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2))}
               />
             </div>
           ) : null}
