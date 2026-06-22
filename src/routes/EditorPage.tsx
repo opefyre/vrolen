@@ -75,6 +75,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { CapacityChip } from "@/components/canvas/capacity-chip";
 import { DistributionField } from "@/components/ui/distribution-field";
+import { DurationInput } from "@/components/ui/duration-input";
 import { Input } from "@/components/ui/input";
 import { NumberField } from "@/components/ui/number-field";
 import {
@@ -3518,6 +3519,55 @@ function EditorCanvas() {
           </Button>
         </div>
       </div>
+      {/* VROL-778 — pinned 6-tile KPI strip. Stays visible below the
+          toolbar while the user edits so they never lose sight of the
+          headline metrics from the last run. Hidden until the first run
+          produces a result. */}
+      {result && runMeta ? (
+        <div
+          role="group"
+          aria-label="Last run KPIs"
+          className="border-border bg-card/70 supports-[backdrop-filter]:bg-card/55 sticky top-[3.25rem] z-10 -mx-6 grid grid-cols-3 gap-2 border-b px-3 py-2 backdrop-blur sm:grid-cols-6 sm:gap-3 sm:px-6"
+        >
+          {(() => {
+            const tput = Math.round(result.throughputLambda * 3_600_000);
+            const oeePct = (result.lineOee * 100).toFixed(0);
+            const tisMs = result.avgTimeInSystemW;
+            const tisLabel =
+              tisMs >= 1000 ? `${(tisMs / 1000).toFixed(1)}s` : `${Math.round(tisMs)}ms`;
+            const sortedBottlenecks = [...result.bottlenecks].sort(
+              (a, b) => b.runningPct - a.runningPct,
+            );
+            const head = sortedBottlenecks[0];
+            const bnLabel = head?.label ?? "—";
+            const bnRunPct = head ? `${(head.runningPct * 100).toFixed(0)}%` : "—";
+            const tiles: { label: string; value: string; hint?: string }[] = [
+              { label: "Throughput", value: tput.toLocaleString(), hint: "parts / h" },
+              { label: "Line OEE", value: `${oeePct}%` },
+              { label: "Completed", value: result.completed.toLocaleString(), hint: "parts" },
+              { label: "Time-in-system", value: tisLabel, hint: "avg" },
+              { label: "Bottleneck", value: bnLabel },
+              { label: "Util on b/n", value: bnRunPct, hint: "running %" },
+            ];
+            return tiles.map((t) => (
+              <div
+                key={t.label}
+                className="border-border/60 bg-background/40 flex flex-col rounded-md border px-2 py-1"
+              >
+                <span className="text-muted-foreground truncate text-[9px] font-medium tracking-wide uppercase">
+                  {t.label}
+                </span>
+                <span className="text-foreground truncate font-mono text-sm font-semibold tabular-nums sm:text-base">
+                  {t.value}
+                </span>
+                {t.hint ? (
+                  <span className="text-muted-foreground truncate text-[9px]">{t.hint}</span>
+                ) : null}
+              </div>
+            ));
+          })()}
+        </div>
+      ) : null}
       <div
         className={`grid h-[calc(100vh-13rem)] gap-3 ${
           selectedNode || selectedNodeIds.length > 1
@@ -5437,25 +5487,22 @@ function EditorCanvas() {
                 Engine
               </h3>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {/* VROL-822 — unit-aware horizon. User picks ms / s / min /
+                    h via the inline unit Select; canonical value stays in
+                    ms underneath. Quick-pick chips still apply absolute
+                    ms values so 1h / 8h / 24h / 1w are correct regardless
+                    of the chosen display unit. */}
                 <div className="flex flex-col gap-1">
-                  <label htmlFor="rs-horizon" className="text-muted-foreground text-xs font-medium">
-                    Horizon (ms)
-                  </label>
-                  <Input
+                  <DurationInput
                     id="rs-horizon"
-                    type="number"
+                    label="Horizon"
+                    valueMs={settings.horizonMs}
                     min={1000}
-                    step={1000}
-                    value={settings.horizonMs}
-                    onChange={(e) => {
-                      const n = Number(e.target.value);
-                      if (Number.isFinite(n) && n > 0) {
-                        setSettings((s) => ({ ...s, horizonMs: Math.floor(n) }));
-                      }
+                    defaultUnit="min"
+                    onChangeMs={(ms) => {
+                      setSettings((s) => ({ ...s, horizonMs: Math.floor(ms) }));
                     }}
-                    className="font-mono tabular-nums"
                   />
-                  {/* VROL-710 — horizon quick picks. */}
                   <div className="flex flex-wrap gap-1">
                     {[
                       { label: "1h", ms: 3_600_000 },
@@ -5478,14 +5525,14 @@ function EditorCanvas() {
                     ))}
                   </div>
                 </div>
-                <NumberField
+                <DurationInput
                   id="rs-warmup"
-                  label="Warm-up (ms)"
-                  value={settings.warmupMs}
+                  label="Warm-up"
+                  valueMs={settings.warmupMs}
                   min={0}
-                  step={1000}
-                  onChange={(n) => {
-                    setSettings((s) => ({ ...s, warmupMs: Math.floor(n) }));
+                  defaultUnit="s"
+                  onChangeMs={(ms) => {
+                    setSettings((s) => ({ ...s, warmupMs: Math.floor(ms) }));
                   }}
                 />
                 <div className="flex flex-col gap-1">
@@ -6522,57 +6569,35 @@ function EditorCanvas() {
               </label>
               {settings.breakdowns.enabled ? (
                 <>
+                  {/* VROL-822 — MTBF + MTTR are now DurationInput so the
+                      user can pick min / h rather than entering raw ms. */}
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <div className="flex flex-col gap-1">
-                      <label
-                        htmlFor="rs-mtbf"
-                        className="text-muted-foreground text-xs font-medium"
-                      >
-                        MTBF (ms)
-                      </label>
-                      <Input
-                        id="rs-mtbf"
-                        type="number"
-                        min={100}
-                        step={1000}
-                        value={settings.breakdowns.mtbfMs}
-                        onChange={(e) => {
-                          const n = Number(e.target.value);
-                          if (Number.isFinite(n) && n >= 100) {
-                            setSettings((s) => ({
-                              ...s,
-                              breakdowns: { ...s.breakdowns, mtbfMs: Math.floor(n) },
-                            }));
-                          }
-                        }}
-                        className="font-mono tabular-nums"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label
-                        htmlFor="rs-mttr"
-                        className="text-muted-foreground text-xs font-medium"
-                      >
-                        MTTR (ms)
-                      </label>
-                      <Input
-                        id="rs-mttr"
-                        type="number"
-                        min={100}
-                        step={500}
-                        value={settings.breakdowns.mttrMs}
-                        onChange={(e) => {
-                          const n = Number(e.target.value);
-                          if (Number.isFinite(n) && n >= 100) {
-                            setSettings((s) => ({
-                              ...s,
-                              breakdowns: { ...s.breakdowns, mttrMs: Math.floor(n) },
-                            }));
-                          }
-                        }}
-                        className="font-mono tabular-nums"
-                      />
-                    </div>
+                    <DurationInput
+                      id="rs-mtbf"
+                      label="MTBF"
+                      valueMs={settings.breakdowns.mtbfMs}
+                      min={100}
+                      defaultUnit="min"
+                      onChangeMs={(ms) => {
+                        setSettings((s) => ({
+                          ...s,
+                          breakdowns: { ...s.breakdowns, mtbfMs: Math.floor(ms) },
+                        }));
+                      }}
+                    />
+                    <DurationInput
+                      id="rs-mttr"
+                      label="MTTR"
+                      valueMs={settings.breakdowns.mttrMs}
+                      min={100}
+                      defaultUnit="min"
+                      onChangeMs={(ms) => {
+                        setSettings((s) => ({
+                          ...s,
+                          breakdowns: { ...s.breakdowns, mttrMs: Math.floor(ms) },
+                        }));
+                      }}
+                    />
                   </div>
                   <p className="text-muted-foreground text-xs">
                     Availability ceiling: MTBF / (MTBF + MTTR) ={" "}
