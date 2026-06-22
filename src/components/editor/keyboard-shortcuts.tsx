@@ -2,41 +2,34 @@
  * VROL-673 — keyboard shortcuts overlay. Press "?" to open. Lists every
  * shortcut the editor responds to so users can discover them without
  * having to read source. Closes on Escape or clicking outside.
+ *
+ * VROL-811 — every action-shortcut row is now DERIVED from the central
+ * editor action registry (`@/lib/editor-actions`). Gesture-only rows
+ * (mouse drag, single-letter insert keys) stay hand-rolled below because
+ * they aren't actions — they're raw input the editor responds to.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import { adaptToShortcutsOverlay } from "@/lib/editor-actions-adapter";
+import { defineActions, type EditorActionHandlers } from "@/lib/editor-actions";
 
 interface Shortcut {
   readonly keys: string;
   readonly action: string;
 }
 
-const SHORTCUTS: readonly { readonly group: string; readonly items: readonly Shortcut[] }[] = [
-  {
-    group: "General",
-    items: [
-      { keys: "⌘K / Ctrl+K", action: "Open command palette" },
-      { keys: "⌘Z / Ctrl+Z", action: "Undo" },
-      { keys: "⇧⌘Z / Ctrl+Shift+Z", action: "Redo" },
-      { keys: "⌘↵ / Ctrl+Enter", action: "Run simulation" },
-      { keys: "⌘S / Ctrl+S", action: "Save active scenario" },
-      { keys: "?", action: "Open / close this panel" },
-      { keys: "Esc", action: "Close panels / sheets / palette" },
-    ],
-  },
-  {
-    group: "Selection & edit",
-    items: [
-      { keys: "Click", action: "Select a station" },
-      { keys: "⌘ / Ctrl + Click", action: "Multi-select" },
-      { keys: "⌘A / Ctrl+A", action: "Select all nodes" },
-      { keys: "⌘C / Ctrl+C", action: "Copy selection" },
-      { keys: "⌘V / Ctrl+V", action: "Paste from clipboard" },
-      { keys: "⌘D / Ctrl+D", action: "Duplicate selection" },
-      { keys: "Delete / Backspace", action: "Delete selection" },
-      { keys: "Right-click", action: "Open context menu" },
-    ],
-  },
+interface ShortcutGroupView {
+  readonly group: string;
+  readonly items: readonly Shortcut[];
+}
+
+/**
+ * Gesture + input rows that don't map to a registry action. Kept here
+ * because they document raw browser input the editor reads, not named
+ * actions you could fire from a menu.
+ */
+const GESTURE_GROUPS: readonly ShortcutGroupView[] = [
   {
     group: "Canvas navigation",
     items: [
@@ -75,10 +68,66 @@ const SHORTCUTS: readonly { readonly group: string; readonly items: readonly Sho
       { keys: "F", action: "Insert section frame at cursor" },
     ],
   },
+  {
+    group: "Mouse",
+    items: [
+      { keys: "Click", action: "Select a station" },
+      { keys: "⌘ / Ctrl + Click", action: "Multi-select" },
+      { keys: "Right-click", action: "Open context menu" },
+      { keys: "⌘C / Ctrl+C", action: "Copy selection" },
+      { keys: "⌘V / Ctrl+V", action: "Paste from clipboard" },
+      { keys: "?", action: "Open / close this panel" },
+      { keys: "Esc", action: "Close panels / sheets / palette" },
+    ],
+  },
 ];
+
+/**
+ * Noop handlers — the overlay never RUNS actions, it only reads their
+ * shape (id, label, shortcut). Using a noop set lets us reuse the same
+ * `defineActions` factory the editor uses, so the overlay can never drift
+ * out of sync with what the editor actually supports.
+ */
+function noopHandlers(): EditorActionHandlers {
+  const noop = (): void => undefined;
+  return {
+    run: noop,
+    stop: noop,
+    newSeed: noop,
+    undo: noop,
+    redo: noop,
+    save: noop,
+    saveAs: noop,
+    saveAndExit: noop,
+    duplicate: noop,
+    deleteSelection: noop,
+    selectAll: noop,
+    deselect: noop,
+    autoLayout: noop,
+    fitView: noop,
+    zoomIn: noop,
+    zoomOut: noop,
+    toggleLock: noop,
+    openScenarios: noop,
+    openRunSettings: noop,
+    openWizard: noop,
+    togglePalette: noop,
+    resetCanvas: noop,
+  };
+}
 
 export function KeyboardShortcutsOverlay() {
   const [open, setOpen] = useState(false);
+  // Derive action-shortcut rows from the registry — the editor's single
+  // source of truth for action labels + their bound keys.
+  const groups = useMemo<readonly ShortcutGroupView[]>(() => {
+    const actions = defineActions(noopHandlers());
+    const registry = adaptToShortcutsOverlay(actions).map<ShortcutGroupView>((g) => ({
+      group: g.group,
+      items: g.items.map((i) => ({ keys: i.keys, action: i.action })),
+    }));
+    return [...registry, ...GESTURE_GROUPS];
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       // Don't trigger when typing in inputs.
@@ -124,7 +173,7 @@ export function KeyboardShortcutsOverlay() {
       <div className="border-border bg-card relative max-h-[80vh] w-full max-w-md overflow-y-auto rounded-lg border p-5 shadow-xl">
         <div className="font-heading mb-3 text-base font-semibold">Keyboard shortcuts</div>
         <div className="space-y-3">
-          {SHORTCUTS.map((g) => (
+          {groups.map((g) => (
             <div key={g.group}>
               <div className="text-muted-foreground mb-1.5 text-[10px] font-medium tracking-wide uppercase">
                 {g.group}

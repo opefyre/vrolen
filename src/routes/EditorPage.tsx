@@ -144,6 +144,13 @@ import { commitDraft as commitWizardDraft } from "@/components/wizard/commit-dra
 import { WizardShell } from "@/components/wizard/wizard-shell";
 import { runScenario, type ScenarioRunOutcome } from "@/lib/run-scenario";
 import {
+  defineActions,
+  type EditorAction,
+  type EditorActionContext,
+  type EditorActionHandlers,
+} from "@/lib/editor-actions";
+import { adaptToCommandPalette } from "@/lib/editor-actions-adapter";
+import {
   findIssuesForField,
   validateScenario,
   type ValidationIssue,
@@ -183,6 +190,7 @@ import { toast } from "@/lib/toast";
 import { PlaybackController } from "@/components/editor/playback-controller";
 import { CanvasControls } from "@/components/editor/canvas-controls";
 import { NonStationInspector } from "@/components/editor/non-station-inspector";
+import { RunConsole, logToRunConsole } from "@/components/editor/run-console";
 import { ScenariosList } from "@/components/editor/scenarios-list";
 import { Coach } from "@/components/editor/coach";
 import { buildCoachTips } from "@/lib/coach-tips";
@@ -1818,28 +1826,29 @@ function EditorCanvas() {
     const validation = validateScenario(nodes, edges, settings);
     if (validation.errors.length > 0) {
       const first = validation.errors[0]!;
-      toast.error(
-        `Can't run · ${String(validation.errors.length)} issue${validation.errors.length === 1 ? "" : "s"}`,
-        {
-          description: first.fix ? `${first.message}. ${first.fix}.` : first.message,
-        },
-      );
+      const msg = `Can't run · ${String(validation.errors.length)} issue${validation.errors.length === 1 ? "" : "s"}`;
+      const desc = first.fix ? `${first.message}. ${first.fix}.` : first.message;
+      toast.error(msg, { description: desc });
+      logToRunConsole("error", msg, desc);
       return;
     }
     if (validation.warnings.length > 0) {
       const first = validation.warnings[0]!;
-      toast.warning(
-        `${String(validation.warnings.length)} validation warning${validation.warnings.length === 1 ? "" : "s"}`,
-        {
-          description: first.message,
-        },
-      );
+      const msg = `${String(validation.warnings.length)} validation warning${validation.warnings.length === 1 ? "" : "s"}`;
+      toast.warning(msg, { description: first.message });
+      logToRunConsole("warning", msg, first.message);
     }
     const translation = graphToChainOptions(nodes, edges);
     if (translation.error) {
       toast.error("Can't run", { description: translation.error });
+      logToRunConsole("error", "Can't run", translation.error);
       return;
     }
+    logToRunConsole(
+      "info",
+      "Run started",
+      `${String(nodes.length)} nodes · ${String(edges.length)} edges`,
+    );
     // Stash the chain-order + edges-used for labeling after the run completes.
     setRunMeta({
       chainNodeIds: [...translation.chainNodeIds],
@@ -2012,6 +2021,7 @@ function EditorCanvas() {
         // auto-starts playback at the user's default speed (5x).
         if (r.samples.length >= 2) setRunNonce((n) => n + 1);
         toast.success("Simulation complete", { description: desc });
+        logToRunConsole("success", "Simulation complete", desc);
         // If a scenario is active, push a compact summary to history.
         if (activeScenarioName) {
           // VROL-714 — capture the bottleneck label so the migration card can
@@ -2035,6 +2045,7 @@ function EditorCanvas() {
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         toast.error("Simulation failed", { description: message });
+        logToRunConsole("error", "Simulation failed", message);
       } finally {
         setIsRunning(false);
       }
@@ -3064,14 +3075,177 @@ function EditorCanvas() {
     setMoreOpen(false);
   }, [result, runMeta]);
 
-  // Command-palette actions — derived from the toolbar handlers so labels and
-  // behavior stay in sync with the menus. NOT memoed: the closures capture
-  // live refs (wrapperRef, nodeIdRef, flow) that mustn't be touched during
-  // render; building a fresh array per render keeps the refs strictly inside
-  // closures.
+  // VROL-811 — central editor action registry. All actions (Run, Undo,
+  // Save, Duplicate, Auto-layout, Fit view, Open scenarios, …) are defined
+  // ONCE here through `defineActions(handlers)`. Every surface — toolbar,
+  // command palette, right-click menu, keyboard shortcuts overlay — derives
+  // from this single list so adding or renaming an action is a 1-file
+  // change. The host (this component) owns the side effects through these
+  // thin handler closures.
+  //
+  // NOT memoed: handlers capture live refs (wrapperRef, nodeIdRef, flow)
+  // that mustn't be touched during render; a fresh array per render keeps
+  // the refs strictly inside closures.
+  const editorActionHandlers: EditorActionHandlers = {
+    run: () => {
+      if (!isRunning) handleRun();
+    },
+    newSeed: () => {
+      // eslint-disable-next-line react-hooks/purity -- arrow body only runs on user action, not during render.
+      const next = Math.floor(Math.random() * 2_147_483_647);
+      setSettings((s) => ({ ...s, seed: next }));
+      setTimeout(() => {
+        if (!isRunning) handleRun();
+      }, 0);
+    },
+    undo: () => {
+      handleUndo();
+    },
+    redo: () => {
+      handleRedo();
+    },
+    save: () => {
+      if (!activeScenarioName) {
+        setSaveNameDialogOpen(true);
+        return;
+      }
+      try {
+        saveScenario(activeScenarioName, {
+          graph: { nodes: [...nodes], edges: [...edges] },
+          settings,
+          // eslint-disable-next-line react-hooks/purity -- runs on user action, not render.
+          savedAtMs: Date.now(),
+        });
+        setScenarios(listScenarios());
+        setActiveScenarioSnapshot(JSON.stringify({ graph: { nodes, edges }, settings }));
+        toast.success("Saved");
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        toast.error("Save failed", { description: m });
+      }
+    },
+    saveAs: () => {
+      setSaveNameDialogOpen(true);
+    },
+    saveAndExit: () => {
+      if (!activeScenarioName) {
+        setSaveNameDialogOpen(true);
+        return;
+      }
+      try {
+        saveScenario(activeScenarioName, {
+          graph: { nodes: [...nodes], edges: [...edges] },
+          settings,
+          // eslint-disable-next-line react-hooks/purity -- runs on user action, not render.
+          savedAtMs: Date.now(),
+        });
+        toast.success("Saved");
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        toast.error("Save failed", { description: m });
+        return;
+      }
+      if (typeof window !== "undefined") {
+        window.history.pushState({}, "", "/");
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      }
+    },
+    duplicate: () => {
+      const selected = nodes.filter((n) => n.selected);
+      const target = selected.length > 0 ? selected : nodes.filter((n) => n.id === selectedNodeId);
+      if (target.length === 0) return;
+      const newNodes: Node[] = target.map((original) => {
+        const newId = `n${String(nodeIdRef.current++)}`;
+        return {
+          ...original,
+          id: newId,
+          position: { x: original.position.x + 60, y: original.position.y + 60 },
+          selected: false,
+          data: { ...(original.data as Record<string, unknown>) },
+        };
+      });
+      setNodes((ns) => [...ns, ...newNodes]);
+      const first = newNodes[0];
+      if (first) setSelectedNodeId(first.id);
+      toast.success(
+        `Duplicated ${String(newNodes.length)} station${newNodes.length === 1 ? "" : "s"}`,
+      );
+    },
+    deleteSelection: () => {
+      const selectedIds = new Set(
+        nodes.filter((n) => n.selected || n.id === selectedNodeId).map((n) => n.id),
+      );
+      if (selectedIds.size === 0) return;
+      setNodes((ns) => ns.filter((n) => !selectedIds.has(n.id)));
+      setEdges((es) =>
+        es.filter((ed) => !selectedIds.has(ed.source) && !selectedIds.has(ed.target)),
+      );
+      setSelectedNodeId(null);
+    },
+    selectAll: () => {
+      setNodes((ns) => ns.map((n) => ({ ...n, selected: true })));
+    },
+    deselect: () => {
+      setNodes((ns) => ns.map((n) => ({ ...n, selected: false })));
+      setSelectedNodeId(null);
+    },
+    autoLayout: () => {
+      runAutoLayout();
+    },
+    fitView: () => {
+      flow.fitView({ duration: 400, padding: 0.2 });
+    },
+    zoomIn: () => {
+      flow.zoomIn();
+    },
+    zoomOut: () => {
+      flow.zoomOut();
+    },
+    toggleLock: () => {
+      toggleLock();
+    },
+    openScenarios: () => {
+      setScenariosOpen(true);
+    },
+    openRunSettings: () => {
+      setSettingsOpen(true);
+    },
+    openWizard: () => {
+      setWizardOpen(true);
+    },
+    togglePalette: () => {
+      setCommandOpen((v) => !v);
+    },
+    resetCanvas: () => {
+      handleReset();
+    },
+  };
+  // eslint-disable-next-line react-hooks/refs -- handlers close over live refs (wrapperRef, nodeIdRef, flow). defineActions stores them in closures; nothing is read at render time.
+  const editorActions: readonly EditorAction[] = defineActions(editorActionHandlers);
+  const editorActionContext: EditorActionContext = {
+    hasSelection: nodes.some((n) => n.selected) || selectedNodeId !== null,
+    hasNodes: nodes.length > 0,
+    canUndo: canUndo(history),
+    canRedo: canRedo(history),
+    isRunning,
+    scenarioName: activeScenarioName,
+  };
+  /**
+   * Route a presentational toolbar button through the registry so the side
+   * effect lives in one place. Bails when the action's `isDisabled(ctx)` is
+   * true so the button can't fire while it advertises a disabled visual.
+   */
+  const dispatchAction = (id: string): void => {
+    const a = editorActions.find((x) => x.id === id);
+    if (!a) return;
+    if (a.isDisabled?.(editorActionContext)) return;
+    a.run(editorActionContext);
+  };
   const commandActions: readonly CommandAction[] = (() => {
     const list: CommandAction[] = [];
-    // Insert any station from the palette. The closure body calls a
+    // Insert-station palette items are dynamic per the available PALETTE
+    // and don't belong in the editor action registry. They get appended to
+    // the palette's surface list directly. The closure body calls a
     // useCallback so no refs are touched here at render time — the
     // react-hooks/refs lint rule is over-eager about useCallback
     // boundaries, hence the disable.
@@ -3087,131 +3261,9 @@ function EditorCanvas() {
         },
       });
     }
-    list.push(
-      {
-        id: "run",
-        label: isRunning ? "Running…" : "Run simulation",
-        hint: "Execute the current chain",
-        group: "Run",
-        shortcut: "⌘↵",
-        disabled: isRunning,
-        run: () => {
-          if (!isRunning) handleRun();
-        },
-      },
-      {
-        id: "new-seed",
-        label: "Run with new seed",
-        hint: "Re-roll the PRNG and re-run",
-        group: "Run",
-        run: () => {
-          const next = Math.floor(Math.random() * 2_147_483_647);
-          setSettings((s) => ({ ...s, seed: next }));
-          setTimeout(() => {
-            if (!isRunning) handleRun();
-          }, 0);
-        },
-      },
-      {
-        id: "run-settings",
-        label: "Open Run settings",
-        hint: "Horizon, materials, breakdowns, workers",
-        group: "Run",
-        run: () => {
-          setSettingsOpen(true);
-        },
-      },
-      {
-        id: "wizard",
-        label: "Create scenario with the wizard",
-        hint: "5-step guided build · shape → stations → arrivals → realism → review",
-        group: "Create",
-        run: () => {
-          setWizardOpen(true);
-        },
-      },
-      {
-        id: "fit-view",
-        label: "Fit canvas to view",
-        group: "View",
-        shortcut: "F",
-        run: () => {
-          flow.fitView({ duration: 400, padding: 0.2 });
-        },
-      },
-      {
-        id: "zoom-in",
-        label: "Zoom in",
-        group: "View",
-        run: () => {
-          flow.zoomIn();
-        },
-      },
-      {
-        id: "zoom-out",
-        label: "Zoom out",
-        group: "View",
-        run: () => {
-          flow.zoomOut();
-        },
-      },
-      {
-        id: "auto-layout",
-        label: "Auto-layout chain",
-        hint: "Arrange the graph by depth",
-        group: "Edit",
-        run: () => {
-          runAutoLayout();
-        },
-      },
-      {
-        id: "select-all",
-        label: "Select all nodes",
-        group: "Edit",
-        shortcut: "⌘A",
-        run: () => {
-          setNodes((ns) => ns.map((n) => ({ ...n, selected: true })));
-        },
-      },
-      {
-        id: "scenarios",
-        label: "Open Scenarios",
-        hint: "Save, load, compare, manage presets",
-        group: "Scenarios",
-        run: () => {
-          setScenariosOpen(true);
-        },
-      },
-      // eslint-disable-next-line react-hooks/refs
-      {
-        id: "reset-canvas",
-        label: "Reset to the default bottling line",
-        group: "Edit",
-        run: () => {
-          handleReset();
-        },
-      },
-      // eslint-disable-next-line react-hooks/refs
-      {
-        id: "undo",
-        label: "Undo",
-        group: "Edit",
-        shortcut: "⌘Z",
-        run: () => {
-          handleUndo();
-        },
-      },
-      // eslint-disable-next-line react-hooks/refs
-      {
-        id: "redo",
-        label: "Redo",
-        group: "Edit",
-        shortcut: "⌘⇧Z",
-        run: () => {
-          handleRedo();
-        },
-      },
-    );
+    for (const cmd of adaptToCommandPalette(editorActions, editorActionContext)) {
+      list.push(cmd);
+    }
     return list;
   })();
 
@@ -3614,13 +3666,17 @@ function EditorCanvas() {
               </Button>
             </div>
           ) : null}
-          {/* VROL-309 — undo / redo. Always visible; disabled when stack is empty. */}
+          {/* VROL-309 — undo / redo. Always visible; disabled when stack is empty.
+              VROL-811 — onClick routes through the central action registry so
+              the side effect lives in one place. */}
           <div className="flex items-center">
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={handleUndo}
+              onClick={() => {
+                dispatchAction("undo");
+              }}
               disabled={!canUndo(history)}
               title="Undo (⌘Z)"
               aria-label="Undo"
@@ -3632,7 +3688,9 @@ function EditorCanvas() {
               type="button"
               variant="outline"
               size="sm"
-              onClick={handleRedo}
+              onClick={() => {
+                dispatchAction("redo");
+              }}
               disabled={!canRedo(history)}
               title="Redo (⇧⌘Z)"
               aria-label="Redo"
@@ -3707,9 +3765,13 @@ function EditorCanvas() {
           </div>
           {/* VROL-774 — Run is the primary action in the top bar. Default
               size + variant + a primary-tinted ring make it the obvious
-              call-to-action against the surrounding ghost / outline chrome. */}
+              call-to-action against the surrounding ghost / outline chrome.
+              VROL-811 — onClick routes through the central action registry
+              so the side effect (run sim) lives in one place. */}
           <Button
-            onClick={handleRun}
+            onClick={() => {
+              dispatchAction("run");
+            }}
             disabled={isRunning}
             className="ring-primary/20 hover:ring-primary/40 gap-2 shadow-sm ring-2"
             size="default"
@@ -3793,8 +3855,14 @@ function EditorCanvas() {
           })()}
         </div>
       ) : null}
+      {/* VROL-777 — persistent run console pane. Sits below the KPI strip
+          (or below the toolbar when no run has fired). Collapsed by
+          default; expands to a 200-line buffer with severity + clock. */}
+      <div className="-mx-6 px-3 pt-1 sm:px-6">
+        <RunConsole />
+      </div>
       <div
-        className={`grid h-[calc(100vh-13rem)] gap-3 ${
+        className={`grid h-[calc(100vh-15rem)] gap-3 ${
           selectedNode || selectedNodeIds.length > 1
             ? "grid-cols-[200px_1fr_260px]"
             : "grid-cols-[200px_1fr]"

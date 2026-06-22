@@ -21,6 +21,23 @@ export interface OptimizationCandidate {
   readonly meanCompleted: number;
   readonly meanTimeInSystemMs: number;
   readonly meanScrapRate: number;
+  /**
+   * VROL-842 — Line OEE averaged across replications. Sourced from
+   * ChainResult.lineOee (already clamped to [0, 1]).
+   */
+  readonly meanLineOee: number;
+  /**
+   * VROL-842 — Time-weighted average WIP (parts) across replications.
+   * Sourced from ChainResult.averageWipL.
+   */
+  readonly meanAvgWipL: number;
+  /**
+   * VROL-842 — Good parts per hour = throughput × quality, where
+   * quality = 1 − lineScrapRate. Surfaces the "throughput net of scrap"
+   * objective directly so the optimizer doesn't reward a setting that
+   * pumps out parts the line then throws away.
+   */
+  readonly meanGoodPartsPerHour: number;
   readonly replications: number;
 }
 
@@ -67,6 +84,9 @@ export function runOptimizationSearch(opts: RunOptsLike): OptimizationSummary {
       let sumCompleted = 0;
       let sumTisys = 0;
       let sumScrap = 0;
+      let sumOee = 0;
+      let sumWipL = 0;
+      let sumGoodPerHour = 0;
       for (let i = 0; i < reps; i++) {
         const base = opts.buildBaseOptions(mult);
         const r = runChain({
@@ -76,10 +96,19 @@ export function runOptimizationSearch(opts: RunOptsLike): OptimizationSummary {
           warmupMs: opts.warmupMs,
           prng: new SeededPrng(opts.seed + i * 31),
         });
-        sumTput += r.throughputLambda * 3_600_000;
+        const tputPerHour = r.throughputLambda * 3_600_000;
+        sumTput += tputPerHour;
         sumCompleted += r.completed;
         sumTisys += r.avgTimeInSystemW;
         sumScrap += r.lineScrapRate;
+        sumOee += r.lineOee;
+        sumWipL += r.averageWipL;
+        // VROL-842 — good parts/hour = throughput × quality, with
+        // quality = 1 − lineScrapRate. Computed per-replication so the
+        // mean across reps is the mean of the per-rep products, not
+        // mean(throughput) × mean(quality) which would over- or
+        // under-count when the two correlate inside a single rep.
+        sumGoodPerHour += tputPerHour * (1 - r.lineScrapRate);
       }
       candidates.push({
         bufferCapacity: capacity,
@@ -89,6 +118,9 @@ export function runOptimizationSearch(opts: RunOptsLike): OptimizationSummary {
         meanCompleted: sumCompleted / reps,
         meanTimeInSystemMs: sumTisys / reps,
         meanScrapRate: sumScrap / reps,
+        meanLineOee: sumOee / reps,
+        meanAvgWipL: sumWipL / reps,
+        meanGoodPartsPerHour: sumGoodPerHour / reps,
         replications: reps,
       });
     }
