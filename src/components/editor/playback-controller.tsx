@@ -16,7 +16,6 @@ import type { ChainResult } from "@/engine";
 interface PlaybackControllerProps {
   readonly result: ChainResult;
   readonly horizonMs: number;
-  readonly warmupMs: number;
   readonly playbackMs: number;
   readonly onPlaybackChange: (tMs: number) => void;
 }
@@ -45,7 +44,6 @@ function fmtTime(ms: number): string {
 export function PlaybackController({
   result,
   horizonMs,
-  warmupMs,
   playbackMs,
   onPlaybackChange,
 }: PlaybackControllerProps) {
@@ -107,7 +105,7 @@ export function PlaybackController({
         aria-label={playing ? "Pause" : "Play"}
         onClick={() => {
           if (playbackRef.current >= horizonMs) {
-            onChangeRef.current(warmupMs);
+            onChangeRef.current(0);
           }
           setPlaying((p) => !p);
         }}
@@ -143,7 +141,7 @@ export function PlaybackController({
         aria-label="Reset to start"
         onClick={() => {
           setPlaying(false);
-          onPlaybackChange(warmupMs);
+          onPlaybackChange(0);
         }}
       >
         <Rewind className="h-4 w-4" />

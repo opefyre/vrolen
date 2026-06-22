@@ -1753,10 +1753,10 @@ function EditorCanvas() {
           desc = `${String(replications)} replications · ${desc}`;
         }
         setResult(r);
-        // Auto-arm the playback scrubber at warmup so the canvas can replay
-        // the run; if the sampler was off, leave playback null.
-        const warmup = Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2));
-        setPlaybackMs(r.samples.length >= 2 ? warmup : null);
+        // Auto-arm the playback scrubber at t=0 so the canvas replays the run
+        // from the very beginning (warmup window included). Earlier we started
+        // at warmupMs which surprised users — the slider should read 00:00.
+        setPlaybackMs(r.samples.length >= 2 ? 0 : null);
         toast.success("Simulation complete", { description: desc });
         // If a scenario is active, push a compact summary to history.
         if (activeScenarioName) {
@@ -3534,7 +3534,6 @@ function EditorCanvas() {
               <PlaybackController
                 result={result}
                 horizonMs={settings.horizonMs}
-                warmupMs={Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2))}
                 playbackMs={playbackMs}
                 onPlaybackChange={setPlaybackMs}
               />
