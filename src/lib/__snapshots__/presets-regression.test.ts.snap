@@ -13,12 +13,12 @@ exports[`preset regression (VROL-472) > preset "assembly-cell" KPI summary match
 
 exports[`preset regression (VROL-472) > preset "bakery" KPI summary matches snapshot 1`] = `
 {
-  "avgTimeInSystemMs": 25069,
+  "avgTimeInSystemMs": 7337,
   "bottleneckLabel": "Oven",
   "bottleneckReason": "starvation",
-  "completed": 144,
+  "completed": 575,
   "lineOee": 1,
-  "throughputPartsPerHour": 4508,
+  "throughputPartsPerHour": 18000,
 }
 `;
 
@@ -68,34 +68,34 @@ exports[`preset regression (VROL-472) > preset "maintenance-bound" KPI summary m
 
 exports[`preset regression (VROL-472) > preset "mixed-model-job-shop" KPI summary matches snapshot 1`] = `
 {
-  "avgTimeInSystemMs": 4281,
-  "bottleneckLabel": "Mill",
+  "avgTimeInSystemMs": 7103,
+  "bottleneckLabel": "Lathe",
   "bottleneckReason": "starvation",
-  "completed": 639,
-  "lineOee": 1,
-  "throughputPartsPerHour": 20003,
+  "completed": 209,
+  "lineOee": 0.32713,
+  "throughputPartsPerHour": 6543,
 }
 `;
 
 exports[`preset regression (VROL-472) > preset "multi-product-changeover" KPI summary matches snapshot 1`] = `
 {
-  "avgTimeInSystemMs": 2837,
-  "bottleneckLabel": "Capper",
+  "avgTimeInSystemMs": 5455,
+  "bottleneckLabel": "Filler",
   "bottleneckReason": "starvation",
-  "completed": 459,
-  "lineOee": 1,
-  "throughputPartsPerHour": 30044,
+  "completed": 132,
+  "lineOee": 0.288,
+  "throughputPartsPerHour": 8640,
 }
 `;
 
 exports[`preset regression (VROL-472) > preset "parallel-fillers" KPI summary matches snapshot 1`] = `
 {
-  "avgTimeInSystemMs": 4020,
+  "avgTimeInSystemMs": 1710,
   "bottleneckLabel": "Filler",
   "bottleneckReason": "starvation",
-  "completed": 183,
-  "lineOee": 0.998182,
-  "throughputPartsPerHour": 11978,
+  "completed": 550,
+  "lineOee": 1,
+  "throughputPartsPerHour": 36000,
 }
 `;
 

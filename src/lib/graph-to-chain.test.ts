@@ -249,12 +249,22 @@ describe("graphToChainOptions", () => {
     expect(r.skippedNodeIds).toEqual([]);
   });
 
-  it("emits no topology for a pure linear chain (callers stay on cycleDistributions)", () => {
+  it("emits topology for a pure linear chain so per-station features flow through", () => {
+    // Previously this test asserted topology === null for linear chains.
+    // That was codifying a bug: when topology was null the engine fell
+    // back to a linear-mode path that consumed ONLY stationCycleTimes +
+    // labels, silently dropping capacity, defectRate, setupDistribution,
+    // changeoverMatrix, reworkTargetId, and per-product cycles. Users
+    // would set "Parallel cycles = 10" on the bottleneck and see no
+    // change because the engine never saw the value. Now: any valid
+    // single-source/single-sink graph (branching or not) emits topology
+    // so the engine reads the full per-station config.
     const nodes = [node("a", { cycleMs: 50 }), node("b", { cycleMs: 200 })];
     const edges = [edge("a", "b")];
     const r = graphToChainOptions(nodes, edges);
     expect(r.error).toBeNull();
-    expect(r.topology).toBeNull();
+    expect(r.topology).not.toBeNull();
+    expect(r.topology!.nodes.map((n) => n.id)).toEqual(["a", "b"]);
     expect(r.chainNodeIds).toEqual(["a", "b"]);
   });
 

@@ -324,15 +324,19 @@ export function graphToChainOptions(
         .filter((e) => topoSet.has(e.source) && topoSet.has(e.target) && e.source !== e.target)
         .map((e) => ({ source: e.source, target: e.target }));
 
-      const isBranching = topoNodes.some((n) => {
-        const outs = outEdges.get(n.id) ?? [];
-        const ins = nodes.reduce(
-          (acc, m) => acc + (edges.some((e) => e.source === m.id && e.target === n.id) ? 1 : 0),
-          0,
-        );
-        return outs.length > 1 || ins > 1;
-      });
-
+      // CRITICAL: emit `topology` for EVERY valid single-source/single-sink
+      // graph, branching or linear. Previously we only set topology when
+      // the chain branched; linear chains fell through to the engine's
+      // linear-mode path that ONLY consumes stationCycleTimes + labels.
+      // That silently dropped every per-station feature:
+      //   - capacity (parallel cycles)
+      //   - defectRate
+      //   - setupDistribution
+      //   - changeoverMatrix
+      //   - reworkTargetId / reworkPassLimit
+      //   - per-product cycleByProduct
+      // Users would set "Parallel cycles = 10" on the bottleneck and see
+      // no change because the engine never saw the value.
       const cycleDistributions = topoNodes.map((n) => n.cycleTimeMs);
       const cycleTimes = cycleDistributions.map((d) => meanOf(d));
       const stationLabels = topoNodes.map((n) => n.label ?? n.id);
@@ -348,7 +352,7 @@ export function graphToChainOptions(
         cycleTimes,
         stationLabels,
         skippedNodeIds,
-        topology: isBranching ? { nodes: topoNodes, edges: topoEdges } : null,
+        topology: { nodes: topoNodes, edges: topoEdges },
         maintenanceWindows,
         error: null,
       };
