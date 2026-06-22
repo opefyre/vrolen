@@ -55,6 +55,26 @@ const SHORTCUTS: readonly { readonly group: string; readonly items: readonly Sho
       { keys: "Hover edge", action: "Reveal mid-edge × delete button" },
     ],
   },
+  // VROL-784 — single-letter station insertion. Mirrors the entries in
+  // src/lib/shortcuts.ts; keep them in sync. The actual key dispatch lives
+  // in EditorCanvas (src/routes/EditorPage.tsx).
+  {
+    group: "Insert station",
+    items: [
+      { keys: "M", action: "Insert machine at cursor" },
+      { keys: "N", action: "Insert manual station at cursor" },
+      { keys: "B", action: "Insert buffer at cursor" },
+      { keys: "Q", action: "Insert QC station at cursor" },
+      { keys: "A", action: "Insert assembly at cursor" },
+      { keys: "T", action: "Insert transport at cursor" },
+      { keys: "I", action: "Insert material input at cursor" },
+      { keys: "O", action: "Insert output at cursor" },
+      { keys: "P", action: "Insert packaging at cursor" },
+      { keys: "C", action: "Insert custom station at cursor" },
+      { keys: "S", action: "Insert sticky note at cursor" },
+      { keys: "F", action: "Insert section frame at cursor" },
+    ],
+  },
 ];
 
 export function KeyboardShortcutsOverlay() {

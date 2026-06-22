@@ -86,6 +86,27 @@ export const SHORTCUTS: readonly ShortcutGroup[] = [
       { keys: "Hover edge", action: "Reveal mid-edge × delete button" },
     ],
   },
+  // VROL-784 — single-letter station insertion. Keep this in sync with the
+  // PALETTE in src/routes/EditorPage.tsx and the keydown handler in the
+  // same file. Insert at the canvas-cursor position when no input is
+  // focused and no modifier is pressed.
+  {
+    group: "Insert station",
+    items: [
+      { keys: "M", action: "Insert machine at cursor" },
+      { keys: "N", action: "Insert manual station at cursor" },
+      { keys: "B", action: "Insert buffer at cursor" },
+      { keys: "Q", action: "Insert QC station at cursor" },
+      { keys: "A", action: "Insert assembly at cursor" },
+      { keys: "T", action: "Insert transport at cursor" },
+      { keys: "I", action: "Insert material input at cursor" },
+      { keys: "O", action: "Insert output at cursor" },
+      { keys: "P", action: "Insert packaging at cursor" },
+      { keys: "C", action: "Insert custom station at cursor" },
+      { keys: "S", action: "Insert sticky note at cursor" },
+      { keys: "F", action: "Insert section frame at cursor" },
+    ],
+  },
 ] as const;
 
 /** Flat view of every shortcut, useful for search or audit tooling. */

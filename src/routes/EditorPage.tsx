@@ -164,6 +164,8 @@ import { useOnlineStatus } from "@/lib/online-status";
 import { toast } from "@/lib/toast";
 import { PlaybackController } from "@/components/editor/playback-controller";
 import { CanvasControls } from "@/components/editor/canvas-controls";
+import { Coach } from "@/components/editor/coach";
+import { buildCoachTips } from "@/lib/coach-tips";
 import {
   DEFAULT_RUN_SETTINGS,
   loadRunSettings,
@@ -193,6 +195,14 @@ interface PaletteItem {
   readonly label: string;
   readonly icon: typeof Factory;
   readonly summary: string;
+  /**
+   * VROL-784 — single-letter shortcut that inserts this station at the
+   * canvas-cursor position. Lowercased, matched against `event.key` after
+   * the modifier / focus-target filters in EditorCanvas's keydown handler.
+   */
+  readonly key: string;
+  /** Display label for the shortcut chip + tooltip (e.g. "M", "Shift+M"). */
+  readonly keyHint: string;
 }
 
 const STATION_TYPE_ICON: Record<string, typeof Factory> = {
@@ -210,14 +220,25 @@ const STATION_TYPE_ICON: Record<string, typeof Factory> = {
 };
 
 const PALETTE: readonly PaletteItem[] = [
-  { stationType: "machine", label: "Machine", icon: Factory, summary: "Stochastic cycle time" },
-  { stationType: "manual", label: "Manual", icon: CircleDot, summary: "Worker-driven" },
-  { stationType: "buffer", label: "Buffer", icon: Boxes, summary: "FIFO storage" },
-  { stationType: "qc", label: "QC", icon: PackageCheck, summary: "Defect inspection" },
-  { stationType: "assembly", label: "Assembly", icon: Combine, summary: "Many in, one out" },
-  { stationType: "transport", label: "Transport", icon: Truck, summary: "Move parts" },
-  { stationType: "input", label: "Material input", icon: ConciergeBell, summary: "Source" },
-  { stationType: "output", label: "Output", icon: Wrench, summary: "Sink" },
+  // VROL-784 — single-letter shortcuts. `m` -> machine, `n` -> manual (m
+  // taken), then mostly first-letter matches. See KeyboardShortcutsOverlay
+  // and the keydown handler in EditorCanvas for the dispatch.
+  // prettier-ignore
+  { stationType: "machine", label: "Machine", icon: Factory, summary: "Stochastic cycle time", key: "m", keyHint: "M" },
+  // prettier-ignore
+  { stationType: "manual", label: "Manual", icon: CircleDot, summary: "Worker-driven", key: "n", keyHint: "N" },
+  // prettier-ignore
+  { stationType: "buffer", label: "Buffer", icon: Boxes, summary: "FIFO storage", key: "b", keyHint: "B" },
+  // prettier-ignore
+  { stationType: "qc", label: "QC", icon: PackageCheck, summary: "Defect inspection", key: "q", keyHint: "Q" },
+  // prettier-ignore
+  { stationType: "assembly", label: "Assembly", icon: Combine, summary: "Many in, one out", key: "a", keyHint: "A" },
+  // prettier-ignore
+  { stationType: "transport", label: "Transport", icon: Truck, summary: "Move parts", key: "t", keyHint: "T" },
+  // prettier-ignore
+  { stationType: "input", label: "Material input", icon: ConciergeBell, summary: "Source", key: "i", keyHint: "I" },
+  // prettier-ignore
+  { stationType: "output", label: "Output", icon: Wrench, summary: "Sink", key: "o", keyHint: "O" },
   // VROL-270 — packaging closes the 10-type palette set: end-of-line case
   // packers, palletisers, shrink-wrappers. Distinct accent from Machine so
   // it reads as the "ship it" affordance.
@@ -226,9 +247,12 @@ const PALETTE: readonly PaletteItem[] = [
     label: "Packaging",
     icon: Package,
     summary: "End-of-line cartoning / palletising",
+    key: "p",
+    keyHint: "P",
   },
   // VROL-274 — generic escape-hatch.
-  { stationType: "custom", label: "Custom", icon: HelpCircle, summary: "Generic timed-delay" },
+  // prettier-ignore
+  { stationType: "custom", label: "Custom", icon: HelpCircle, summary: "Generic timed-delay", key: "c", keyHint: "C" },
 ];
 
 interface RunMeta {
@@ -973,6 +997,11 @@ function EditorCanvas() {
   const [contextMenu, setContextMenu] = useState<ContextMenuTarget | null>(null);
   // Save the right-click client position so we can paste at the cursor.
   const lastRightClickRef = useRef<{ clientX: number; clientY: number } | null>(null);
+  // VROL-784 — last mouse position over the canvas wrapper, in screen
+  // coords. Read by the palette-shortcut keydown handler so single-letter
+  // inserts (`m`, `q`, `b`, …) land where the cursor was hovering. Null
+  // when the cursor isn't over the canvas — handler falls back to centre.
+  const lastCanvasCursorRef = useRef<{ clientX: number; clientY: number } | null>(null);
   // Cmd+K command palette.
   const [commandOpen, setCommandOpen] = useState<boolean>(false);
   // Input Analyzer modal — paste data, fit a distribution.
@@ -2290,6 +2319,116 @@ function EditorCanvas() {
     comparison,
   ]);
 
+  // VROL-784 — Miro / Figma-style single-letter station insertion. When
+  // the cursor is over the canvas (or anywhere on the page, as long as no
+  // input is focused), pressing `m`, `q`, `b`, … drops a fresh station at
+  // the cursor position. `s` drops a sticky note; `f` drops a section
+  // frame. Modifier-key presses (Cmd/Ctrl/Alt/Shift) are ignored so this
+  // never collides with Cmd+C / Cmd+V / Cmd+A and friends above.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      const key = e.key.toLowerCase();
+      if (key.length !== 1) return;
+
+      // Resolve the insertion position. If the cursor is over the canvas
+      // we use its flow-space position; otherwise we fall back to the
+      // canvas centre.
+      const wrapper = wrapperRef.current;
+      const cursor = lastCanvasCursorRef.current;
+      const screenPos = cursor
+        ? { x: cursor.clientX, y: cursor.clientY }
+        : wrapper
+          ? (() => {
+              const rect = wrapper.getBoundingClientRect();
+              return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+            })()
+          : null;
+      if (!screenPos) return;
+      const pos = flow.screenToFlowPosition(screenPos);
+
+      // Sticky note — separate from PALETTE in the UI too.
+      if (key === "s") {
+        e.preventDefault();
+        const id = `n${String(nodeIdRef.current++)}`;
+        const newNode: Node = {
+          id,
+          type: "sticky",
+          position: pos,
+          data: { text: "", color: "yellow" },
+        };
+        setNodes((ns) => ns.concat(newNode));
+        toast.success("Inserted sticky note", {
+          description: "Press M / Q / B and more for station shortcuts.",
+        });
+        return;
+      }
+
+      // Section frame.
+      if (key === "f") {
+        e.preventDefault();
+        const id = `n${String(nodeIdRef.current++)}`;
+        const newNode: Node = {
+          id,
+          type: "frame",
+          position: pos,
+          zIndex: -1,
+          selectable: true,
+          data: { label: "Section", color: "blue", width: 320, height: 200 },
+        };
+        setNodes((ns) => ns.concat(newNode));
+        toast.success("Inserted section frame", {
+          description: "Press M / Q / B and more for station shortcuts.",
+        });
+        return;
+      }
+
+      // Station palette.
+      const item = PALETTE.find((p) => p.key === key);
+      if (!item) return;
+      e.preventDefault();
+      const id = `n${String(nodeIdRef.current++)}`;
+      const newNode: Node = {
+        id,
+        type: "station",
+        // Mirror onDrop's offset so the node lands centred on the cursor.
+        position: { x: pos.x - 90, y: pos.y - 30 },
+        data: {
+          label: item.label,
+          stationType: item.stationType,
+          cycleDistribution: constant(100),
+          defectRate: 0,
+          stationKey: generateStationKey(),
+        },
+      };
+      setNodes((ns) => ns.concat(newNode));
+      setSelectedNodeId(id);
+      // Build the "press X for more" hint from the rest of the palette so
+      // the toast surfaces a few more shortcuts the user might not know.
+      const otherHints = PALETTE.filter((p) => p.key !== key)
+        .slice(0, 3)
+        .map((p) => p.keyHint)
+        .join(" / ");
+      toast.success(`Inserted ${item.label.toLowerCase()}`, {
+        description: otherHints ? `Press ${otherHints} for more.` : undefined,
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [flow, setNodes]);
+
   // VROL-304 — click a validation issue → pan + zoom the canvas to its node.
   const focusValidationIssue = useCallback(
     (iss: ValidationIssue) => {
@@ -3391,15 +3530,22 @@ function EditorCanvas() {
                 e.dataTransfer.effectAllowed = "move";
               }}
               className="flex cursor-grab items-center gap-2 rounded-md border border-amber-300 bg-amber-100 p-2 text-amber-900 hover:border-amber-500 active:cursor-grabbing"
-              title="Free-text annotation. Double-click to edit after dropping."
+              title="Free-text annotation. Press S to drop one at the cursor."
             >
               <span className="text-base" aria-hidden>
                 ✎
               </span>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">Sticky note</div>
                 <div className="truncate text-xs opacity-70">Annotation / comment</div>
               </div>
+              {/* VROL-784 — keyboard shortcut chip. */}
+              <kbd
+                aria-label="Press S to insert"
+                className="shrink-0 rounded bg-amber-200/60 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-amber-900"
+              >
+                S
+              </kbd>
             </div>
             {/* Section frame — labeled, resizable container behind nodes. */}
             <div
@@ -3409,15 +3555,22 @@ function EditorCanvas() {
                 e.dataTransfer.effectAllowed = "move";
               }}
               className="border-sim-running/30 bg-sim-running/10 text-sim-running hover:border-sim-running/60 flex cursor-grab items-center gap-2 rounded-md border-2 border-dashed p-2 active:cursor-grabbing"
-              title="Labeled box that groups stations visually. Double-click the label to rename."
+              title="Labeled box that groups stations visually. Press F to drop one at the cursor."
             >
               <span className="text-base" aria-hidden>
                 ▢
               </span>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="text-foreground truncate text-sm font-medium">Section frame</div>
                 <div className="text-muted-foreground truncate text-xs">Group stations</div>
               </div>
+              {/* VROL-784 — keyboard shortcut chip. */}
+              <kbd
+                aria-label="Press F to insert"
+                className="bg-sim-running/20 text-sim-running shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold"
+              >
+                F
+              </kbd>
             </div>
             {PALETTE.filter(
               (p) =>
@@ -3433,13 +3586,20 @@ function EditorCanvas() {
                   e.dataTransfer.effectAllowed = "move";
                 }}
                 className="border-border bg-card hover:border-foreground/30 hover:bg-accent flex cursor-grab items-center gap-2 rounded-md border p-2 active:cursor-grabbing"
-                title={p.summary}
+                title={`${p.summary}. Press ${p.keyHint} to insert.`}
               >
                 <p.icon className="h-4 w-4 shrink-0" />
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{p.label}</div>
                   <div className="text-muted-foreground truncate text-xs">{p.summary}</div>
                 </div>
+                {/* VROL-784 — keyboard shortcut chip. */}
+                <kbd
+                  aria-label={`Press ${p.keyHint} to insert`}
+                  className="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold"
+                >
+                  {p.keyHint}
+                </kbd>
               </div>
             ))}
           </CardContent>
@@ -3449,6 +3609,14 @@ function EditorCanvas() {
           ref={wrapperRef}
           onDragOver={onDragOver}
           onDrop={onDrop}
+          // VROL-784 — track cursor over the canvas so single-letter
+          // station-insert shortcuts land where the user is looking.
+          onMouseMove={(e) => {
+            lastCanvasCursorRef.current = { clientX: e.clientX, clientY: e.clientY };
+          }}
+          onMouseLeave={() => {
+            lastCanvasCursorRef.current = null;
+          }}
           data-pan-mode={spacePanning ? "true" : undefined}
           className="border-border bg-background relative overflow-hidden rounded-md border"
         >
@@ -3533,6 +3701,36 @@ function EditorCanvas() {
               </div>
             ) : null}
           </ReactFlow>
+          {/* VROL-819 — contextual coach overlay. Renders a single nudge at
+              a time in the bottom-right of the canvas; auto-dismisses when
+              its trigger flips false. */}
+          <Coach
+            tips={buildCoachTips(
+              {
+                stationCount: nodes.filter((n) => n.type === "station").length,
+                edgeCount: edges.length,
+                hasRun: result !== null,
+                isBottleneckHigh: (() => {
+                  if (!result || result.samples.length === 0) return false;
+                  const idx = result.bottleneckStationIdx;
+                  const last = result.samples[result.samples.length - 1];
+                  const stateMs = last?.perStationStateMs[idx];
+                  if (!stateMs) return false;
+                  let total = 0;
+                  let bad = 0;
+                  for (const [k, v] of Object.entries(stateMs)) {
+                    total += v;
+                    if (k === "Starved" || k === "Blocked") bad += v;
+                  }
+                  return total > 0 && bad / total > 0.2;
+                })(),
+                lockedNodeCount: nodes.filter(
+                  (n) => (n.data as { _locked?: boolean })._locked === true,
+                ).length,
+              },
+              { runNow: handleRun },
+            )}
+          />
           {/* Live simulation playback overlay — sits above the canvas, below
               the toolbar. Hidden until a sampled run finishes. */}
           {result && playbackMs !== null && result.samples.length >= 2 ? (
