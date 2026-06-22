@@ -181,7 +181,7 @@ export function FrameNode(props: NodeProps) {
   return (
     <div
       style={{ width, height }}
-      className={`${COLOR_BG[color]} relative rounded-md border-2 border-dashed shadow-sm`}
+      className={`${COLOR_BG[color]} relative rounded-md border border-transparent transition-colors hover:border-current/10`}
     >
       {/* Top-left label. Click to rename. */}
       <div
@@ -227,6 +227,10 @@ export function FrameNode(props: NodeProps) {
       {/* 8 resize grips. Each has the `nodrag` className so React Flow
           doesn't also start a node-drag when the user grabs a grip
           (that was the source of the position-drift bug). */}
+      {/* Invisible resize grips. No visible chrome — the cursor change on
+          hover is the affordance, which is the Miro / Figma convention.
+          Each grip carries the React-Flow `nodrag` class so the parent
+          node doesn't also start a node-drag when the user grabs one. */}
       {ANCHORS.map((anchor) => (
         <div
           key={anchor}
@@ -236,7 +240,7 @@ export function FrameNode(props: NodeProps) {
           onPointerMove={onResizePointerMove}
           onPointerUp={onResizePointerUp}
           onPointerCancel={onResizePointerUp}
-          className={`nodrag bg-foreground/40 hover:bg-foreground/70 absolute z-10 rounded-sm ${ANCHOR_CLASSES[anchor]} ${ANCHOR_CURSORS[anchor]}`}
+          className={`nodrag absolute z-10 bg-transparent ${ANCHOR_CLASSES[anchor]} ${ANCHOR_CURSORS[anchor]}`}
           style={{ touchAction: "none" }}
         />
       ))}
