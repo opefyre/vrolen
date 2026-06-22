@@ -19,7 +19,6 @@ import {
   BackgroundVariant,
   type Connection,
   ConnectionMode,
-  Controls,
   type Edge,
   Handle,
   MiniMap,
@@ -164,6 +163,7 @@ import { derivePlayback } from "@/lib/derive-playback";
 import { useOnlineStatus } from "@/lib/online-status";
 import { toast } from "@/lib/toast";
 import { PlaybackController } from "@/components/editor/playback-controller";
+import { CanvasControls } from "@/components/editor/canvas-controls";
 import {
   DEFAULT_RUN_SETTINGS,
   loadRunSettings,
@@ -953,6 +953,9 @@ function EditorCanvas() {
   // PlaybackController owns this and the canvas paints stations + edges
   // accordingly. `null` = no playback active (canvas stays static).
   const [playbackMs, setPlaybackMs] = useState<number | null>(null);
+  // Bumps every time a fresh run completes — passed to PlaybackController
+  // so it runs a 3-2-1 countdown and auto-starts playback on each new run.
+  const [runNonce, setRunNonce] = useState<number>(0);
   const playbackSnapshot = useMemo(() => {
     if (playbackMs === null || !result || result.samples.length < 2) return null;
     return derivePlayback(result, playbackMs);
@@ -1757,6 +1760,9 @@ function EditorCanvas() {
         // from the very beginning (warmup window included). Earlier we started
         // at warmupMs which surprised users — the slider should read 00:00.
         setPlaybackMs(r.samples.length >= 2 ? 0 : null);
+        // Bump runNonce so PlaybackController fires its 3-2-1 countdown +
+        // auto-starts playback at the user's default speed (5x).
+        if (r.samples.length >= 2) setRunNonce((n) => n + 1);
         toast.success("Simulation complete", { description: desc });
         // If a scenario is active, push a compact summary to history.
         if (activeScenarioName) {
@@ -3509,7 +3515,7 @@ function EditorCanvas() {
             selectionKeyCode={null}
           >
             <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
-            <Controls />
+            <CanvasControls />
             <MiniMap pannable zoomable />
             <AlignmentGuidesOverlay guideLines={alignmentGuides.guideLines} />
             {nodesForFlow.length === 0 ? (
@@ -3536,6 +3542,7 @@ function EditorCanvas() {
                 horizonMs={settings.horizonMs}
                 playbackMs={playbackMs}
                 onPlaybackChange={setPlaybackMs}
+                autoPlayNonce={runNonce}
               />
             </div>
           ) : null}
