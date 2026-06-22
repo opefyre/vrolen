@@ -26,6 +26,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { narrateRun } from "@/lib/narrate-run";
 import { detectWarmup } from "@/lib/warmup-detection";
 import { toast } from "@/lib/toast";
+import { useChartDimensions } from "@/lib/use-chart-dimensions";
 
 import { KpiDrilldown, SensitivityDrilldown } from "./DrilldownSheets";
 import { OeeOverTimeChart } from "./OeeOverTimeChart";
@@ -212,6 +213,16 @@ function WarmupWelchSparkline({
   readonly currentMs: number;
   readonly horizonMs: number;
 }) {
+  // Track the rendered SVG pixel size so the viewBox tracks 1:1 with the
+  // panel — same pattern as ThroughputChart. Without this, hard-coded
+  // viewBox + preserveAspectRatio="none" stretched the chart non-uniformly
+  // on wide panels (labels chunky, markers misaligned).
+  const {
+    containerRef: svgRef,
+    width: measuredW,
+    height: measuredH,
+  } = useChartDimensions<SVGSVGElement>({ width: 600, height: 80 });
+
   if (samples.length < 4 || horizonMs <= 0) return null;
   // Derive per-sample throughput rate (parts/ms) — mirrors what
   // detectWarmup() consumes so the markers line up with the data.
@@ -237,8 +248,8 @@ function WarmupWelchSparkline({
     return { tMs: s.tMs, r: count > 0 ? sum / count : s.r };
   });
   const peak = Math.max(...rates.map((s) => s.r), ...windowedRates.map((s) => s.r), 1e-12);
-  const W = 320;
-  const H = 80;
+  const W = Math.max(160, measuredW);
+  const H = Math.max(60, measuredH);
   const padX = 4;
   const padY = 6;
   const xAt = (tMs: number): number =>
@@ -253,7 +264,7 @@ function WarmupWelchSparkline({
   const recX = recommendedMs !== null ? xAt(recommendedMs) : null;
   const curX = xAt(currentMs);
   return (
-    <div className="border-border bg-card mx-auto w-full max-w-2xl rounded-md border p-3">
+    <div className="border-border bg-card rounded-md border p-3">
       <div className="text-muted-foreground mb-1 flex items-center justify-between text-[11px] tracking-wide uppercase">
         <span>Warm-up · Welch's method</span>
         <span className="font-mono text-[10px] normal-case">
@@ -268,6 +279,7 @@ function WarmupWelchSparkline({
         </span>
       </div>
       <svg
+        ref={svgRef}
         viewBox={`0 0 ${String(W)} ${String(H)}`}
         preserveAspectRatio="none"
         className="text-sim-running block h-20 w-full"
