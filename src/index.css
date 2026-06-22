@@ -214,9 +214,10 @@
   border: 2px solid white !important;
   border-radius: 9999px !important;
   opacity: 0;
-  transition:
-    opacity 120ms ease-out,
-    transform 120ms ease-out;
+  /* Only fade in / out — no transform transition. Scale-on-hover read as
+   * the handle (and visually the node) "escaping" the cursor; brightness
+   * + opacity is enough discoverability. */
+  transition: opacity 120ms ease-out;
   pointer-events: all !important;
   z-index: 5 !important;
 }
@@ -232,12 +233,10 @@
 .vrolen-handle:hover,
 .vrolen-handle.connectingfrom,
 .vrolen-handle.connectingto {
-  /* Scale was 1.4 (40% bigger) — paired with a -6px offset that anchored
-   * the handle outside the node, the center-origin scale produced a
-   * visible drift that read as the handle "moving" on hover. 1.15 is
-   * still discoverable but stays in place. */
-  transform: scale(1.15);
+  /* No transform. Just keep it fully opaque + slightly brighter so it
+   * reads as "live" without moving. */
   opacity: 1 !important;
+  filter: brightness(1.1);
 }
 
 .vrolen-handle--top {

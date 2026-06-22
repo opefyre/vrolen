@@ -164,6 +164,7 @@ import { useOnlineStatus } from "@/lib/online-status";
 import { toast } from "@/lib/toast";
 import { PlaybackController } from "@/components/editor/playback-controller";
 import { CanvasControls } from "@/components/editor/canvas-controls";
+import { NonStationInspector } from "@/components/editor/non-station-inspector";
 import { Coach } from "@/components/editor/coach";
 import { buildCoachTips } from "@/lib/coach-tips";
 import {
@@ -396,7 +397,7 @@ function StationNode({ data, selected, id }: NodeProps) {
 
   return (
     <div
-      className={`bg-card relative min-w-[148px] rounded-lg border border-l-4 px-3 py-2 shadow-sm transition-all ${
+      className={`bg-card relative min-w-[148px] rounded-lg border border-l-4 px-3 py-2 shadow-sm transition-shadow ${
         accent.border
       } ${
         selected
@@ -3875,6 +3876,15 @@ function EditorCanvas() {
               />
             </CardContent>
           </Card>
+        ) : selectedNode && (selectedNode.type === "sticky" || selectedNode.type === "frame") ? (
+          <NonStationInspector
+            node={selectedNode}
+            onClose={() => {
+              setSelectedNodeId(null);
+            }}
+            onPatch={updateSelectedNodeData}
+            scenarioName={activeScenarioName}
+          />
         ) : selectedNode ? (
           <Card className="overflow-y-auto">
             <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
