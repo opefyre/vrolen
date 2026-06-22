@@ -32,6 +32,7 @@ import { OeeOverTimeChart } from "./OeeOverTimeChart";
 import { ReworkOverTimeChart } from "./ReworkOverTimeChart";
 import { cycleStats } from "@/lib/cycle-stats";
 
+import { EmptyState } from "@/components/EmptyState";
 import { BufferSummary } from "./BufferSummary";
 import { FinalStateCard } from "./FinalStateCard";
 import { OeeBreakdown } from "./OeeBreakdown";
@@ -252,7 +253,7 @@ function WarmupWelchSparkline({
   const recX = recommendedMs !== null ? xAt(recommendedMs) : null;
   const curX = xAt(currentMs);
   return (
-    <div className="border-border bg-card rounded-md border p-3">
+    <div className="border-border bg-card mx-auto w-full max-w-2xl rounded-md border p-3">
       <div className="text-muted-foreground mb-1 flex items-center justify-between text-[11px] tracking-wide uppercase">
         <span>Warm-up · Welch's method</span>
         <span className="font-mono text-[10px] normal-case">
@@ -907,6 +908,25 @@ export function ResultPanel({
             <QualityLosses result={result} stationLabels={runMeta.stationLabels} />
           </CardContent>
         </Card>
+      ) : null}
+
+      {/* Quality tab empty state — when there's no scrap, rework, or rework
+          chart to show, otherwise the tab looks blank. */}
+      {activeTab === "quality" &&
+      result.perStationScrapped.reduce((a, b) => a + b, 0) +
+        result.perStationReworked.reduce((a, b) => a + b, 0) ===
+        0 &&
+      !showReworkChart ? (
+        <EmptyState
+          icon={ShieldCheck}
+          title="No quality losses in this run"
+          body={
+            <>
+              This scenario produced zero scrap and zero rework. Add a QC station with a non-zero
+              defect rate (or a rework target) to surface quality losses here.
+            </>
+          }
+        />
       ) : null}
 
       {activeTab === "buffers" ? (
