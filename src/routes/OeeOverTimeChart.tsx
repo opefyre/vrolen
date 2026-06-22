@@ -44,6 +44,20 @@ const STATE_FILL_CLASS: Record<(typeof STATE_ORDER)[number], string> = {
   Down: "fill-sim-down",
 };
 
+/**
+ * VROL-791 — user-facing rename. Engine constant stays "BlockedOut" (it's
+ * the state name everywhere in the harness); we only relabel in the UI.
+ */
+const STATE_DISPLAY_NAME: Record<(typeof STATE_ORDER)[number], string> = {
+  Running: "Running",
+  Setup: "Setup",
+  Idle: "Idle",
+  BlockedOut: "Blocked",
+  Starved: "Starved",
+  Maintenance: "Maintenance",
+  Down: "Down",
+};
+
 const PAD_X = 4;
 const PAD_Y = 4;
 
@@ -74,6 +88,19 @@ export function OeeOverTimeChart({
   const VIEW_W = Math.max(160, measuredW);
   const VIEW_H = Math.max(120, measuredH);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+
+  // VROL-791 — legend isolation. Clicking a legend chip toggles that state's
+  // visibility in the stacked chart so the user can focus on a single slice
+  // (or hide the noisy ones). Hidden set lives entirely inside the chart.
+  const [hiddenStates, setHiddenStates] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleState = (state: string): void => {
+    setHiddenStates((prev) => {
+      const next = new Set(prev);
+      if (next.has(state)) next.delete(state);
+      else next.add(state);
+      return next;
+    });
+  };
 
   const paths = useMemo<{ state: string; d: string }[]>(() => {
     if (samples.length < 2) return [];
@@ -240,13 +267,15 @@ export function OeeOverTimeChart({
           role="img"
           aria-label={`State-mix over time for ${stationLabel}`}
         >
-          {paths.map(({ state, d }) => (
-            <path
-              key={state}
-              d={d}
-              className={STATE_FILL_CLASS[state as (typeof STATE_ORDER)[number]]}
-            />
-          ))}
+          {paths.map(({ state, d }) =>
+            hiddenStates.has(state) ? null : (
+              <path
+                key={state}
+                d={d}
+                className={STATE_FILL_CLASS[state as (typeof STATE_ORDER)[number]]}
+              />
+            ),
+          )}
           {/* VROL-622 — X-axis ticks at warmup / mid / horizon (matches the
               labels below) so the eye can place the hover position. */}
           {[0, 0.5, 1].map((frac) => {
@@ -290,7 +319,10 @@ export function OeeOverTimeChart({
               t={((samples[hoverIdx]?.tMs ?? 0) / 1000).toFixed(1)}s
             </div>
             {hoveredFractions
-              .filter((f) => f.pct > 0.5)
+              .filter((f) => f.pct > 0.5 && !hiddenStates.has(f.state))
+              // VROL-791 — sort descending so the dominant state reads first.
+              .slice()
+              .sort((a, b) => b.pct - a.pct)
               .map(({ state, pct }) => (
                 <div key={state} className="flex items-center gap-1.5">
                   <span
@@ -298,7 +330,9 @@ export function OeeOverTimeChart({
                       state as (typeof STATE_ORDER)[number]
                     ].replace("fill-", "bg-")}`}
                   />
-                  <span className="text-foreground">{state}</span>
+                  <span className="text-foreground">
+                    {STATE_DISPLAY_NAME[state as (typeof STATE_ORDER)[number]]}
+                  </span>
                   <span className="font-mono tabular-nums">{pct.toFixed(0)}%</span>
                 </div>
               ))}
@@ -314,18 +348,37 @@ export function OeeOverTimeChart({
         </span>
         <span className="font-mono tabular-nums">{(horizonMs / 1000).toFixed(1)}s</span>
       </div>
-      <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
-        {STATE_ORDER.map((state) => (
-          <span key={state} className="flex items-center gap-1">
-            <span
-              className={`inline-block h-2 w-2 rounded-sm ${STATE_FILL_CLASS[state].replace(
-                "fill-",
-                "bg-",
-              )}`}
-            />
-            {state}
-          </span>
-        ))}
+      <div
+        className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]"
+        role="group"
+        aria-label="Toggle state visibility"
+      >
+        {STATE_ORDER.map((state) => {
+          const hidden = hiddenStates.has(state);
+          const display = STATE_DISPLAY_NAME[state];
+          return (
+            <button
+              key={state}
+              type="button"
+              onClick={() => {
+                toggleState(state);
+              }}
+              aria-pressed={!hidden}
+              title={hidden ? `Show ${display}` : `Hide ${display}`}
+              className={`focus-visible:ring-ring hover:bg-muted/60 inline-flex items-center gap-1 rounded px-1 py-0.5 transition-opacity focus-visible:ring-2 focus-visible:outline-none ${
+                hidden ? "opacity-40" : "opacity-100"
+              }`}
+            >
+              <span
+                className={`inline-block h-2 w-2 rounded-sm ${STATE_FILL_CLASS[state].replace(
+                  "fill-",
+                  "bg-",
+                )}`}
+              />
+              <span className={hidden ? "line-through" : undefined}>{display}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

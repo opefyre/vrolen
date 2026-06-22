@@ -8,11 +8,17 @@
  * Renders cumulative lineCompleted over tMs as a step area + outline plus a
  * lightweight cursor-tracked tooltip that shows the (tMs, lineCompleted) at
  * the hovered X.
+ *
+ * VROL-845 — second view: instantaneous parts-per-hour computed as a moving
+ * window over the samples. The user toggles between Cumulative (default) and
+ * Instantaneous rate via a segmented control above the chart.
  */
 
 import { useMemo, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import type { TimeseriesSample } from "@/engine";
+import { computeInstantaneousRate, type RatePoint } from "@/lib/throughput-rate";
 import { useChartDimensions } from "@/lib/use-chart-dimensions";
 
 interface ThroughputChartProps {
@@ -31,6 +37,12 @@ interface ThroughputChartProps {
 
 const PAD_X = 4;
 const PAD_Y = 4;
+// VROL-845 — 5s moving window for the instantaneous-rate view. Picked to
+// match the sampler's default cadence so the curve has enough samples to
+// smooth out engine jitter without flattening real throughput swings.
+const RATE_WINDOW_MS = 5_000;
+
+type ChartView = "cumulative" | "rate";
 
 interface HoverState {
   readonly idx: number;
@@ -57,20 +69,76 @@ export function ThroughputChart({
   const VIEW_W = Math.max(160, measuredW);
   const VIEW_H = Math.max(120, measuredH);
   const [hover, setHover] = useState<HoverState | null>(null);
+  const [view, setView] = useState<ChartView>("cumulative");
+
+  // VROL-845 — derive the rate-mode series. Memoised so flipping back and
+  // forth between views is free.
+  const primaryRate = useMemo<readonly RatePoint[]>(
+    () => computeInstantaneousRate(samples, RATE_WINDOW_MS, warmupMs),
+    [samples, warmupMs],
+  );
+  const secondaryRate = useMemo<readonly RatePoint[]>(
+    () =>
+      secondarySamples ? computeInstantaneousRate(secondarySamples, RATE_WINDOW_MS, warmupMs) : [],
+    [secondarySamples, warmupMs],
+  );
 
   const { areaPath, linePath, secondaryLinePath, maxY, plotXFor, plotYFor } = useMemo(() => {
     const innerW = VIEW_W - PAD_X * 2;
     const innerH = VIEW_H - PAD_Y * 2;
     const startMs = warmupMs;
     const spanMs = Math.max(1, horizonMs - startMs);
-    const peak = (arr: readonly TimeseriesSample[]): number =>
-      arr.reduce((m, s) => Math.max(m, s.lineCompleted), 0);
-    // VROL-624 — Y-scale uses the max of BOTH series so neither line clips.
-    const maxCompleted = Math.max(peak(samples), secondarySamples ? peak(secondarySamples) : 0);
-    const yScale = maxCompleted > 0 ? innerH / maxCompleted : 0;
     const xOf = (tMs: number): number => PAD_X + ((tMs - startMs) / spanMs) * innerW;
+    if (view === "cumulative") {
+      const peak = (arr: readonly TimeseriesSample[]): number =>
+        arr.reduce((m, s) => Math.max(m, s.lineCompleted), 0);
+      // VROL-624 — Y-scale uses the max of BOTH series so neither line clips.
+      const maxCompleted = Math.max(peak(samples), secondarySamples ? peak(secondarySamples) : 0);
+      const yScale = maxCompleted > 0 ? innerH / maxCompleted : 0;
+      const yOf = (n: number): number => PAD_Y + innerH - n * yScale;
+      if (samples.length === 0) {
+        return {
+          areaPath: "",
+          linePath: "",
+          secondaryLinePath: "",
+          maxY: 0,
+          plotXFor: xOf,
+          plotYFor: yOf,
+        };
+      }
+      const buildLine = (arr: readonly TimeseriesSample[]): string => {
+        let d = "";
+        arr.forEach((s, i) => {
+          d += `${i === 0 ? "" : " "}${i === 0 ? "M" : "L"} ${String(xOf(s.tMs))} ${String(yOf(s.lineCompleted))}`;
+        });
+        return d;
+      };
+      const line = buildLine(samples);
+      let area = `M ${String(xOf(samples[0]?.tMs ?? startMs))} ${String(PAD_Y + innerH)}`;
+      samples.forEach((s) => {
+        area += ` L ${String(xOf(s.tMs))} ${String(yOf(s.lineCompleted))}`;
+      });
+      const lastX = xOf(samples[samples.length - 1]?.tMs ?? horizonMs);
+      area += ` L ${String(lastX)} ${String(PAD_Y + innerH)} Z`;
+      const secondaryLine =
+        secondarySamples && secondarySamples.length > 0 ? buildLine(secondarySamples) : "";
+      return {
+        areaPath: area,
+        linePath: line,
+        secondaryLinePath: secondaryLine,
+        maxY: maxCompleted,
+        plotXFor: xOf,
+        plotYFor: yOf,
+      };
+    }
+    // VROL-845 — instantaneous-rate view. Same X mapping as cumulative; Y is
+    // parts/hour with scale = max(rate) across both series.
+    const peakRate = (arr: readonly RatePoint[]): number =>
+      arr.reduce((m, p) => Math.max(m, p.ratePerHour), 0);
+    const maxRate = Math.max(peakRate(primaryRate), peakRate(secondaryRate));
+    const yScale = maxRate > 0 ? innerH / maxRate : 0;
     const yOf = (n: number): number => PAD_Y + innerH - n * yScale;
-    if (samples.length === 0) {
+    if (primaryRate.length === 0) {
       return {
         areaPath: "",
         linePath: "",
@@ -80,34 +148,55 @@ export function ThroughputChart({
         plotYFor: yOf,
       };
     }
-    const buildLine = (arr: readonly TimeseriesSample[]): string => {
+    const buildRateLine = (arr: readonly RatePoint[]): string => {
       let d = "";
-      arr.forEach((s, i) => {
-        d += `${i === 0 ? "" : " "}${i === 0 ? "M" : "L"} ${String(xOf(s.tMs))} ${String(yOf(s.lineCompleted))}`;
+      arr.forEach((p, i) => {
+        d += `${i === 0 ? "" : " "}${i === 0 ? "M" : "L"} ${String(xOf(p.tMs))} ${String(yOf(p.ratePerHour))}`;
       });
       return d;
     };
-    const line = buildLine(samples);
-    let area = `M ${String(xOf(samples[0]?.tMs ?? startMs))} ${String(PAD_Y + innerH)}`;
-    samples.forEach((s) => {
-      area += ` L ${String(xOf(s.tMs))} ${String(yOf(s.lineCompleted))}`;
+    const line = buildRateLine(primaryRate);
+    let area = `M ${String(xOf(primaryRate[0]?.tMs ?? startMs))} ${String(PAD_Y + innerH)}`;
+    primaryRate.forEach((p) => {
+      area += ` L ${String(xOf(p.tMs))} ${String(yOf(p.ratePerHour))}`;
     });
-    const lastX = xOf(samples[samples.length - 1]?.tMs ?? horizonMs);
+    const lastX = xOf(primaryRate[primaryRate.length - 1]?.tMs ?? horizonMs);
     area += ` L ${String(lastX)} ${String(PAD_Y + innerH)} Z`;
-    const secondaryLine =
-      secondarySamples && secondarySamples.length > 0 ? buildLine(secondarySamples) : "";
+    const secondaryLine = secondaryRate.length > 0 ? buildRateLine(secondaryRate) : "";
     return {
       areaPath: area,
       linePath: line,
       secondaryLinePath: secondaryLine,
-      maxY: maxCompleted,
+      maxY: maxRate,
       plotXFor: xOf,
       plotYFor: yOf,
     };
-  }, [samples, secondarySamples, horizonMs, warmupMs, VIEW_W, VIEW_H]);
+  }, [
+    samples,
+    secondarySamples,
+    horizonMs,
+    warmupMs,
+    VIEW_W,
+    VIEW_H,
+    view,
+    primaryRate,
+    secondaryRate,
+  ]);
+
+  // VROL-845 — hover indexes the active series so the tooltip works in both
+  // modes. In rate view, hover.idx points into primaryRate; in cumulative, into samples.
+  const hoverSeriesLength = view === "cumulative" ? samples.length : primaryRate.length;
+  const hoverXAtIdx = (i: number): number => {
+    if (view === "cumulative") return plotXFor(samples[i]?.tMs ?? 0);
+    return plotXFor(primaryRate[i]?.tMs ?? 0);
+  };
+  const hoverYAtIdx = (i: number): number => {
+    if (view === "cumulative") return plotYFor(samples[i]?.lineCompleted ?? 0);
+    return plotYFor(primaryRate[i]?.ratePerHour ?? 0);
+  };
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>): void => {
-    if (samples.length === 0) return;
+    if (hoverSeriesLength === 0) return;
     const svg = e.currentTarget;
     const rect = svg.getBoundingClientRect();
     const hasBounds = rect.width > 0 && rect.height > 0;
@@ -115,8 +204,8 @@ export function ThroughputChart({
     const xInView = hasBounds ? (e.clientX - rect.left) * xRatio : e.clientX;
     let best = 0;
     let bestDist = Infinity;
-    for (let i = 0; i < samples.length; i++) {
-      const dx = Math.abs(plotXFor(samples[i]?.tMs ?? 0) - xInView);
+    for (let i = 0; i < hoverSeriesLength; i++) {
+      const dx = Math.abs(hoverXAtIdx(i) - xInView);
       if (dx < bestDist) {
         bestDist = dx;
         best = i;
@@ -129,21 +218,24 @@ export function ThroughputChart({
     if (hasBounds) {
       const yRatio = VIEW_H / rect.height;
       const yInView = (e.clientY - rect.top) * yRatio;
-      const curveYAtCursor = plotYFor(samples[best]?.lineCompleted ?? 0);
+      const curveYAtCursor = hoverYAtIdx(best);
       const HOVER_TOL_VIEW_UNITS = VIEW_H * 0.25;
       if (Math.abs(yInView - curveYAtCursor) > HOVER_TOL_VIEW_UNITS) {
         if (hover !== null) setHover(null);
         return;
       }
     }
-    const xPx = hasBounds ? (plotXFor(samples[best]?.tMs ?? 0) / VIEW_W) * rect.width : 0;
+    const xPx = hasBounds ? (hoverXAtIdx(best) / VIEW_W) * rect.width : 0;
     setHover({ idx: best, x: xPx });
   };
   const onLeave = (): void => {
     setHover(null);
   };
 
-  const hovered = hover && samples[hover.idx] ? samples[hover.idx] : null;
+  const hoveredSample =
+    view === "cumulative" && hover && samples[hover.idx] ? samples[hover.idx] : null;
+  const hoveredRate =
+    view === "rate" && hover && primaryRate[hover.idx] ? primaryRate[hover.idx] : null;
 
   if (samples.length < 2) {
     return (
@@ -156,12 +248,51 @@ export function ThroughputChart({
 
   return (
     <div className="relative w-full">
+      {/* VROL-845 — segmented control to switch between cumulative parts
+          and instantaneous parts/hour. Uses aria-pressed buttons grouped
+          under a role="group" so screen readers announce it as a toolbar. */}
+      <div
+        role="group"
+        aria-label="Chart view"
+        className="border-border mb-2 inline-flex items-center gap-0.5 rounded-md border p-0.5"
+      >
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          aria-pressed={view === "cumulative"}
+          onClick={() => {
+            setView("cumulative");
+            setHover(null);
+          }}
+          className={view === "cumulative" ? "bg-muted text-foreground" : "text-muted-foreground"}
+        >
+          Cumulative
+        </Button>
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          aria-pressed={view === "rate"}
+          onClick={() => {
+            setView("rate");
+            setHover(null);
+          }}
+          className={view === "rate" ? "bg-muted text-foreground" : "text-muted-foreground"}
+        >
+          Instantaneous rate (parts/h)
+        </Button>
+      </div>
       {/* VROL-680 — always-on legend: line color + warmup shading. */}
       <div className="text-muted-foreground mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
         <span className="flex items-center gap-1.5">
           <span className="bg-sim-running inline-block h-0.5 w-4 rounded-full" />
           <span className="text-foreground">
-            {secondaryLinePath ? (primaryLabel ?? "A") : "Completed parts"}
+            {secondaryLinePath
+              ? (primaryLabel ?? "A")
+              : view === "cumulative"
+                ? "Completed parts"
+                : "Throughput rate"}
           </span>
         </span>
         {secondaryLinePath ? (
@@ -225,7 +356,14 @@ export function ThroughputChart({
             />
           );
         })}
-        <path d={areaPath} fill="currentColor" fillOpacity={0.18} stroke="none" />
+        <path
+          d={areaPath}
+          fill="currentColor"
+          // VROL-845 — half the cumulative opacity in rate view since the
+          // area is no longer "stuff that accumulated" but a rate envelope.
+          fillOpacity={view === "cumulative" ? 0.18 : 0.09}
+          stroke="none"
+        />
         <path d={linePath} fill="none" stroke="currentColor" strokeWidth={1.5} />
         {/* VROL-624 — secondary series for compare overlay. Muted color +
             dashed so it's visually distinguishable from the primary line. */}
@@ -240,21 +378,40 @@ export function ThroughputChart({
             className="text-sim-setup"
           />
         ) : null}
-        {hovered ? (
+        {hoveredSample ? (
           <line
-            x1={plotXFor(hovered.tMs)}
+            x1={plotXFor(hoveredSample.tMs)}
             y1={PAD_Y}
-            x2={plotXFor(hovered.tMs)}
+            x2={plotXFor(hoveredSample.tMs)}
             y2={VIEW_H - PAD_Y}
             stroke="currentColor"
             strokeOpacity={0.35}
             strokeDasharray="2 2"
           />
         ) : null}
-        {hovered ? (
+        {hoveredSample ? (
           <circle
-            cx={plotXFor(hovered.tMs)}
-            cy={plotYFor(hovered.lineCompleted)}
+            cx={plotXFor(hoveredSample.tMs)}
+            cy={plotYFor(hoveredSample.lineCompleted)}
+            r={2.5}
+            fill="currentColor"
+          />
+        ) : null}
+        {hoveredRate ? (
+          <line
+            x1={plotXFor(hoveredRate.tMs)}
+            y1={PAD_Y}
+            x2={plotXFor(hoveredRate.tMs)}
+            y2={VIEW_H - PAD_Y}
+            stroke="currentColor"
+            strokeOpacity={0.35}
+            strokeDasharray="2 2"
+          />
+        ) : null}
+        {hoveredRate ? (
+          <circle
+            cx={plotXFor(hoveredRate.tMs)}
+            cy={plotYFor(hoveredRate.ratePerHour)}
             r={2.5}
             fill="currentColor"
           />
@@ -272,31 +429,41 @@ export function ThroughputChart({
       {/* VROL-680 — explicit axis labels so the reader knows what each axis means. */}
       <div className="text-muted-foreground mt-0.5 flex items-center justify-between text-[10px]">
         <span>time (s)</span>
-        <span>parts</span>
+        <span>{view === "cumulative" ? "parts" : "parts / hour"}</span>
       </div>
       <div className="text-muted-foreground flex items-center justify-between text-xs">
         <span className="font-mono tabular-nums">0</span>
         <span>
-          {hovered ? (
+          {hoveredSample ? (
             <span className="font-mono tabular-nums">
-              t={(hovered.tMs / 1000).toFixed(1)}s · {hovered.lineCompleted.toLocaleString()} parts
+              t={(hoveredSample.tMs / 1000).toFixed(1)}s ·{" "}
+              {hoveredSample.lineCompleted.toLocaleString()} parts
               {/* VROL-716 — instantaneous rate at this hover point. */}
               {(() => {
                 if (!hover || hover.idx === 0) return null;
                 const prev = samples[hover.idx - 1];
                 if (!prev) return null;
-                const dt = hovered.tMs - prev.tMs;
+                const dt = hoveredSample.tMs - prev.tMs;
                 if (dt <= 0) return null;
-                const dParts = hovered.lineCompleted - prev.lineCompleted;
+                const dParts = hoveredSample.lineCompleted - prev.lineCompleted;
                 const ratePerHr = Math.round((dParts / dt) * 3_600_000);
                 return ` · ${ratePerHr.toLocaleString()}/h`;
               })()}
             </span>
-          ) : (
+          ) : hoveredRate ? (
+            <span className="font-mono tabular-nums">
+              t={(hoveredRate.tMs / 1000).toFixed(1)}s ·{" "}
+              {Math.round(hoveredRate.ratePerHour).toLocaleString()} parts/h
+            </span>
+          ) : view === "cumulative" ? (
             <span>{maxY.toLocaleString()} parts at horizon</span>
+          ) : (
+            <span>peak {Math.round(maxY).toLocaleString()} parts/h</span>
           )}
         </span>
-        <span className="font-mono tabular-nums">{maxY.toLocaleString()}</span>
+        <span className="font-mono tabular-nums">
+          {view === "cumulative" ? maxY.toLocaleString() : Math.round(maxY).toLocaleString()}
+        </span>
       </div>
     </div>
   );

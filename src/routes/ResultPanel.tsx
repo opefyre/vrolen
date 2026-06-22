@@ -68,6 +68,10 @@ const REASON_HINT: Record<string, string> = {
 
 interface ResultPanelRunMeta {
   readonly stationLabels: readonly string[];
+  /** Chain-order station ids; aligned with stationLabels. */
+  readonly chainNodeIds?: readonly string[];
+  /** "sourceNodeId→targetNodeId" keys in engine edge order (VROL-792). */
+  readonly edgeKeys?: readonly string[];
 }
 
 interface ResultPanelProps {
@@ -1097,7 +1101,12 @@ export function ResultPanel({
             <CardDescription>Average + peak fill per inter-station edge.</CardDescription>
           </CardHeader>
           <CardContent>
-            <BufferSummary result={result} />
+            <BufferSummary
+              result={result}
+              stationLabels={runMeta.stationLabels}
+              chainNodeIds={runMeta.chainNodeIds}
+              edgeKeys={runMeta.edgeKeys}
+            />
           </CardContent>
         </Card>
       ) : null}

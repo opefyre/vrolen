@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { TimeseriesSample } from "@/engine";
@@ -96,6 +96,50 @@ describe("OeeOverTimeChart (VROL-620)", () => {
     // Mid + end time tick labels appear in the bottom row.
     expect(container.textContent).toMatch(/1\.0s/);
     expect(container.textContent).toMatch(/2\.0s/);
+  });
+
+  function findLegendButton(title: string): HTMLButtonElement {
+    const matches = Array.from(document.querySelectorAll("button"));
+    const found = matches.find((b) => b.getAttribute("title") === title);
+    if (!found) throw new Error(`No legend button with title "${title}"`);
+    return found as HTMLButtonElement;
+  }
+
+  it("renames BlockedOut to Blocked in the legend (VROL-791)", () => {
+    const samples = [sample(0, [{ Running: 0 }]), sample(1_000, [{ Running: 1_000 }])];
+    const { container } = render(
+      <OeeOverTimeChart
+        samples={samples}
+        stationLabels={["Capper"]}
+        bottleneckStationIdx={0}
+        horizonMs={1_000}
+        warmupMs={0}
+      />,
+    );
+    expect(findLegendButton("Hide Blocked")).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/BlockedOut/);
+  });
+
+  it("hides a state's path when its legend chip is toggled off (VROL-791)", () => {
+    const samples = [
+      sample(0, [{ Running: 0, Idle: 0 }]),
+      sample(1_000, [{ Running: 600, Idle: 400 }]),
+    ];
+    const { container } = render(
+      <OeeOverTimeChart
+        samples={samples}
+        stationLabels={["Capper"]}
+        bottleneckStationIdx={0}
+        horizonMs={1_000}
+        warmupMs={0}
+      />,
+    );
+    expect(container.querySelectorAll("svg path")).toHaveLength(7);
+    fireEvent.click(findLegendButton("Hide Running"));
+    expect(container.querySelectorAll("svg path")).toHaveLength(6);
+    // Clicking the same chip again restores the path.
+    fireEvent.click(findLegendButton("Show Running"));
+    expect(container.querySelectorAll("svg path")).toHaveLength(7);
   });
 
   it("normalizes each interval so stacked fractions sum to 1.0 (visual sanity)", () => {
