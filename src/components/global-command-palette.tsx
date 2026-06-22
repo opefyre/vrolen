@@ -26,6 +26,7 @@ import {
 } from "react";
 
 import { CommandPalette, type CommandAction } from "@/components/canvas/command-palette";
+import { navigate } from "@/lib/spa-nav";
 
 interface CommandRegistry {
   /** Stable action source — newest registrant wins on id collision. */
@@ -64,8 +65,10 @@ export function useRegisterCommandActions(
 
 /** Baseline always-on actions — routing + a few global toggles. */
 function baselineActions(): CommandAction[] {
+  // VROL-829 — SPA nav via history.pushState. No more full reloads when
+  // jumping routes from the palette.
   const go = (path: string) => () => {
-    if (typeof window !== "undefined") window.location.href = path;
+    navigate(path);
   };
   return [
     {

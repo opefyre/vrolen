@@ -7,6 +7,7 @@
 import { Activity, Award, ExternalLink, Gauge, Layers, Timer, Wrench } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { navigate } from "@/lib/spa-nav";
 
 interface Term {
   readonly icon: typeof Gauge;
@@ -156,7 +157,16 @@ export default function HelpPage() {
 
       {/* VROL-754 — footer link back to the editor. */}
       <div className="text-muted-foreground flex items-center justify-end text-xs">
-        <a href="/editor" className="hover:text-foreground underline-offset-2 hover:underline">
+        <a
+          href="/editor"
+          onClick={(e) => {
+            if (e.defaultPrevented || e.button !== 0) return;
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            navigate("/editor");
+          }}
+          className="hover:text-foreground underline-offset-2 hover:underline"
+        >
           Back to /editor →
         </a>
       </div>

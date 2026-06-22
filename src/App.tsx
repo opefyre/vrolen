@@ -4,6 +4,7 @@ import { AppShell } from "@/components/AppShell";
 import { GlobalCommandPalette } from "@/components/global-command-palette";
 import { Toaster } from "@/components/Toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { usePathname } from "@/lib/spa-nav";
 import DemoPage from "@/routes/DemoPage";
 import DesignTokens from "@/routes/DesignTokens";
 import HelpPage from "@/routes/HelpPage";
@@ -28,7 +29,9 @@ function EditorFallback() {
 }
 
 export default function App() {
-  const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
+  // VROL-829 — pathname comes from the SPA-nav store so route changes via
+  // history.pushState (no full reload) re-render the page tree.
+  const pathname = usePathname();
   let page;
   if (pathname === "/design-tokens") page = <DesignTokens />;
   else if (pathname === "/help") page = <HelpPage />;

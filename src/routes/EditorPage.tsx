@@ -269,6 +269,7 @@ interface StationNodeData {
   maintenanceWindows?: { startMs: number; endMs: number }[];
   skills?: string[];
   setupDistribution?: Distribution;
+  cycleDistribution?: Distribution;
   changeoverMatrix?: Record<string, Record<string, Distribution>>;
   /** Cumulative-completed series injected by EditorPage when samples exist (VROL-614). */
   sparklineSeries?: number[];
@@ -276,6 +277,17 @@ interface StationNodeData {
   reworkTargetNodeId?: string;
   [key: string]: unknown;
 }
+
+/** VROL-776 — render a compact cycle-time mean: "~2.0 s" for >=1000 ms, else "~120 ms". */
+function formatCycleMean(ms: number): string {
+  if (ms >= 1000) {
+    return `~${(ms / 1000).toFixed(1)} s`;
+  }
+  return `~${Math.round(ms).toString()} ms`;
+}
+
+/** VROL-776 — station types where cycle-time has no meaning. */
+const CYCLE_TIME_HIDDEN_TYPES = new Set(["buffer", "input", "output"]);
 
 // VROL-631 — per-station-type accent: a Tailwind class pair for the icon
 // pill background and a subtle left border. Keeps types visually distinct
@@ -303,10 +315,6 @@ const STATION_TYPE_ACCENT: Record<string, { pill: string; border: string }> = {
   custom: { pill: "bg-muted text-muted-foreground", border: "border-l-muted-foreground/40" },
 };
 
-/** VROL-703 — dispatched when a user double-clicks a station label.
- *  EditorPage listens at the document level and opens an inline editor. */
-const NODE_LABEL_EDIT_EVENT = "vrolen-edit-label";
-
 function StationNode({ data, selected, id }: NodeProps) {
   const d = data as StationNodeData;
   const Icon = STATION_TYPE_ICON[d.stationType ?? "machine"] ?? Factory;
@@ -324,6 +332,15 @@ function StationNode({ data, selected, id }: NodeProps) {
       ? Object.keys(d.changeoverMatrix).length > 0
       : false;
   const hasRework = typeof d.reworkTargetNodeId === "string" && d.reworkTargetNodeId.length > 0;
+  // VROL-776 — compact cycle-time readout on the node face. Hidden for
+  // buffer / input / output (no meaningful cycle time) and when the mean
+  // resolves to 0 or the distribution isn't set.
+  const stationType = d.stationType ?? "machine";
+  const cycleMeanMs =
+    !CYCLE_TIME_HIDDEN_TYPES.has(stationType) && isDistribution(d.cycleDistribution)
+      ? meanOfDistribution(d.cycleDistribution)
+      : 0;
+  const showCycleMean = cycleMeanMs > 0;
   // VROL-274 — CustomStation explicit badge so the canvas surface always
   // tells the user "this is user-defined" without opening Inspector.
   const isCustom = d.stationType === "custom";
@@ -505,6 +522,16 @@ function StationNode({ data, selected, id }: NodeProps) {
           </div>
         )}
       </div>
+      {/* VROL-776 — cycle-time mean readout. Hidden when type is buffer /
+          input / output or when no distribution is configured. */}
+      {showCycleMean ? (
+        <div
+          className="text-muted-foreground mt-0.5 pl-9 font-mono text-[10px] tabular-nums"
+          title="Mean cycle time"
+        >
+          {formatCycleMean(cycleMeanMs)}
+        </div>
+      ) : null}
       {maintenanceCount +
         skillCount +
         (hasSetup ? 1 : 0) +
@@ -1105,28 +1132,6 @@ function EditorCanvas() {
     },
     [selectedNodeId, setNodes],
   );
-
-  // Double-click on a station label fires NODE_LABEL_EDIT_EVENT. Instead of
-  // a disruptive window.prompt, select the node so the Inspector opens, then
-  // focus + select the Label field in the next frame.
-  useEffect(() => {
-    const onEdit = (e: Event): void => {
-      const detail = (e as CustomEvent<{ nodeId: string; current: string }>).detail;
-      if (!detail) return;
-      setSelectedNodeId(detail.nodeId);
-      requestAnimationFrame(() => {
-        const el = document.getElementById("inspector-label");
-        if (el instanceof HTMLInputElement) {
-          el.focus();
-          el.select();
-        }
-      });
-    };
-    window.addEventListener(NODE_LABEL_EDIT_EVENT, onEdit);
-    return () => {
-      window.removeEventListener(NODE_LABEL_EDIT_EVENT, onEdit);
-    };
-  }, [setNodes]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -3103,14 +3108,9 @@ function EditorCanvas() {
           <span className="text-foreground/80 truncate text-sm font-semibold">
             {activeScenarioName ?? "Untitled scenario"}
           </span>
-          {/* Autosave indicator. localStorage writes are instant so the
-              chip stays steady — flashing was perceived as nervous UI. */}
-          <span
-            className="bg-muted text-muted-foreground rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-            aria-live="polite"
-          >
-            Saved
-          </span>
+          {/* VROL-774 — the static "Saved" chip was decorative noise (autosave
+              to localStorage never fails visibly). The "modified" chip below
+              is the meaningful state signal. */}
           {activeScenarioName && activeScenarioIsModified ? (
             <span
               className="bg-sim-setup/20 text-sim-setup-foreground rounded-full px-1.5 py-0.5 text-[10px] font-medium"
@@ -3463,11 +3463,15 @@ function EditorCanvas() {
               ) : null}
             </div>
           ) : null}
+          {/* VROL-774 — Run is the primary action in the top bar. Default
+              size + variant + a primary-tinted ring make it the obvious
+              call-to-action against the surrounding ghost / outline chrome. */}
           <Button
             onClick={handleRun}
             disabled={isRunning}
-            className="gap-2"
-            size="sm"
+            className="ring-primary/20 hover:ring-primary/40 gap-2 shadow-sm ring-2"
+            size="default"
+            variant="default"
             data-tour="run-button"
           >
             {isRunning ? (

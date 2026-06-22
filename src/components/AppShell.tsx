@@ -10,7 +10,7 @@ import {
   PanelLeftOpen,
   Play,
 } from "lucide-react";
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 
 import { KeyboardShortcutsOverlay } from "@/components/editor/keyboard-shortcuts";
 import { CommandPaletteHint } from "@/components/global-command-palette";
@@ -26,6 +26,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useOnlineStatus } from "@/lib/online-status";
 import { useSidebarCollapsed, toggleSidebar } from "@/lib/sidebar";
+import { navigate, usePathname } from "@/lib/spa-nav";
 
 interface NavItem {
   readonly href: string;
@@ -56,12 +57,31 @@ interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   const collapsed = useSidebarCollapsed();
-  const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
+  // VROL-829 — SPA nav. `usePathname()` re-renders the shell on route
+  // changes so the active highlight follows without a full reload.
+  const pathname = usePathname();
   const online = useOnlineStatus();
   // VROL-782 — mobile drawer state. Below the lg breakpoint the persistent
   // sidebar is hidden; this Sheet replaces it. Closes on nav-link click so
   // the user lands on the new page without an obscuring overlay.
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // VROL-829 — intercept anchor clicks to do SPA navigation. We KEEP the
+  // `href` attribute so the link is still right-clickable / cmd-click-able /
+  // copy-link-able and screen readers announce it as a link. Modifier
+  // clicks fall through to the browser's default behaviour (new tab etc.).
+  const handleNavClick = (
+    e: MouseEvent<HTMLAnchorElement>,
+    href: string,
+    afterNav?: () => void,
+  ): void => {
+    if (e.defaultPrevented) return;
+    if (e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    navigate(href);
+    if (afterNav) afterNav();
+  };
 
   // VROL-782 — grid template columns are driven by a CSS variable so the
   // responsive switch can happen in Tailwind (single column below `lg`,
@@ -138,7 +158,13 @@ export function AppShell({ children }: AppShellProps) {
           <Menu className="h-4 w-4" />
         </Button>
 
-        <a href="/" className="flex items-center gap-2">
+        <a
+          href="/"
+          onClick={(e) => {
+            handleNavClick(e, "/");
+          }}
+          className="flex items-center gap-2"
+        >
           <Factory className="text-primary h-5 w-5" />
           <span className="font-heading text-lg font-semibold tracking-tight">Vrolen</span>
         </a>
@@ -181,6 +207,9 @@ export function AppShell({ children }: AppShellProps) {
             <a
               key={item.href}
               href={item.href}
+              onClick={(e) => {
+                handleNavClick(e, item.href);
+              }}
               aria-current={active ? "page" : undefined}
               aria-label={item.shortcut ? `${item.label} (${item.shortcut})` : item.label}
               className={[
@@ -247,8 +276,10 @@ export function AppShell({ children }: AppShellProps) {
                   href={item.href}
                   aria-current={active ? "page" : undefined}
                   aria-label={item.shortcut ? `${item.label} (${item.shortcut})` : item.label}
-                  onClick={() => {
-                    setDrawerOpen(false);
+                  onClick={(e) => {
+                    handleNavClick(e, item.href, () => {
+                      setDrawerOpen(false);
+                    });
                   }}
                   className={[
                     "flex items-center justify-between gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",

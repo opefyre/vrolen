@@ -14,13 +14,14 @@ import { TopologyPreview } from "@/components/landing/topology-preview";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { PRESETS, setPendingPreset, type Preset } from "@/lib/presets";
+import { navigate } from "@/lib/spa-nav";
 
 const HERO_ID = "bottling-line";
 
 function loadInto(presetId: string): void {
-  if (typeof window === "undefined") return;
+  // VROL-829 — SPA nav so the editor's lazy chunk is reused (no full reload).
   setPendingPreset(presetId);
-  window.location.href = "/editor";
+  navigate("/editor");
 }
 
 function PresetRow({ preset }: { readonly preset: Preset }) {

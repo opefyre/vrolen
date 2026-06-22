@@ -16,6 +16,7 @@ import { commitDraft } from "@/components/wizard/commit-draft";
 import { WizardShell } from "@/components/wizard/wizard-shell";
 import type { WizardDraft } from "@/components/wizard/wizard-types";
 import { PRESETS, setPendingPreset } from "@/lib/presets";
+import { navigate } from "@/lib/spa-nav";
 import { setPendingWizardCommit } from "@/lib/wizard-handoff";
 import { clearWizardDraft, hasWizardDraft, loadWizardDraft } from "@/lib/wizard-draft-storage";
 import { TopologyPreview } from "@/components/landing/topology-preview";
@@ -191,9 +192,10 @@ export default function LandingPage() {
   };
   // VROL-816 — demo CTA autoruns the simulation. The pending-preset handoff
   // carries `autorun: true` so the editor fires its first run on mount.
+  // VROL-829 — SPA nav so the editor chunk loads in-place without a reload.
   const goToEditor = (presetId?: string, opts?: { autorun?: boolean }) => {
     if (presetId) setPendingPreset(presetId, opts);
-    if (typeof window !== "undefined") window.location.href = "/editor";
+    navigate("/editor");
   };
 
   return (
@@ -248,6 +250,12 @@ export default function LandingPage() {
           </Button>
           <a
             href="/templates"
+            onClick={(e) => {
+              if (e.defaultPrevented || e.button !== 0) return;
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+              e.preventDefault();
+              navigate("/templates");
+            }}
             className="text-muted-foreground hover:text-foreground text-sm underline-offset-4 hover:underline"
           >
             Browse 12 templates →
@@ -325,18 +333,31 @@ export default function LandingPage() {
       </section>
 
       <footer className="border-border text-muted-foreground flex flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t pt-6 text-xs">
-        <a href="/editor" className="hover:text-foreground">
-          Editor
-        </a>
-        <a href="/run" className="hover:text-foreground">
-          Run logs
-        </a>
-        <a href="/help" className="hover:text-foreground">
-          Help &amp; shortcuts
-        </a>
-        <a href="/design-tokens" className="hover:text-foreground">
-          Design tokens
-        </a>
+        {/* VROL-829 — footer links use SPA navigation. Modifier clicks fall
+            through so cmd-click-to-open-in-new-tab still works. External
+            links (github) keep the native anchor behaviour. */}
+        {(
+          [
+            { href: "/editor", label: "Editor" },
+            { href: "/run", label: "Run logs" },
+            { href: "/help", label: "Help & shortcuts" },
+            { href: "/design-tokens", label: "Design tokens" },
+          ] as const
+        ).map(({ href, label }) => (
+          <a
+            key={href}
+            href={href}
+            onClick={(e) => {
+              if (e.defaultPrevented || e.button !== 0) return;
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+              e.preventDefault();
+              navigate(href);
+            }}
+            className="hover:text-foreground"
+          >
+            {label}
+          </a>
+        ))}
         <a
           href="https://github.com/opefyre/vrolen"
           target="_blank"
@@ -361,7 +382,8 @@ export default function LandingPage() {
             settingsPatch: commit.settingsPatch,
             autorun: mode === "run",
           });
-          if (typeof window !== "undefined") window.location.href = "/editor";
+          // VROL-829 — SPA nav into the editor.
+          navigate("/editor");
         }}
       />
     </div>

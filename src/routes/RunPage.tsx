@@ -390,7 +390,17 @@ export default function RunPage() {
         <strong>Engine demo fixture.</strong> This page tweaks a hard-coded 3-station chain for
         engine-validation purposes. For real scenario authoring with a full DAG, the canvas,
         replications, cost layer, and verification panel, head to the{" "}
-        <a href="/editor" className="font-medium underline">
+        <a
+          href="/editor"
+          onClick={(e) => {
+            // VROL-829 — SPA nav so we don't full-reload back into the editor.
+            if (e.defaultPrevented || e.button !== 0) return;
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            navigate("/editor");
+          }}
+          className="font-medium underline"
+        >
           Editor
         </a>
         .
