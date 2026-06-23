@@ -44,7 +44,7 @@ import {
   CircleDot,
   Combine,
   ConciergeBell,
-  Dice5,
+  Sparkles,
   Download,
   AlertCircle,
   AlertTriangle,
@@ -3785,14 +3785,17 @@ function EditorCanvas() {
             )}
             {isRunning ? "Running" : "Run"}
           </Button>
-          {/* VROL-689 — re-roll the PRNG seed and immediately re-run. */}
+          {/* VROL-689 + VROL-892 — re-roll the PRNG seed and immediately
+              re-run. Reframed as "Try another draw" — non-technical users
+              don't care that there's a seed; they care that they can
+              shake the dice and see if the result holds up. */}
           <Button
             variant="outline"
             size="sm"
             disabled={isRunning}
             className="gap-2"
-            aria-label="Re-run with a new random seed"
-            title="Re-run with a fresh seed"
+            aria-label="Re-run with a new random draw"
+            title="Same setup, different random draw — useful for sanity-checking whether your result is robust or lucky"
             onClick={() => {
               const next = Math.floor(Math.random() * 1_000_000);
               setSettings((s) => ({ ...s, seed: next }));
@@ -3801,8 +3804,8 @@ function EditorCanvas() {
               }, 0);
             }}
           >
-            <Dice5 className="h-4 w-4" />
-            New seed
+            <Sparkles className="h-4 w-4" />
+            Try another draw
           </Button>
         </div>
       </div>
@@ -5928,24 +5931,6 @@ function EditorCanvas() {
                     setSettings((s) => ({ ...s, warmupMs: Math.floor(ms) }));
                   }}
                 />
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="rs-seed" className="text-muted-foreground text-xs font-medium">
-                    Seed
-                  </label>
-                  <Input
-                    id="rs-seed"
-                    type="number"
-                    min={0}
-                    value={settings.seed}
-                    onChange={(e) => {
-                      const n = Number(e.target.value);
-                      if (Number.isFinite(n)) {
-                        setSettings((s) => ({ ...s, seed: Math.floor(n) }));
-                      }
-                    }}
-                    className="font-mono tabular-nums"
-                  />
-                </div>
                 <NumberField
                   id="rs-buf"
                   label="Buffer capacity"
@@ -5958,26 +5943,119 @@ function EditorCanvas() {
                     }));
                   }}
                 />
-                <NumberField
-                  id="rs-reps"
-                  label="Replications"
-                  value={settings.replications}
-                  min={1}
-                  max={50}
-                  onChange={(n) => {
-                    setSettings((s) => ({
-                      ...s,
-                      replications: Math.max(1, Math.min(50, Math.floor(n))),
-                    }));
-                  }}
-                />
               </div>
-              {settings.replications > 1 ? (
-                <p className="text-muted-foreground -mt-1 text-xs">
-                  Each run uses a different seed. The Result panel adds a 95% CI table across
-                  replications. Canvas + playback show the first replication.
+              {/* VROL-892 — replace the raw Replications NumberField with
+                  a Quick / Reliable / Custom pill toggle. Non-technical
+                  users get a domain-friendly question ("how confident?")
+                  rather than a math knob. */}
+              <fieldset className="flex flex-col gap-1.5">
+                <legend className="text-muted-foreground mb-1 text-xs font-medium">
+                  How confident do you want the result to be?
+                </legend>
+                <div role="radiogroup" aria-label="Confidence" className="flex flex-wrap gap-1.5">
+                  {[
+                    { id: "quick", label: "Quick (1 run)", reps: 1 },
+                    { id: "reliable", label: "Reliable (30 runs)", reps: 30 },
+                  ].map((opt) => {
+                    const active = settings.replications === opt.reps;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => {
+                          setSettings((s) => ({ ...s, replications: opt.reps }));
+                        }}
+                        className={`border-border rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                          active
+                            ? "bg-sim-running/15 text-sim-running border-sim-running/30"
+                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <details className="text-muted-foreground -ml-1 text-[11px]">
+                  <summary className="hover:text-foreground cursor-pointer rounded px-1 py-0.5">
+                    Custom number of runs
+                  </summary>
+                  <div className="mt-1.5 pl-1">
+                    <NumberField
+                      id="rs-reps"
+                      label=""
+                      value={settings.replications}
+                      min={1}
+                      max={50}
+                      onChange={(n) => {
+                        setSettings((s) => ({
+                          ...s,
+                          replications: Math.max(1, Math.min(50, Math.floor(n))),
+                        }));
+                      }}
+                    />
+                  </div>
+                </details>
+                <p className="text-muted-foreground text-[11px]">
+                  {settings.replications === 1
+                    ? "One simulation run. Fast but doesn't tell you whether the result is robust or lucky."
+                    : `${String(settings.replications)} simulation runs averaged. Result panel adds 95% confidence intervals; canvas + playback show the first run.`}
                 </p>
-              ) : null}
+              </fieldset>
+              {/* VROL-892 — the raw Seed integer moves behind an Advanced
+                  disclosure. Each run is reproducible without any user
+                  action; researchers can still grab/set the exact seed
+                  from here. */}
+              <details className="border-border bg-background/40 rounded-md border p-2 text-xs">
+                <summary className="text-muted-foreground hover:text-foreground cursor-pointer font-medium">
+                  Advanced (researchers only)
+                </summary>
+                <div className="mt-2 space-y-2">
+                  <p className="text-muted-foreground text-[11px]">
+                    The random seed controls every stochastic decision in the engine — same seed,
+                    same numbers. Each scenario gets a fresh seed automatically. Use the toolbar
+                    "Try another draw" to roll a new one without opening this section.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <label
+                        htmlFor="rs-seed"
+                        className="text-muted-foreground text-[11px] font-medium"
+                      >
+                        Random seed
+                      </label>
+                      <Input
+                        id="rs-seed"
+                        type="number"
+                        min={0}
+                        value={settings.seed}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (Number.isFinite(n)) {
+                            setSettings((s) => ({ ...s, seed: Math.floor(n) }));
+                          }
+                        }}
+                        className="font-mono tabular-nums"
+                      />
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      className="mt-4 gap-1"
+                      onClick={() => {
+                        const next = Math.floor(Math.random() * 1_000_000);
+                        setSettings((s) => ({ ...s, seed: next }));
+                      }}
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      Regenerate
+                    </Button>
+                  </div>
+                </div>
+              </details>
               <div className="border-border space-y-1 rounded-md border border-dashed p-2">
                 <label className="flex items-center gap-2 text-sm font-medium">
                   <input
