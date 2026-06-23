@@ -1171,6 +1171,72 @@ describe("audit VROL-899/900 — nominalCycleTimeMs + composite ranking", () => 
     expect(result.perStationMaintenanceMs?.[0] ?? 0).toBeGreaterThan(0);
   });
 
+  it("VROL-916 — cipEveryMs schedules recurring Maintenance windows at run time", () => {
+    // 60s horizon, CIP every 20s for 5s each → ~3 cleaning cycles ≈ 15s Maintenance.
+    const result = runChain({
+      topology: {
+        nodes: [
+          {
+            id: "press",
+            label: "Press",
+            cycleTimeMs: constant(100),
+            cipEveryMs: 20_000,
+            cipDurationMs: 5_000,
+          },
+        ],
+        edges: [],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // First CIP at t=20s, second at t=40s; t=60s == horizon so the third
+    // drop-fires-but-out-of-horizon. 2 × 5s = 10s Maintenance.
+    expect(result.perStationMaintenanceMs?.[0] ?? 0).toBeGreaterThanOrEqual(8_000);
+  });
+
+  it("VROL-919 — randomEvents fire at run time and increment perStationRandomEvents", () => {
+    // Short meanInterval guarantees multiple firings over a 60s horizon.
+    const result = runChain({
+      topology: {
+        nodes: [
+          {
+            id: "s",
+            cycleTimeMs: constant(100),
+            randomEvents: [{ type: "power-dip", meanIntervalMs: 5_000, durationMs: 500 }],
+          },
+        ],
+        edges: [],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    expect(result.perStationRandomEvents[0]).toBeGreaterThan(2);
+  });
+
+  it("VROL-873 — tankCapacityL takes precedence as the edge buffer cap", () => {
+    // tankCapacityL=3 caps the sink-edge buffer at 3 (1 L ≈ 1 part), so
+    // throughput stays roughly the sink's cycle and upstream blocks more.
+    const tank = runChain({
+      topology: {
+        nodes: [
+          { id: "src", cycleTimeMs: constant(50) },
+          { id: "snk", cycleTimeMs: constant(100) },
+        ],
+        edges: [{ source: "src", target: "snk", tankCapacityL: 3 }],
+      },
+      interStationBufferCapacity: 50,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // Source completed << 100 (would have been ~100 with the 50-part default).
+    expect(tank.perStationCompleted[0] ?? 0).toBeLessThan(70);
+  });
+
   it("VROL-883 — kanbanCap on settings caps the sink edge buffer + back-pressures", () => {
     // Without kanbanCap, A→B at 50ms cycles for 10s = ~200 parts.
     const baseline = runChain({

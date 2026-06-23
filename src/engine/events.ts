@@ -60,7 +60,17 @@ export type EngineEvent =
    * window has closed. Not tied to any single station/worker — workers
    * become re-available implicitly via WorkerPool.isOnBreak's time check.
    */
-  | { readonly kind: "break-end" };
+  | { readonly kind: "break-end" }
+  // VROL-916 — CIP recurring fire. Dispatched per-station: transitions
+  // state to Maintenance, schedules maintenance-end after cipDurationMs,
+  // and re-schedules the NEXT cip-fire one cipEveryMs later.
+  | { readonly kind: "cip-fire"; readonly stationId: StationId }
+  // VROL-919 — random event fire. eventIdx selects which entry in the
+  // station's randomEvents array fired; the dispatcher uses it to look up
+  // the durationMs + next exponential gap. Station goes Down for that
+  // duration; random-event-end re-arms the executor.
+  | { readonly kind: "random-event-fire"; readonly stationId: StationId; readonly eventIdx: number }
+  | { readonly kind: "random-event-end"; readonly stationId: StationId };
 
 // Future event kinds (added in their own stories):
 //   - "shift-start" / "shift-end"                   (VROL-133)

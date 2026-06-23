@@ -568,6 +568,17 @@ export interface ChainTopologyEdge {
    * on ChainResult). Models pharma / food / cosmetics expiration.
    */
   readonly shelfLifeMs?: number;
+  /**
+   * VROL-873 — tank-as-buffer. When set, this edge is a fluid tank with
+   * capacity expressed in litres (rather than the default count of parts).
+   * Engine treats 1 part ≈ 1 L for minimum-viable continuous-flow modelling:
+   * the underlying buffer's capacity becomes floor(tankCapacityL), and the
+   * downstream station's cycle controls the drain cadence. Models bottling
+   * tanks, dairy holding tanks, brewing kettles. Full continuous-flow
+   * accounting (fractional litres, drain rate independent of cycle) is a
+   * follow-up that needs a buffer-rate primitive.
+   */
+  readonly tankCapacityL?: number;
 }
 
 export interface ChainTopology {
@@ -725,6 +736,12 @@ interface NormalizedTopology {
   bundleSizes: (number | undefined)[];
   /** VROL-875 — per-edge shelf life (ms). undefined = no expiry. */
   shelfLifeMs: (number | undefined)[];
+  /**
+   * VROL-873 — per-edge tank capacity in litres. undefined = discrete edge
+   * (parts-count). When set, the edge's buffer capacity is floor(tankCapacityL)
+   * (1 L ≈ 1 part minimum-viable continuous-flow modelling).
+   */
+  tankCapacityL: (number | undefined)[];
   /** Edges in input order; each carries source + target as node-array indices. */
   edges: { sourceIdx: number; targetIdx: number }[];
   /** For each node index: the indices of nodes it sends parts to. */
@@ -1010,6 +1027,19 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
         }
         return ms;
       }),
+      // VROL-873 — tank capacity in litres. Validated > 0; the harness
+      // applies floor() when sizing the edge buffer so fractional litres
+      // round down (safer than rounding up at boundary).
+      tankCapacityL: edges.map((e) => {
+        const l = e.tankCapacityL;
+        if (l === undefined) return undefined;
+        if (!Number.isFinite(l) || l <= 0) {
+          throw new Error(
+            `topology: edge ${e.source} → ${e.target} tankCapacityL must be > 0 (got ${String(l)})`,
+          );
+        }
+        return l;
+      }),
       edges: normalizedEdges,
       outgoing,
       incoming,
@@ -1057,6 +1087,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     perStationRecipes: Array.from({ length: n }, () => undefined),
     bundleSizes: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
     shelfLifeMs: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
+    tankCapacityL: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
     edges,
     outgoing,
     incoming,
@@ -1173,13 +1204,15 @@ function* simulationStream(
     : undefined;
 
   // Maintenance — one manager per station that has at least one window OR
-  // has a cycle-count PM trigger configured. The shadow manager (empty
-  // windows) handles state machine transitions when the cycle-count trigger
-  // (VROL-877) fires a maintenance-start/-end pair below.
+  // a cycle-count PM trigger (VROL-877) OR a CIP recurring trigger (VROL-916).
+  // The shadow manager (empty windows) handles state machine transitions
+  // when those triggers fire a maintenance-start/-end pair via the
+  // dispatcher.
   const maintenanceManagers: (MaintenanceManager | undefined)[] = stationIds.map((id, i) => {
     const windows = opts.maintenance?.perStationWindows.get(i);
     const hasCyclePm = topology.pmEveryNCycles[i] !== undefined;
-    if ((!windows || windows.length === 0) && !hasCyclePm) return undefined;
+    const hasCip = topology.cipEveryMs[i] !== undefined;
+    if ((!windows || windows.length === 0) && !hasCyclePm && !hasCip) return undefined;
     return new MaintenanceManager(
       id,
       windows ?? [],
@@ -1216,7 +1249,13 @@ function* simulationStream(
   // default. Back-pressures the rest of the chain via existing buffer-full
   // mechanics; no special engine path needed beyond a smaller buffer.
   const kanbanCap = opts.kanbanCap;
-  const edgeBuffers: CountingTrackedBuffer<TrackedPart>[] = topology.edges.map((edge) => {
+  // VROL-873 — tank-as-buffer takes the highest precedence; otherwise the
+  // sink-feeding edge respects kanbanCap; otherwise the default applies.
+  const edgeBuffers: CountingTrackedBuffer<TrackedPart>[] = topology.edges.map((edge, idx) => {
+    const tankL = topology.tankCapacityL[idx];
+    if (tankL && tankL > 0) {
+      return new CountingTrackedBuffer<TrackedPart>(Math.max(1, Math.floor(tankL)));
+    }
     const feedsSink = edge.targetIdx === topology.sinkIdx;
     const cap =
       feedsSink && kanbanCap && kanbanCap > 0 ? kanbanCap : opts.interStationBufferCapacity;
@@ -1573,13 +1612,39 @@ function* simulationStream(
     });
   }
 
-  // VROL-876 / VROL-891 — engine semantics for CIP recurring cleaning and
-  // random-event scheduling require new event kinds in the scheduler
-  // dispatcher. This sprint ships the topology fields, validation, and
-  // counters on ChainResult so users can configure them via JSON / Inspector;
-  // the run-time scheduling is a follow-up that needs scheduler events,
-  // state-machine transitions, and OEE attribution. Marked clearly in the
-  // ticket close-out — see VROL-876 / VROL-891 in Jira.
+  // VROL-919 — perStationRandomEventCounts initialised here so the
+  // dispatcher branches (defined above) can refer to it via closure.
+  const perStationRandomEventCounts = new Array<number>(n).fill(0);
+
+  // VROL-916 — initial CIP scheduling. First fire at t = cipEveryMs; each
+  // fire re-schedules the next from the dispatcher. Past-horizon scheduling
+  // is benign — the main loop terminates by horizon and ignores events
+  // queued beyond it.
+  for (let i = 0; i < n; i++) {
+    const period = topology.cipEveryMs[i];
+    if (!period || period >= opts.horizonMs) continue;
+    scheduler.schedule(period, { kind: "cip-fire", stationId: stationIds[i] as StationId });
+  }
+
+  // VROL-919 — initial random-event scheduling. Each event source draws
+  // its first firing from an exponential gap.
+  for (let i = 0; i < n; i++) {
+    const events = topology.randomEvents[i] ?? [];
+    if (events.length === 0) continue;
+    const stationId = stationIds[i] as StationId;
+    events.forEach((ev, evIdx) => {
+      const u = opts.prng.nextFloat();
+      const gap = -Math.log(Math.max(1e-12, 1 - u)) * ev.meanIntervalMs;
+      const firstAt = Math.max(1, Math.round(gap));
+      if (firstAt < opts.horizonMs) {
+        scheduler.schedule(firstAt, {
+          kind: "random-event-fire",
+          stationId,
+          eventIdx: evIdx,
+        });
+      }
+    });
+  }
 
   // After the source station finishes a cycle, refill the input BEFORE its
   // attemptStart tries to pull. (notifyCompletion runs before attemptStart
@@ -1828,6 +1893,84 @@ function* simulationStream(
         executors[sidx]?.handleSetupComplete(ev.timeMs);
         break dispatch;
       }
+      // VROL-916 — CIP recurring. Fires the cleaning window + reschedules
+      // the next CIP one cipEveryMs later. Skipped (no transition, but next
+      // still scheduled) when station is already Down or Maintenance — the
+      // calendar PM / cycle-count PM / breakdown takes precedence.
+      if (ev.payload.kind === "cip-fire") {
+        const cidx = stationIds.indexOf(ev.payload.stationId);
+        const ex = executors[cidx];
+        const period = topology.cipEveryMs[cidx];
+        const duration = topology.cipDurationMs[cidx];
+        const sm = stateMachines[cidx];
+        if (ex && period && duration && sm) {
+          const state = sm.state;
+          if (state !== "Down" && state !== "Maintenance") {
+            sm.transition("Maintenance", "cip-cleaning", ev.timeMs);
+            ex.handleBreakdown(ev.timeMs);
+            scheduler.schedule(ev.timeMs + duration, {
+              kind: "maintenance-end",
+              stationId: ev.payload.stationId,
+            });
+          }
+          const nextAt = ev.timeMs + period;
+          if (nextAt < opts.horizonMs) {
+            scheduler.schedule(nextAt, { kind: "cip-fire", stationId: ev.payload.stationId });
+          }
+        }
+        break dispatch;
+      }
+      // VROL-919 — random event fire. Pauses the station for the event's
+      // durationMs, then schedules its own random-event-end. The next
+      // exponential gap is drawn at end-time so events don't pile up.
+      if (ev.payload.kind === "random-event-fire") {
+        const ridx = stationIds.indexOf(ev.payload.stationId);
+        const ex = executors[ridx];
+        const sm = stateMachines[ridx];
+        const events = topology.randomEvents[ridx] ?? [];
+        const evCfg = events[ev.payload.eventIdx];
+        if (ex && sm && evCfg) {
+          const state = sm.state;
+          if (state !== "Down" && state !== "Maintenance") {
+            sm.transition("Down", "random-event", ev.timeMs);
+            ex.handleBreakdown(ev.timeMs);
+            scheduler.schedule(ev.timeMs + evCfg.durationMs, {
+              kind: "random-event-end",
+              stationId: ev.payload.stationId,
+            });
+            if (perStationRandomEventCounts) {
+              perStationRandomEventCounts[ridx] = (perStationRandomEventCounts[ridx] ?? 0) + 1;
+            }
+          }
+          // Always schedule the next gap so the cadence keeps even when this
+          // firing was skipped.
+          const u = opts.prng.nextFloat();
+          const gap = -Math.log(Math.max(1e-12, 1 - u)) * evCfg.meanIntervalMs;
+          const nextAt = ev.timeMs + evCfg.durationMs + Math.max(1, Math.round(gap));
+          if (nextAt < opts.horizonMs) {
+            scheduler.schedule(nextAt, {
+              kind: "random-event-fire",
+              stationId: ev.payload.stationId,
+              eventIdx: ev.payload.eventIdx,
+            });
+          }
+        }
+        break dispatch;
+      }
+      if (ev.payload.kind === "random-event-end") {
+        const ridx = stationIds.indexOf(ev.payload.stationId);
+        const ex = executors[ridx];
+        const sm = stateMachines[ridx];
+        if (ex && sm && sm.state === "Down") {
+          // Use the same repair pathway calendar PM uses; transitions Down →
+          // Idle and resumes paused parts. Reuses Down because random events
+          // are unplanned, mirrors the breakdown semantic.
+          sm.transition("Idle", "random-event-end", ev.timeMs);
+          ex.handleRepair(ev.timeMs);
+          ex.attemptStart(ev.timeMs);
+        }
+        break dispatch;
+      }
       if (ev.payload.kind !== "cycle-complete") break dispatch;
       const idx = stationIds.indexOf(ev.payload.stationId);
       if (idx === -1) break dispatch;
@@ -2067,11 +2210,13 @@ function* simulationStream(
     ...(materialFinal ? { materialFinal, replenishmentsFired } : {}),
     ...(sourceMode ? { sourceArrivalsFired } : {}),
     ...(breakdownCounts ? { perStationBreakdowns: breakdownCounts } : {}),
-    // VROL-877 — expose perStationMaintenanceMs whenever ANY station could
-    // enter Maintenance (calendar windows OR cycle-count PM), so the cycle-
-    // count audit tests can read the bucket without depending on a calendar
-    // config being present too.
-    ...(opts.maintenance || topology.pmEveryNCycles.some((n) => n !== undefined)
+    // VROL-877 / VROL-916 — expose perStationMaintenanceMs whenever ANY
+    // station could enter Maintenance (calendar windows, cycle-count PM, or
+    // CIP recurring) so the audit tests can read the bucket without
+    // depending on a calendar config being present.
+    ...(opts.maintenance ||
+    topology.pmEveryNCycles.some((n) => n !== undefined) ||
+    topology.cipEveryMs.some((n) => n !== undefined)
       ? {
           perStationMaintenanceMs: stateTimeTrackers.map((t) => t.timeInState("Maintenance")),
         }
@@ -2094,8 +2239,8 @@ function* simulationStream(
     // VROL-875 — shelf-life scrap. Zero today; full impl needs per-part
     // bufferEntryMs tracking + an expiry check on pull.
     perEdgeShelfLifeScrap: edgeBuffers.map(() => 0),
-    // VROL-891 — random event counts. Zero today; full impl needs scheduler
-    // event kinds for random-event-fire / random-event-end.
-    perStationRandomEvents: executors.map(() => 0),
+    // VROL-919 — real per-station random-event counts, incremented in the
+    // random-event-fire dispatcher when the event actually pauses the station.
+    perStationRandomEvents: [...perStationRandomEventCounts],
   };
 }
