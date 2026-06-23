@@ -25,6 +25,14 @@ export default defineConfig({
       },
     },
   },
+  // VROL-187 — the render worker imports pixi.js, which produces a
+  // code-split worker bundle. Rollup rejects IIFE / UMD formats for
+  // multi-chunk workers; ES is the only format that survives. Modern
+  // browsers (Chrome 80+, Firefox 114+, Safari 15+) all support module
+  // workers, which covers the same baseline as the rest of the app.
+  worker: {
+    format: "es",
+  },
   server: {
     port: 5173,
     strictPort: false,
