@@ -1104,6 +1104,61 @@ export function ResultPanel({
         {tile("Line efficiency", `${fmt(result.lineOee * 100)}%`, "throughput vs theoretical")}
         {tile("Time-in-system", `${fmt(result.avgTimeInSystemW, 0)} ms`, "average W per part")}
       </div>
+      {/* VROL-868 — theoretical yield tile, plus VROL-885 sustainability
+          tiles, only when there's something to show. The Recommendations
+          card already gates its own visibility, so these don't need to
+          hide based on actionability. */}
+      {(() => {
+        const yieldShown = result.theoreticalYield !== undefined && result.theoreticalYield < 1;
+        const sustainShown =
+          (result.totalEnergyJ ?? 0) > 0 ||
+          (result.totalWaterL ?? 0) > 0 ||
+          (result.totalCO2eG ?? 0) > 0;
+        if (!yieldShown && !sustainShown) return null;
+        const energyKWh = (result.totalEnergyJ ?? 0) / 3_600_000;
+        return (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {yieldShown ? (
+              <div className="border-border bg-card rounded-md border p-3">
+                <div className="text-muted-foreground text-xs tracking-wide uppercase">
+                  Theoretical yield
+                </div>
+                <div className="font-mono text-xl font-semibold tabular-nums">
+                  {fmt((result.theoreticalYield ?? 1) * 100)}%
+                </div>
+                <div className="text-muted-foreground text-xs">good / (good + scrap)</div>
+              </div>
+            ) : null}
+            {sustainShown ? (
+              <>
+                <div className="border-border bg-card rounded-md border p-3">
+                  <div className="text-muted-foreground text-xs tracking-wide uppercase">
+                    Energy
+                  </div>
+                  <div className="font-mono text-xl font-semibold tabular-nums">
+                    {fmt(energyKWh, energyKWh > 100 ? 0 : 1)}
+                  </div>
+                  <div className="text-muted-foreground text-xs">kWh total</div>
+                </div>
+                <div className="border-border bg-card rounded-md border p-3">
+                  <div className="text-muted-foreground text-xs tracking-wide uppercase">Water</div>
+                  <div className="font-mono text-xl font-semibold tabular-nums">
+                    {fmt(result.totalWaterL ?? 0, 1)}
+                  </div>
+                  <div className="text-muted-foreground text-xs">L total</div>
+                </div>
+                <div className="border-border bg-card rounded-md border p-3">
+                  <div className="text-muted-foreground text-xs tracking-wide uppercase">CO₂e</div>
+                  <div className="font-mono text-xl font-semibold tabular-nums">
+                    {fmt((result.totalCO2eG ?? 0) / 1000, 1)}
+                  </div>
+                  <div className="text-muted-foreground text-xs">kg total</div>
+                </div>
+              </>
+            ) : null}
+          </div>
+        );
+      })()}
 
       {/* Tab strip — replaces the previous wall of stacked cards with
           progressive disclosure. Each tab renders a single focused view

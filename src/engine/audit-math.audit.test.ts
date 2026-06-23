@@ -1044,6 +1044,109 @@ describe("audit VROL-899/900 — nominalCycleTimeMs + composite ranking", () => 
     }
   });
 
+  it("VROL-870 — unitsPerCycle > 1 inflates completed counts by N", () => {
+    // Baseline single-output station.
+    const baseline = runChain({
+      topology: {
+        nodes: [{ id: "base", label: "Single", cycleTimeMs: constant(100) }],
+        edges: [],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // Same line but unitsPerCycle = 3.
+    const multi = runChain({
+      topology: {
+        nodes: [
+          { id: "multi", label: "Multi-output", cycleTimeMs: constant(100), unitsPerCycle: 3 },
+        ],
+        edges: [],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // Same cycle count → ~3× more units recorded.
+    const baseCount = baseline.perStationCompleted[0] ?? 0;
+    const multiCount = multi.perStationCompleted[0] ?? 0;
+    expect(multiCount).toBeCloseTo(baseCount * 3, -1);
+  });
+
+  it("VROL-868 — theoreticalYield = good / (good + scrap)", () => {
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "good", label: "Filler", cycleTimeMs: constant(50), defectRate: 0 },
+          { id: "scrap", label: "Capper", cycleTimeMs: constant(50), defectRate: 0.2 },
+        ],
+        edges: [{ source: "good", target: "scrap" }],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // ~20% scrap rate at Capper → yield ~ 0.83 (1/(1+0.2)).
+    expect(result.theoreticalYield).toBeGreaterThan(0.7);
+    expect(result.theoreticalYield).toBeLessThan(0.95);
+  });
+
+  it("VROL-885 — sustainability totals accumulate across the run", () => {
+    const result = runChain({
+      topology: {
+        nodes: [
+          {
+            id: "s",
+            label: "Heavy",
+            cycleTimeMs: constant(100),
+            energyPerCycleJ: 1_000,
+            waterPerCycleL: 0.1,
+            co2ePerCycleG: 5,
+          },
+        ],
+        edges: [],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // 10s / 100ms = 100 cycles. Expect ~100,000 J, 10 L, 500 g.
+    expect(result.totalEnergyJ).toBeGreaterThan(50_000);
+    expect(result.totalWaterL).toBeGreaterThan(5);
+    expect(result.totalCO2eG).toBeGreaterThan(250);
+  });
+
+  it("VROL-882 — qualityGrades distribute completed counts proportionally", () => {
+    const result = runChain({
+      topology: {
+        nodes: [
+          {
+            id: "g",
+            label: "Inspect",
+            cycleTimeMs: constant(50),
+            qualityGrades: [
+              { grade: "A", pct: 0.7 },
+              { grade: "B", pct: 0.3 },
+            ],
+          },
+        ],
+        edges: [],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    const counts = result.perStationGradeCounts[0] ?? {};
+    const total = (counts.A ?? 0) + (counts.B ?? 0);
+    expect(total).toBe(result.perStationCompleted[0]);
+    expect(counts.A).toBeGreaterThan(counts.B);
+  });
+
   it("nominalCycleTimeMs >= operating mean is silently dropped (over-rated machine, not throttled)", () => {
     // Nominal 200ms but operating 100ms — operator over-rated the machine.
     // Engine should drop the nominal (treat as if undefined) and report

@@ -239,6 +239,29 @@ export interface ChainResult {
    */
   readonly lineReworkRate: number;
   /**
+   * VROL-868 — theoretical yield = good parts / (good parts + scrapped).
+   * The mass-balance KPI pharma + chemistry use. Always present (1.0 when
+   * the line had zero scrap).
+   */
+  readonly theoreticalYield: number;
+  /**
+   * VROL-885 — sustainability totals across the whole run, summed across
+   * stations. Each total is (sum over stations of perStationCompleted ×
+   * per-cycle input). All three default to 0 — the KPI tiles only render
+   * when at least one is non-zero.
+   */
+  readonly totalEnergyJ: number;
+  readonly totalWaterL: number;
+  readonly totalCO2eG: number;
+  /**
+   * VROL-882 — per-station completion counts split by quality grade.
+   * Index aligned with perStationCompleted. Sum of values per station
+   * equals perStationCompleted[i] (modulo rounding).
+   */
+  readonly perStationGradeCounts: ReadonlyArray<Readonly<Record<string, number>>>;
+  /** VROL-882 — line totals per grade (sum across stations of grade counts). */
+  readonly lineGradeCounts: Readonly<Record<string, number>>;
+  /**
    * Labor utilization — total worker-busy ms across the run, normalized by
    * (worker count × elapsed ms). Undefined when no workers config provided.
    * Caps at 1.0 (every worker busy every moment).
@@ -420,6 +443,31 @@ export interface ChainTopologyNode {
    * (Performance ≈ 1.0 for a deterministic station).
    */
   readonly nominalCycleTimeMs?: number;
+  /**
+   * Optional units produced per completed cycle (VROL-870). Default 1.
+   * When > 1, the station's completed counter advances by N per cycle —
+   * models PCB depanelizers, multi-cavity moulds, sheet-metal cutters,
+   * any "one cycle, N usable parts" station. Pushed as ONE downstream
+   * batch handle; the engine accounts for N units across all KPIs.
+   * Validated as a positive integer 1..1000 at build time.
+   */
+  readonly unitsPerCycle?: number;
+  /**
+   * VROL-885 — sustainability accounting. Energy joules / water litres /
+   * CO2-equivalent grams consumed per completed cycle. Multiplied by
+   * unitsPerCycle when emitting line totals. All optional; line KPIs only
+   * surface when at least one station declares non-zero values.
+   */
+  readonly energyPerCycleJ?: number;
+  readonly waterPerCycleL?: number;
+  readonly co2ePerCycleG?: number;
+  /**
+   * VROL-882 — per-station quality-grade weights. When set, completed
+   * (non-defective) parts are sampled against this distribution and
+   * counted per grade. Use {grade, pct} entries with pct summing to 1.0.
+   * Unknown entries default the station to {A: 1.0}.
+   */
+  readonly qualityGrades?: ReadonlyArray<{ readonly grade: string; readonly pct: number }>;
 }
 
 /**
@@ -526,6 +574,22 @@ interface NormalizedTopology {
    * stations report Performance < 1.0.
    */
   nominalCycleTimes: (number | undefined)[];
+  /**
+   * VROL-870 — per-station units produced per cycle (default 1). When > 1,
+   * one cycle produces N units, all accounted through the same downstream
+   * push (the part is the batch handle).
+   */
+  unitsPerCycle: number[];
+  /** VROL-885 — sustainability inputs in per-cycle units, default 0. */
+  energyPerCycleJ: number[];
+  waterPerCycleL: number[];
+  co2ePerCycleG: number[];
+  /**
+   * VROL-882 — per-station quality-grade weight vectors. Empty when not
+   * configured; the harness defaults the station to {A: 1.0} so legacy lines
+   * surface a single A-grade count.
+   */
+  qualityGrades: ReadonlyArray<{ readonly grade: string; readonly pct: number }>[];
   /** Edges in input order; each carries source + target as node-array indices. */
   edges: { sourceIdx: number; targetIdx: number }[];
   /** For each node index: the indices of nodes it sends parts to. */
@@ -627,6 +691,36 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       }
       return cap;
     });
+    // VROL-870 — units-per-cycle. Default 1. Validated as positive integer
+    // up to 1000 at build time so a typo can't make the throughput explode.
+    const unitsPerCycle: number[] = nodes.map((node) => {
+      const n = node.unitsPerCycle ?? 1;
+      if (!Number.isInteger(n) || n < 1 || n > 1000) {
+        throw new Error(
+          `topology: station "${node.id}" unitsPerCycle must be an integer between 1 and 1000 (got ${String(n)})`,
+        );
+      }
+      return n;
+    });
+    // VROL-885 — sustainability inputs. Default 0 (no-op) so existing
+    // scenarios are unaffected. Negative values clamp to 0 — no apology for
+    // refusing to model "negative water consumption."
+    const sustainNum = (raw: unknown): number =>
+      typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : 0;
+    const energyPerCycleJ = nodes.map((node) => sustainNum(node.energyPerCycleJ));
+    const waterPerCycleL = nodes.map((node) => sustainNum(node.waterPerCycleL));
+    const co2ePerCycleG = nodes.map((node) => sustainNum(node.co2ePerCycleG));
+    // VROL-882 — per-station grade weights. Normalize each vector to sum 1.0
+    // so a user typo (0.4 + 0.3 + 0.4 = 1.1) doesn't break the sampler.
+    // Empty / unset defaults to [{A: 1.0}].
+    const qualityGrades: ReadonlyArray<{ readonly grade: string; readonly pct: number }>[] =
+      nodes.map((node) => {
+        const raw = node.qualityGrades;
+        if (!raw || raw.length === 0) return [{ grade: "A", pct: 1 }];
+        const sum = raw.reduce((s, g) => s + Math.max(0, g.pct), 0);
+        if (sum <= 0) return [{ grade: "A", pct: 1 }];
+        return raw.map((g) => ({ grade: g.grade, pct: Math.max(0, g.pct) / sum }));
+      });
     // VROL-899 — nominal cycle is OPTIONAL. When set but >= operating cycle
     // mean, we silently drop it (a nominal slower than operating means the
     // operator over-rated the machine, not throttled it — clamping rather
@@ -654,6 +748,11 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       reworkPassLimits,
       capacities,
       nominalCycleTimes,
+      unitsPerCycle,
+      energyPerCycleJ,
+      waterPerCycleL,
+      co2ePerCycleG,
+      qualityGrades,
       edges: normalizedEdges,
       outgoing,
       incoming,
@@ -688,6 +787,11 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     reworkPassLimits: Array.from({ length: n }, () => undefined),
     capacities: Array.from({ length: n }, () => 1),
     nominalCycleTimes: Array.from({ length: n }, () => undefined),
+    unitsPerCycle: Array.from({ length: n }, () => 1),
+    energyPerCycleJ: Array.from({ length: n }, () => 0),
+    waterPerCycleL: Array.from({ length: n }, () => 0),
+    co2ePerCycleG: Array.from({ length: n }, () => 0),
+    qualityGrades: Array.from({ length: n }, () => [{ grade: "A", pct: 1 } as const]),
     edges,
     outgoing,
     incoming,
@@ -957,6 +1061,9 @@ function* simulationStream(
       cycleTimeMs: topology.cycleTimes[i] as Distribution,
       defectRate: topology.defectRates[i] ?? 0,
       capacity: topology.capacities[i] ?? 1,
+      // VROL-870 — multi-output station. unitsPerCycle defaults to 1 in
+      // normaliseTopology, so legacy lines are unaffected.
+      unitsPerCycle: topology.unitsPerCycle[i] ?? 1,
       upstream: upstreamFor(i),
       downstream: downstreamFor(i),
       ...(cycleTimeFor ? { cycleTimeFor } : {}),
@@ -1526,6 +1633,52 @@ function* simulationStream(
       const totalReworked = executors.reduce((s, e) => s + e.reworked, 0);
       const denom = totalCompleted + totalScrapped + totalReworked;
       return denom > 0 ? totalReworked / denom : 0;
+    })(),
+    // VROL-868 — theoretical yield. goodParts / (goodParts + scrapped).
+    // Excludes reworked from the denominator (rework is a recovery path,
+    // not a yield loss). Defaults to 1.0 when there's no scrap.
+    theoreticalYield: (() => {
+      const totalCompleted = executors.reduce((s, e) => s + e.completed, 0);
+      const totalScrapped = executors.reduce((s, e) => s + e.scrapped, 0);
+      const denom = totalCompleted + totalScrapped;
+      return denom > 0 ? totalCompleted / denom : 1;
+    })(),
+    // VROL-885 — sustainability totals. Each station's per-cycle input ×
+    // (completed / unitsPerCycle) since "completed" already accounts for
+    // the multi-output multiplier. Cycles ran = completed / unitsPerCycle.
+    totalEnergyJ: executors.reduce((s, e, i) => {
+      const cycles = e.completed / (topology.unitsPerCycle[i] ?? 1);
+      return s + cycles * (topology.energyPerCycleJ[i] ?? 0);
+    }, 0),
+    totalWaterL: executors.reduce((s, e, i) => {
+      const cycles = e.completed / (topology.unitsPerCycle[i] ?? 1);
+      return s + cycles * (topology.waterPerCycleL[i] ?? 0);
+    }, 0),
+    totalCO2eG: executors.reduce((s, e, i) => {
+      const cycles = e.completed / (topology.unitsPerCycle[i] ?? 1);
+      return s + cycles * (topology.co2ePerCycleG[i] ?? 0);
+    }, 0),
+    // VROL-882 — per-station grade counts. Multinomial expectation: each
+    // station's completed × pct(grade). The engine doesn't sample per part
+    // for grades — it bulk-attributes the count proportionally at finalize
+    // time. Trades per-part variance for runtime perf (one walk over
+    // stations × grades vs N×G sampler calls).
+    perStationGradeCounts: executors.map((e, i) => {
+      const grades = topology.qualityGrades[i] ?? [{ grade: "A", pct: 1 }];
+      const out: Record<string, number> = {};
+      for (const g of grades) out[g.grade] = Math.round(e.completed * g.pct);
+      return out;
+    }),
+    lineGradeCounts: (() => {
+      const out: Record<string, number> = {};
+      executors.forEach((e, i) => {
+        const grades = topology.qualityGrades[i] ?? [{ grade: "A", pct: 1 }];
+        for (const g of grades) {
+          const count = Math.round(e.completed * g.pct);
+          out[g.grade] = (out[g.grade] ?? 0) + count;
+        }
+      });
+      return out;
     })(),
     samples,
     ...(materialFinal ? { materialFinal, replenishmentsFired } : {}),

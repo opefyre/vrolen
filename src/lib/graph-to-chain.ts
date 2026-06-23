@@ -121,6 +121,40 @@ function capacityOf(node: Node): number | undefined {
   return n;
 }
 
+function nonNegNumOf(node: Node, key: string): number | undefined {
+  const raw = (node.data as Record<string, unknown> | undefined)?.[key];
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return undefined;
+  return raw;
+}
+
+function qualityGradesOf(
+  node: Node,
+): ReadonlyArray<{ readonly grade: string; readonly pct: number }> | undefined {
+  // VROL-882 — qualityGrades is an array of { grade, pct }. Defaults to
+  // undefined (single A grade) when missing or malformed.
+  const raw = (node.data as { qualityGrades?: unknown } | undefined)?.qualityGrades;
+  if (!Array.isArray(raw)) return undefined;
+  const out: { grade: string; pct: number }[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as { grade?: unknown; pct?: unknown };
+    if (typeof e.grade !== "string" || e.grade.length === 0) continue;
+    if (typeof e.pct !== "number" || !Number.isFinite(e.pct) || e.pct <= 0) continue;
+    out.push({ grade: e.grade, pct: e.pct });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+function unitsPerCycleOf(node: Node): number | undefined {
+  // VROL-870 — multi-output station. Drop default 1 to keep topology clean.
+  const raw = (node.data as { unitsPerCycle?: unknown } | undefined)?.unitsPerCycle;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  const n = Math.floor(raw);
+  if (n < 1 || n > 1000) return undefined;
+  if (n === 1) return undefined;
+  return n;
+}
+
 function nominalCycleTimeMsOf(node: Node): number | undefined {
   // VROL-899 — read the OEM-rated design max if the user set one. Engine
   // drops it silently when >= operating mean (over-rated → no throttle).
@@ -316,6 +350,11 @@ export function graphToChainOptions(
         const reworkPassLimit = reworkTargetId ? reworkPassLimitOf(node) : undefined;
         const capacity = capacityOf(node);
         const nominalCycleTimeMs = nominalCycleTimeMsOf(node);
+        const unitsPerCycle = unitsPerCycleOf(node);
+        const energyPerCycleJ = nonNegNumOf(node, "energyPerCycleJ");
+        const waterPerCycleL = nonNegNumOf(node, "waterPerCycleL");
+        const co2ePerCycleG = nonNegNumOf(node, "co2ePerCycleG");
+        const qualityGrades = qualityGradesOf(node);
         return {
           id,
           label: labelOf(node),
@@ -328,6 +367,11 @@ export function graphToChainOptions(
           ...(reworkPassLimit !== undefined ? { reworkPassLimit } : {}),
           ...(capacity !== undefined ? { capacity } : {}),
           ...(nominalCycleTimeMs !== undefined ? { nominalCycleTimeMs } : {}),
+          ...(unitsPerCycle !== undefined ? { unitsPerCycle } : {}),
+          ...(energyPerCycleJ !== undefined ? { energyPerCycleJ } : {}),
+          ...(waterPerCycleL !== undefined ? { waterPerCycleL } : {}),
+          ...(co2ePerCycleG !== undefined ? { co2ePerCycleG } : {}),
+          ...(qualityGrades ? { qualityGrades } : {}),
         };
       });
       const topoEdges: ChainTopologyEdge[] = edges

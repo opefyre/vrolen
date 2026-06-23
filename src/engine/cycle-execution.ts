@@ -51,6 +51,15 @@ export interface CycleConfig<P> {
   readonly defectRate: number;
   /** Maximum number of simultaneously in-progress parts. */
   readonly capacity: number;
+  /**
+   * VROL-870 — units produced per completed cycle (default 1). When set > 1,
+   * the cycle still pushes ONE part to downstream (the batch handle), but
+   * the completed counter increments by `unitsPerCycle` and the KPIs
+   * downstream interpret it as N units of work. Models PCB depanelizers,
+   * multi-cavity injection moulds, sheet-metal cutters, etc. Must be a
+   * positive integer; the topology validator clamps to 1..1000.
+   */
+  readonly unitsPerCycle?: number;
   readonly upstream: Buffer<P>;
   readonly downstream: Buffer<P>;
   /**
@@ -365,7 +374,8 @@ export class CycleExecutor<P> {
 
     const pushed = this.config.downstream.push(part);
     if (pushed) {
-      this.completed_ += 1;
+      // VROL-870 — multi-output station: one cycle ⇒ N units produced.
+      this.completed_ += this.config.unitsPerCycle ?? 1;
       this.notifyCompletion({ stationId: this.config.stationId, part, timeMs, defective: false });
       this.attemptStart(timeMs);
       return;
@@ -429,7 +439,9 @@ export class CycleExecutor<P> {
     while (this.pendingPush.length > 0 && !this.config.downstream.isFull) {
       const part = this.pendingPush.shift() as P;
       this.config.downstream.push(part);
-      this.completed_ += 1;
+      // VROL-870 — same N-units-per-cycle accounting applies on the
+      // pending-push drain path.
+      this.completed_ += this.config.unitsPerCycle ?? 1;
       this.notifyCompletion({ stationId: this.config.stationId, part, timeMs, defective: false });
     }
 
