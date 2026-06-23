@@ -3090,9 +3090,15 @@ function EditorCanvas() {
       const perHour = (flowed / result.elapsedMs) * 3_600_000;
       const label = `${perHour.toLocaleString("en-US", { maximumFractionDigits: 0 })}/h`;
       const edgeIdx = edgeIdxByKey.get(key);
+      // VROL-909 — when playback is active, clip the buffer-fill series to
+      // the sampler-time UP TO the playhead so the edge sparkline + peak label
+      // reflect "what's happened so far" rather than the whole-run series.
+      const playheadSampleIdx = playbackSnapshot?.sampleIdxAtT ?? -1;
+      const clipSeriesToPlayhead = playbackSnapshot !== null && playheadSampleIdx >= 0;
+      const sliceUpper = clipSeriesToPlayhead ? playheadSampleIdx + 1 : result.samples.length;
       const bufferFillSeries =
         hasSamples && edgeIdx !== undefined
-          ? result.samples.map((s) => s.perEdgeBufferFill[edgeIdx] ?? 0)
+          ? result.samples.slice(0, sliceUpper).map((s) => s.perEdgeBufferFill[edgeIdx] ?? 0)
           : undefined;
       // VROL-693 — peak fill summary appended to the edge label so users see
       // "throughput/h · peak N" on each edge once a run has data.
@@ -4012,7 +4018,7 @@ function EditorCanvas() {
           (or below the toolbar when no run has fired). Collapsed by
           default; expands to a 200-line buffer with severity + clock. */}
       <div className="-mx-6 px-3 pt-1 sm:px-6">
-        <RunConsole />
+        <RunConsole playheadTimeMs={playbackSnapshot?.tMs ?? null} />
       </div>
       <div
         className={`grid h-[calc(100vh-15rem)] gap-3 ${
@@ -5207,6 +5213,10 @@ function EditorCanvas() {
                 ...(label !== undefined ? { label } : {}),
               };
             })}
+            // VROL-908 — when playback is active, each chart slices its
+            // samples to [0..playheadIdx] so the curves fill in left-to-right
+            // as the scrubber advances. Null when paused / no playback.
+            playheadIdx={playbackSnapshot?.sampleIdxAtT ?? null}
           />
         </Suspense>
       ) : null}
@@ -6339,6 +6349,37 @@ function EditorCanvas() {
                     Only ~{String(Math.round(settings.horizonMs / settings.samplerIntervalMs))}{" "}
                     samples — chart will be coarse. Try a smaller interval.
                   </p>
+                ) : null}
+                {/* VROL-911 — playback-scrub-floor warning. < 60 samples means
+                    the playhead has fewer than one-per-frame keyframes to
+                    interpolate, so scrubbing through the run will feel chunky. */}
+                {settings.samplerIntervalMs > 0 &&
+                settings.horizonMs / settings.samplerIntervalMs < 60 ? (
+                  <div className="border-sim-setup/40 bg-sim-setup/5 mt-1 flex items-start gap-2 rounded-md border p-2 text-xs">
+                    <div className="space-y-1">
+                      <p className="text-foreground font-medium">
+                        Sampler too coarse — scrub will be choppy.
+                      </p>
+                      <p className="text-muted-foreground">
+                        Playback interpolates between samples. With only ~
+                        {String(Math.round(settings.horizonMs / settings.samplerIntervalMs))}{" "}
+                        samples over this horizon the scrubber will step instead of slide.
+                      </p>
+                      <button
+                        type="button"
+                        className="text-foreground hover:text-foreground underline-offset-2 hover:underline"
+                        onClick={() => {
+                          // Recommended floor: 600 samples across the horizon,
+                          // never below 100ms (engine perf floor).
+                          const recommended = Math.max(100, Math.floor(settings.horizonMs / 600));
+                          setSettings((s) => ({ ...s, samplerIntervalMs: recommended }));
+                        }}
+                      >
+                        Set to recommended ({" "}
+                        {Math.max(100, Math.floor(settings.horizonMs / 600)).toLocaleString()} ms )
+                      </button>
+                    </div>
+                  </div>
                 ) : null}
               </div>
             </section>

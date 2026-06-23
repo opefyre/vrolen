@@ -36,6 +36,13 @@ export interface RunConsoleEntry {
   readonly severity: RunConsoleSeverity;
   readonly message: string;
   readonly description?: string;
+  /**
+   * VROL-910 — optional simulated time the entry is associated with.
+   * When set, RunConsole hides the entry during playback while the
+   * playhead is BEFORE this time (the event "hasn't happened yet").
+   * Undefined entries always show — they're UI events, not sim events.
+   */
+  readonly simTimeMs?: number;
 }
 
 function stampClock(): string {
@@ -49,13 +56,19 @@ class RunConsoleStore {
   private entries: RunConsoleEntry[] = [];
   private listeners = new Set<() => void>();
 
-  log(severity: RunConsoleSeverity, message: string, description?: string): void {
+  log(
+    severity: RunConsoleSeverity,
+    message: string,
+    description?: string,
+    simTimeMs?: number,
+  ): void {
     const entry: RunConsoleEntry = {
       tMs: typeof performance !== "undefined" ? performance.now() : 0,
       clock: stampClock(),
       severity,
       message,
       ...(description ? { description } : {}),
+      ...(typeof simTimeMs === "number" ? { simTimeMs } : {}),
     };
     this.entries = [...this.entries, entry].slice(-MAX_ENTRIES);
     this.listeners.forEach((l) => {
@@ -89,8 +102,9 @@ export function logToRunConsole(
   severity: RunConsoleSeverity,
   message: string,
   description?: string,
+  simTimeMs?: number,
 ): void {
-  STORE.log(severity, message, description);
+  STORE.log(severity, message, description, simTimeMs);
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -118,10 +132,25 @@ function SeverityIcon({ severity }: { readonly severity: RunConsoleSeverity }) {
   }
 }
 
-export function RunConsole() {
-  const entries = useRunConsoleEntries();
+export function RunConsole({
+  playheadTimeMs,
+}: {
+  /** VROL-910 — when set, hides entries whose simTimeMs > playheadTimeMs.
+   *  Entries without simTimeMs always show (UI/metadata events). */
+  readonly playheadTimeMs?: number | null;
+} = {}) {
+  const allEntries = useRunConsoleEntries();
   const [expanded, setExpanded] = useState<boolean>(false);
   const listRef = useRef<HTMLDivElement | null>(null);
+  // VROL-910 — when a playhead is provided, hide sim-time-tagged entries
+  // whose time is ahead of the playhead. UI/metadata entries (no simTimeMs)
+  // pass through regardless so the "Run started" / "Simulation complete"
+  // chrome remains visible.
+  const entries =
+    typeof playheadTimeMs === "number"
+      ? allEntries.filter((e) => typeof e.simTimeMs !== "number" || e.simTimeMs <= playheadTimeMs)
+      : allEntries;
+  const hiddenCount = allEntries.length - entries.length;
 
   // Auto-scroll to the latest entry when expanded.
   useEffect(() => {
@@ -187,6 +216,15 @@ export function RunConsole() {
         <span className="text-muted-foreground font-mono text-[10px] tabular-nums">
           {entries.length}/{MAX_ENTRIES}
         </span>
+        {/* VROL-910 — small indicator when the console is filtering by playhead. */}
+        {typeof playheadTimeMs === "number" && hiddenCount > 0 ? (
+          <span
+            className="bg-sim-running/15 text-sim-running rounded-full px-1.5 py-0.5 font-mono text-[10px]"
+            title={`${String(hiddenCount)} entr${hiddenCount === 1 ? "y" : "ies"} hidden — playhead before their sim time`}
+          >
+            +{hiddenCount} after playhead
+          </span>
+        ) : null}
         {errorCount > 0 ? (
           <span
             className="bg-sim-down/15 text-sim-down-foreground rounded-full px-1.5 py-0.5 font-mono text-[10px]"

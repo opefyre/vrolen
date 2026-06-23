@@ -17,6 +17,8 @@ interface OeeOverTimeChartProps {
   readonly bottleneckStationIdx: number;
   readonly horizonMs: number;
   readonly warmupMs: number;
+  /** VROL-908 — clip rendered series to samples[0..playheadIdx] during playback. */
+  readonly playheadIdx?: number | null;
 }
 
 /**
@@ -62,12 +64,21 @@ const PAD_X = 4;
 const PAD_Y = 4;
 
 export function OeeOverTimeChart({
-  samples,
+  samples: rawSamples,
   stationLabels,
   bottleneckStationIdx,
   horizonMs,
   warmupMs,
+  playheadIdx,
 }: OeeOverTimeChartProps) {
+  // VROL-908 — clip to samples up to playhead during playback.
+  const samples = useMemo(
+    () =>
+      typeof playheadIdx === "number" && playheadIdx >= 0
+        ? rawSamples.slice(0, playheadIdx + 1)
+        : rawSamples,
+    [rawSamples, playheadIdx],
+  );
   // VROL-621 — local picker state, defaults to whatever the bottleneck is.
   // Re-syncs whenever a new run shifts the bottleneck. Pattern docs:
   // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes

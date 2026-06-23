@@ -20,7 +20,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import type { ChainResult, TimeseriesSample } from "@/engine";
 import { asMaterialId } from "@/engine";
@@ -114,6 +114,9 @@ interface ResultPanelProps {
   readonly mttrDistribution?: import("@/engine/distribution").Distribution;
   /** VROL-902 — per-edge buffer capacities + labels for buffer coverage. */
   readonly bufferEdges?: ReadonlyArray<import("@/lib/buffer-coverage").BufferCoverageInput>;
+  /** VROL-908 — when set (live playback), every chart clips its series to
+   *  samples[0..playheadIdx]. null/undefined renders the full series. */
+  readonly playheadIdx?: number | null;
 }
 
 /**
@@ -418,11 +421,12 @@ function ProductMixBody({ result }: { result: ChainResult }) {
  * as Sparkline + ThroughputChart so the bundle stays light.
  */
 function WarmupWelchSparkline({
-  samples,
+  samples: rawSamples,
   recommendedMs,
   currentMs,
   horizonMs,
   headerAction,
+  playheadIdx,
 }: {
   readonly samples: readonly TimeseriesSample[];
   readonly recommendedMs: number | null;
@@ -430,7 +434,17 @@ function WarmupWelchSparkline({
   readonly horizonMs: number;
   /** VROL-896 — slot for a small "View details" affordance. */
   readonly headerAction?: ReactNode;
+  /** VROL-908 — clip rendered series to samples[0..playheadIdx] during playback. */
+  readonly playheadIdx?: number | null;
 }) {
+  // VROL-908 — clip rendered series to samples up to playhead during playback.
+  const samples = useMemo(
+    () =>
+      typeof playheadIdx === "number" && playheadIdx >= 0
+        ? rawSamples.slice(0, playheadIdx + 1)
+        : rawSamples,
+    [rawSamples, playheadIdx],
+  );
   // Track the rendered SVG pixel size so the viewBox tracks 1:1 with the
   // panel — same pattern as ThroughputChart. Without this, hard-coded
   // viewBox + preserveAspectRatio="none" stretched the chart non-uniformly
@@ -872,6 +886,7 @@ export function ResultPanel({
   onApplyOptimization,
   mttrDistribution,
   bufferEdges,
+  playheadIdx,
 }: ResultPanelProps) {
   type TabId = "overview" | "throughput" | "oee" | "states" | "quality" | "buffers" | "stations";
   const [activeTab, setActiveTab] = useState<TabId>("overview");
@@ -1228,6 +1243,7 @@ export function ResultPanel({
               recommendedMs={detectWarmup(result.samples, horizonMs).recommendedMs}
               currentMs={warmupMs}
               horizonMs={horizonMs}
+              playheadIdx={playheadIdx}
               headerAction={
                 <ViewDetailsButton
                   onClick={() => setChartDrilldown("warmup-welch")}
@@ -1391,7 +1407,12 @@ export function ResultPanel({
             />
           </CardHeader>
           <CardContent>
-            <ThroughputChart samples={result.samples} horizonMs={horizonMs} warmupMs={warmupMs} />
+            <ThroughputChart
+              samples={result.samples}
+              horizonMs={horizonMs}
+              warmupMs={warmupMs}
+              playheadIdx={playheadIdx}
+            />
           </CardContent>
         </Card>
       ) : null}
@@ -1414,6 +1435,7 @@ export function ResultPanel({
               bottleneckStationIdx={result.bottleneckStationIdx}
               horizonMs={horizonMs}
               warmupMs={warmupMs}
+              playheadIdx={playheadIdx}
             />
           </CardContent>
         </Card>
@@ -1441,6 +1463,7 @@ export function ResultPanel({
               stationLabels={runMeta.stationLabels}
               horizonMs={horizonMs}
               warmupMs={warmupMs}
+              playheadIdx={playheadIdx}
             />
           </CardContent>
         </Card>

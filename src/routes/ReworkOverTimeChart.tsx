@@ -27,6 +27,8 @@ interface ReworkOverTimeChartProps {
   readonly secondarySamples?: readonly TimeseriesSample[];
   readonly primaryLabel?: string;
   readonly secondaryLabel?: string;
+  /** VROL-908 — clip rendered series to samples[0..playheadIdx] during playback. */
+  readonly playheadIdx?: number | null;
 }
 
 interface HoverState {
@@ -47,13 +49,14 @@ const STATION_COLORS = [
 ] as const;
 
 export function ReworkOverTimeChart({
-  samples,
+  samples: rawSamples,
   stationLabels,
   horizonMs,
   warmupMs,
   secondarySamples,
   primaryLabel,
   secondaryLabel,
+  playheadIdx,
 }: ReworkOverTimeChartProps) {
   const {
     containerRef: svgRef,
@@ -63,6 +66,14 @@ export function ReworkOverTimeChart({
   const VIEW_W = Math.max(160, measuredW);
   const VIEW_H = Math.max(120, measuredH);
   const [hover, setHover] = useState<HoverState | null>(null);
+  // VROL-908 — clip rendered series to samples up to playhead during playback.
+  const samples = useMemo(
+    () =>
+      typeof playheadIdx === "number" && playheadIdx >= 0
+        ? rawSamples.slice(0, playheadIdx + 1)
+        : rawSamples,
+    [rawSamples, playheadIdx],
+  );
   const { activeStations, paths, secondaryPaths, maxY, plotXFor, plotYFor } = useMemo(() => {
     const empty = {
       activeStations: [] as number[],

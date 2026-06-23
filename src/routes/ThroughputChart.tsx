@@ -33,6 +33,12 @@ interface ThroughputChartProps {
   readonly secondarySamples?: readonly TimeseriesSample[];
   readonly primaryLabel?: string;
   readonly secondaryLabel?: string;
+  /**
+   * VROL-908 — when set, clip the rendered series to samples[0..playheadIdx]
+   * so the chart fills in left-to-right as the playback scrubber moves.
+   * null/undefined renders the full series (paused or no playback).
+   */
+  readonly playheadIdx?: number | null;
 }
 
 const PAD_X = 4;
@@ -50,13 +56,24 @@ interface HoverState {
 }
 
 export function ThroughputChart({
-  samples,
+  samples: rawSamples,
   horizonMs,
   warmupMs,
   secondarySamples,
   primaryLabel,
   secondaryLabel,
+  playheadIdx,
 }: ThroughputChartProps) {
+  // VROL-908 — clip the rendered series to samples[0..playheadIdx] so the
+  // chart fills in left-to-right during playback. Memoised so paused
+  // playback (playheadIdx unchanged across renders) doesn't re-slice.
+  const samples = useMemo(
+    () =>
+      typeof playheadIdx === "number" && playheadIdx >= 0
+        ? rawSamples.slice(0, playheadIdx + 1)
+        : rawSamples,
+    [rawSamples, playheadIdx],
+  );
   // Track the SVG's actual pixel size so its viewBox matches 1:1 — no
   // stretching, no letterboxing, no aspect mismatch. The ref must point
   // at the SVG itself (not the wrapper div, which is taller because of
