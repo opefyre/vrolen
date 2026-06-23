@@ -274,8 +274,33 @@ describe("graphToChainOptions", () => {
     const edges = [edge("a", "b"), edge("b", "c"), edge("b", "d")];
     const r = graphToChainOptions(nodes, edges);
     expect(r.error).toBeNull();
-    expect(r.topology).toBeNull();
+    // VROL-880 — fallback now emits a topology object with per-station
+    // settings instead of null. Without this, capacity / defectRate / setup
+    // / changeoverMatrix / cycleByProduct / rework / skills / unitsPerCycle
+    // were silently dropped on multi-source/sink graphs.
+    expect(r.topology).not.toBeNull();
+    expect(r.topology?.nodes.map((n) => n.id)).toEqual(["a", "b"]);
     expect(r.chainNodeIds).toEqual(["a", "b"]);
     expect([...r.skippedNodeIds].sort()).toEqual(["c", "d"]);
+  });
+
+  it("VROL-880 — fallback topology carries per-station settings (defectRate, capacity, etc.)", () => {
+    // a → b → c (single linear chain), but introduce a second sink to force
+    // the fallback path. The fallback used to drop everything except cycle
+    // distribution; this test pins the fix.
+    const nodes = [
+      node("a", { defectRate: 0.1, capacity: 3 }),
+      node("b", { defectRate: 0.05 }),
+      node("c"),
+      node("d"),
+    ];
+    const edges = [edge("a", "b"), edge("b", "c"), edge("b", "d")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.topology).not.toBeNull();
+    const aTopo = r.topology?.nodes.find((n) => n.id === "a");
+    expect(aTopo?.defectRate).toBe(0.1);
+    expect(aTopo?.capacity).toBe(3);
+    const bTopo = r.topology?.nodes.find((n) => n.id === "b");
+    expect(bTopo?.defectRate).toBe(0.05);
   });
 });

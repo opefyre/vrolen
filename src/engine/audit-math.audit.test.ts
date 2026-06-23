@@ -1171,6 +1171,60 @@ describe("audit VROL-899/900 — nominalCycleTimeMs + composite ranking", () => 
     expect(result.perStationMaintenanceMs?.[0] ?? 0).toBeGreaterThan(0);
   });
 
+  it("VROL-887 — bundleSize on an edge produces a per-edge bundle-event count", () => {
+    // Single A→B chain; 1000ms / 100ms = ~10 parts flow A→B over 1s.
+    // bundleSize=3 → ~3 bundle events.
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "a", cycleTimeMs: constant(100) },
+          { id: "b", cycleTimeMs: constant(100) },
+        ],
+        edges: [{ source: "a", target: "b", bundleSize: 3 }],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 1_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    expect(result.perEdgeBundleEvents).toBeDefined();
+    expect(result.perEdgeBundleEvents[0]).toBeGreaterThanOrEqual(2);
+    expect(result.perEdgeBundleEvents[0]).toBeLessThanOrEqual(5);
+  });
+
+  it("VROL-880 / VROL-887 / VROL-891 / VROL-876 / VROL-875 — topology field round-trip survives engine validation", () => {
+    // All five Sprint 87 topology fields populated. The engine must accept
+    // them (no throw at build time) and emit the new result counters.
+    const result = runChain({
+      topology: {
+        nodes: [
+          {
+            id: "a",
+            cycleTimeMs: constant(100),
+            cipEveryMs: 60_000,
+            cipDurationMs: 5_000,
+            randomEvents: [{ type: "power-dip", meanIntervalMs: 600_000, durationMs: 10_000 }],
+          },
+          {
+            id: "b",
+            cycleTimeMs: constant(100),
+          },
+        ],
+        edges: [{ source: "a", target: "b", bundleSize: 5, shelfLifeMs: 30_000 }],
+      },
+      interStationBufferCapacity: 50,
+      horizonMs: 2_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // Result counter fields all populated (even if some are zero today).
+    expect(Array.isArray(result.perEdgeBundleEvents)).toBe(true);
+    expect(Array.isArray(result.perEdgeShelfLifeScrap)).toBe(true);
+    expect(Array.isArray(result.perStationRandomEvents)).toBe(true);
+    expect(result.perEdgeBundleEvents.length).toBe(1);
+    expect(result.perStationRandomEvents.length).toBe(2);
+  });
+
   it("VROL-886 — batch + lot IDs propagate from source to sink and appear in per-batch counts", () => {
     const result = runChain({
       topology: {

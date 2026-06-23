@@ -225,6 +225,52 @@ function stationKeyOf(node: Node): string {
   return typeof raw === "string" && raw.length > 0 ? raw : node.id;
 }
 
+/**
+ * VROL-880 — single mapper for ChainTopologyNode shape. Used in BOTH the
+ * single-source/single-sink branch AND the linear-fallback (multi-source /
+ * multi-sink) branch so per-station settings (capacity, defectRate, setup,
+ * changeoverMatrix, cycleByProduct, rework, sustainability, grades, units,
+ * nominalCycle, PM) flow through every code path. Pre-VROL-880 the fallback
+ * emitted only cycleDistributions, silently dropping every other setting.
+ */
+function buildTopologyNode(node: Node, id: string, topoSet: Set<string>): ChainTopologyNode {
+  const setup = setupDistributionOf(node);
+  const byProduct = cycleByProductOf(node);
+  const matrix = changeoverMatrixOf(node);
+  const defectRate = defectRateOf(node);
+  // Only pass reworkTargetId through if the target is also in the chain.
+  // Off-chain rework targets would throw at engine init; safer to drop them
+  // here so the run still produces something.
+  const reworkRaw = reworkTargetIdOf(node);
+  const reworkTargetId = reworkRaw && topoSet.has(reworkRaw) ? reworkRaw : undefined;
+  const reworkPassLimit = reworkTargetId ? reworkPassLimitOf(node) : undefined;
+  const capacity = capacityOf(node);
+  const nominalCycleTimeMs = nominalCycleTimeMsOf(node);
+  const unitsPerCycle = unitsPerCycleOf(node);
+  const energyPerCycleJ = nonNegNumOf(node, "energyPerCycleJ");
+  const waterPerCycleL = nonNegNumOf(node, "waterPerCycleL");
+  const co2ePerCycleG = nonNegNumOf(node, "co2ePerCycleG");
+  const qualityGrades = qualityGradesOf(node);
+  return {
+    id,
+    label: labelOf(node),
+    cycleTimeMs: distributionOf(node),
+    ...(setup ? { setupTimeMs: setup } : {}),
+    ...(byProduct ? { cycleByProduct: byProduct } : {}),
+    ...(matrix ? { changeoverMatrix: matrix } : {}),
+    ...(defectRate !== undefined ? { defectRate } : {}),
+    ...(reworkTargetId ? { reworkTargetId } : {}),
+    ...(reworkPassLimit !== undefined ? { reworkPassLimit } : {}),
+    ...(capacity !== undefined ? { capacity } : {}),
+    ...(nominalCycleTimeMs !== undefined ? { nominalCycleTimeMs } : {}),
+    ...(unitsPerCycle !== undefined ? { unitsPerCycle } : {}),
+    ...(energyPerCycleJ !== undefined ? { energyPerCycleJ } : {}),
+    ...(waterPerCycleL !== undefined ? { waterPerCycleL } : {}),
+    ...(co2ePerCycleG !== undefined ? { co2ePerCycleG } : {}),
+    ...(qualityGrades ? { qualityGrades } : {}),
+  };
+}
+
 export function graphToChainOptions(
   nodesIn: ReadonlyArray<Node>,
   edges: ReadonlyArray<Edge>,
@@ -335,45 +381,13 @@ export function graphToChainOptions(
       }
       const topoSet = new Set(topoOrder);
 
-      const topoNodes: ChainTopologyNode[] = topoOrder.map((id) => {
-        const node = nodeById.get(id)!;
-        const setup = setupDistributionOf(node);
-        const byProduct = cycleByProductOf(node);
-        const matrix = changeoverMatrixOf(node);
-        const defectRate = defectRateOf(node);
-        // VROL-627 — only pass reworkTargetId through if the target is also
-        // in the chain. Off-chain rework targets (e.g., the user pointed
-        // at an unconnected node) would throw at engine init; safer to drop
-        // them here so the run still produces something.
-        const reworkRaw = reworkTargetIdOf(node);
-        const reworkTargetId = reworkRaw && topoSet.has(reworkRaw) ? reworkRaw : undefined;
-        const reworkPassLimit = reworkTargetId ? reworkPassLimitOf(node) : undefined;
-        const capacity = capacityOf(node);
-        const nominalCycleTimeMs = nominalCycleTimeMsOf(node);
-        const unitsPerCycle = unitsPerCycleOf(node);
-        const energyPerCycleJ = nonNegNumOf(node, "energyPerCycleJ");
-        const waterPerCycleL = nonNegNumOf(node, "waterPerCycleL");
-        const co2ePerCycleG = nonNegNumOf(node, "co2ePerCycleG");
-        const qualityGrades = qualityGradesOf(node);
-        return {
-          id,
-          label: labelOf(node),
-          cycleTimeMs: distributionOf(node),
-          ...(setup ? { setupTimeMs: setup } : {}),
-          ...(byProduct ? { cycleByProduct: byProduct } : {}),
-          ...(matrix ? { changeoverMatrix: matrix } : {}),
-          ...(defectRate !== undefined ? { defectRate } : {}),
-          ...(reworkTargetId ? { reworkTargetId } : {}),
-          ...(reworkPassLimit !== undefined ? { reworkPassLimit } : {}),
-          ...(capacity !== undefined ? { capacity } : {}),
-          ...(nominalCycleTimeMs !== undefined ? { nominalCycleTimeMs } : {}),
-          ...(unitsPerCycle !== undefined ? { unitsPerCycle } : {}),
-          ...(energyPerCycleJ !== undefined ? { energyPerCycleJ } : {}),
-          ...(waterPerCycleL !== undefined ? { waterPerCycleL } : {}),
-          ...(co2ePerCycleG !== undefined ? { co2ePerCycleG } : {}),
-          ...(qualityGrades ? { qualityGrades } : {}),
-        };
-      });
+      // VROL-880 — extracted so the linear-fallback path can use the same
+      // full-fidelity per-station mapper. Pre-VROL-880 the fallback emitted
+      // only cycleDistributions, silently dropping defectRate / capacity /
+      // setup / changeoverMatrix / cycleByProduct / rework / skills.
+      const topoNodes: ChainTopologyNode[] = topoOrder.map((id) =>
+        buildTopologyNode(nodeById.get(id)!, id, topoSet),
+      );
       const topoEdges: ChainTopologyEdge[] = edges
         .filter((e) => topoSet.has(e.source) && topoSet.has(e.target) && e.source !== e.target)
         .map((e) => ({ source: e.source, target: e.target }));
@@ -434,10 +448,23 @@ export function graphToChainOptions(
     return { ...empty, error: "No usable linear chain found" };
   }
 
-  const cycleDistributions = bestChain.map((id) => distributionOf(nodeById.get(id)!));
-  const cycleTimes = cycleDistributions.map((d) => meanOf(d));
-  const stationLabels = bestChain.map((id) => labelOf(nodeById.get(id)!));
+  // VROL-880 — emit a full ChainTopology for the linear fallback path too,
+  // not just for single-source/single-sink graphs. Without this, multi-source
+  // / multi-sink topologies fell back to engine "linear mode" which only
+  // consumes stationCycleTimes + labels — every other per-station setting
+  // (capacity, defectRate, setup, changeoverMatrix, cycleByProduct, rework,
+  // sustainability inputs, grades, units, nominal, PM) was silently dropped.
   const chainSet = new Set(bestChain);
+  const fallbackTopoNodes: ChainTopologyNode[] = bestChain.map((id) =>
+    buildTopologyNode(nodeById.get(id)!, id, chainSet),
+  );
+  const fallbackTopoEdges: ChainTopologyEdge[] = [];
+  for (let i = 0; i < bestChain.length - 1; i++) {
+    fallbackTopoEdges.push({ source: bestChain[i]!, target: bestChain[i + 1]! });
+  }
+  const cycleDistributions = fallbackTopoNodes.map((n) => n.cycleTimeMs);
+  const cycleTimes = cycleDistributions.map((d) => meanOf(d));
+  const stationLabels = fallbackTopoNodes.map((n) => n.label ?? n.id);
   const skippedNodeIds = nodes.filter((n) => !chainSet.has(n.id)).map((n) => n.id);
   const maintenanceWindows = bestChain.map((id) => maintenanceWindowsOf(nodeById.get(id)!));
   const stationKeys = bestChain.map((id) => stationKeyOf(nodeById.get(id)!));
@@ -449,7 +476,7 @@ export function graphToChainOptions(
     cycleTimes,
     stationLabels,
     skippedNodeIds,
-    topology: null,
+    topology: { nodes: fallbackTopoNodes, edges: fallbackTopoEdges },
     maintenanceWindows,
     error: null,
   };

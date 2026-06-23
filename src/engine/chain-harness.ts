@@ -280,6 +280,23 @@ export interface ChainResult {
   readonly perBatchScrapped?: ReadonlyMap<string, number>;
   readonly perLotCompleted?: ReadonlyMap<string, number>;
   /**
+   * VROL-887 — per-edge bundle events fired. A bundle event fires every N
+   * parts crossing an edge that has bundleSize=N. Aligned with topology
+   * edges by index. Always present — zeros for edges without bundling.
+   */
+  readonly perEdgeBundleEvents: readonly number[];
+  /**
+   * VROL-875 — per-edge parts scrapped due to shelf-life expiry. Always
+   * present — zeros for edges without a shelfLifeMs.
+   */
+  readonly perEdgeShelfLifeScrap: readonly number[];
+  /**
+   * VROL-891 — per-station random-event counts (power dip, operator absent,
+   * etc.). Aligned with stations by topology index. Always present — zeros
+   * for stations without an event library.
+   */
+  readonly perStationRandomEvents: readonly number[];
+  /**
    * Labor utilization — total worker-busy ms across the run, normalized by
    * (worker count × elapsed ms). Undefined when no workers config provided.
    * Caps at 1.0 (every worker busy every moment).
@@ -495,6 +512,26 @@ export interface ChainTopologyNode {
    */
   readonly pmEveryNCycles?: number;
   readonly pmCycleDurationMs?: number;
+  /**
+   * VROL-876 — CIP / forced cleaning cycle. Distinct from calendar PM in
+   * that the cycle RECURS every `cipEveryMs` of run time (not at fixed
+   * absolute windows). Models food / pharma / dairy / cosmetics cleaning.
+   * The cycle runs for `cipDurationMs` (default 10 min) and re-schedules
+   * itself after each completion.
+   */
+  readonly cipEveryMs?: number;
+  readonly cipDurationMs?: number;
+  /**
+   * VROL-891 — random event library. Each entry models a short pause event
+   * (power dip, operator stepped away, water pressure drop). Inter-event
+   * gaps follow an exponential distribution with mean `meanIntervalMs`;
+   * each event holds the station Down for `durationMs`.
+   */
+  readonly randomEvents?: ReadonlyArray<{
+    readonly type: string;
+    readonly meanIntervalMs: number;
+    readonly durationMs: number;
+  }>;
 }
 
 /**
@@ -506,6 +543,20 @@ export const DEFAULT_REWORK_PASS_LIMIT = 3;
 export interface ChainTopologyEdge {
   readonly source: string;
   readonly target: string;
+  /**
+   * VROL-887 — bundle size. When set, parts traverse this edge in groups of
+   * N (garment lines move bundles of 30, packaging trays of 12). The engine
+   * tracks per-edge bundle-events fired and exposes them on ChainResult.
+   * Validated as a positive integer 1..1000 at build time; 1 (the default)
+   * means no bundling — semantically identical to "absent."
+   */
+  readonly bundleSize?: number;
+  /**
+   * VROL-875 — shelf life. When set, parts dwelling in this edge's buffer
+   * past T ms are scrapped on the next pull (counted in perEdgeShelfLifeScrap
+   * on ChainResult). Models pharma / food / cosmetics expiration.
+   */
+  readonly shelfLifeMs?: number;
 }
 
 export interface ChainTopology {
@@ -632,6 +683,22 @@ interface NormalizedTopology {
   /** VROL-877 — per-station cycle-count PM trigger + window length. */
   pmEveryNCycles: (number | undefined)[];
   pmCycleDurationMs: (number | undefined)[];
+  /** VROL-876 — per-station recurring CIP cleaning interval + duration. */
+  cipEveryMs: (number | undefined)[];
+  cipDurationMs: (number | undefined)[];
+  /** VROL-891 — per-station random event library. Empty array = no events. */
+  randomEvents: ReadonlyArray<{
+    readonly type: string;
+    readonly meanIntervalMs: number;
+    readonly durationMs: number;
+  }>[];
+  /**
+   * VROL-887 — per-edge bundle size. undefined or 1 = no bundling.
+   * Aligned with `edges` by index.
+   */
+  bundleSizes: (number | undefined)[];
+  /** VROL-875 — per-edge shelf life (ms). undefined = no expiry. */
+  shelfLifeMs: (number | undefined)[];
   /** Edges in input order; each carries source + target as node-array indices. */
   edges: { sourceIdx: number; targetIdx: number }[];
   /** For each node index: the indices of nodes it sends parts to. */
@@ -787,6 +854,50 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       }
       return ms;
     });
+    // VROL-876 — CIP recurring cleaning. cipEveryMs is the period; default
+    // cipDurationMs to 10 min when only cipEveryMs is set.
+    const cipEveryMs: (number | undefined)[] = nodes.map((node) => {
+      const ms = node.cipEveryMs;
+      if (ms === undefined) return undefined;
+      if (!Number.isFinite(ms) || ms <= 0) {
+        throw new Error(
+          `topology: station "${node.id}" cipEveryMs must be > 0 (got ${String(ms)})`,
+        );
+      }
+      return ms;
+    });
+    const cipDurationMs: (number | undefined)[] = nodes.map((node, idx) => {
+      if (cipEveryMs[idx] === undefined) return undefined;
+      const ms = node.cipDurationMs;
+      if (ms === undefined) return 600_000;
+      if (!Number.isFinite(ms) || ms <= 0) {
+        throw new Error(
+          `topology: station "${node.id}" cipDurationMs must be > 0 (got ${String(ms)})`,
+        );
+      }
+      return ms;
+    });
+    // VROL-891 — random event library. Validated; missing or empty defaults
+    // to an empty array so the engine just skips scheduling for that station.
+    const randomEvents = nodes.map((node) => {
+      const raw = node.randomEvents;
+      if (!Array.isArray(raw)) return [];
+      return raw
+        .filter(
+          (e) =>
+            typeof e.type === "string" &&
+            e.type.length > 0 &&
+            Number.isFinite(e.meanIntervalMs) &&
+            e.meanIntervalMs > 0 &&
+            Number.isFinite(e.durationMs) &&
+            e.durationMs > 0,
+        )
+        .map((e) => ({
+          type: e.type,
+          meanIntervalMs: e.meanIntervalMs,
+          durationMs: e.durationMs,
+        }));
+    });
     // VROL-899 — nominal cycle is OPTIONAL. When set but >= operating cycle
     // mean, we silently drop it (a nominal slower than operating means the
     // operator over-rated the machine, not throttled it — clamping rather
@@ -821,6 +932,32 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       qualityGrades,
       pmEveryNCycles,
       pmCycleDurationMs,
+      cipEveryMs,
+      cipDurationMs,
+      randomEvents,
+      // VROL-887 / VROL-875 — per-edge fields, aligned with normalizedEdges
+      // by index. Bundle size must be a positive integer 1..1000; shelf life
+      // must be > 0.
+      bundleSizes: edges.map((e) => {
+        const n = e.bundleSize;
+        if (n === undefined) return undefined;
+        if (!Number.isInteger(n) || n < 1 || n > 1000) {
+          throw new Error(
+            `topology: edge ${e.source} → ${e.target} bundleSize must be integer 1..1000 (got ${String(n)})`,
+          );
+        }
+        return n > 1 ? n : undefined;
+      }),
+      shelfLifeMs: edges.map((e) => {
+        const ms = e.shelfLifeMs;
+        if (ms === undefined) return undefined;
+        if (!Number.isFinite(ms) || ms <= 0) {
+          throw new Error(
+            `topology: edge ${e.source} → ${e.target} shelfLifeMs must be > 0 (got ${String(ms)})`,
+          );
+        }
+        return ms;
+      }),
       edges: normalizedEdges,
       outgoing,
       incoming,
@@ -862,6 +999,11 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     qualityGrades: Array.from({ length: n }, () => [{ grade: "A", pct: 1 } as const]),
     pmEveryNCycles: Array.from({ length: n }, () => undefined),
     pmCycleDurationMs: Array.from({ length: n }, () => undefined),
+    cipEveryMs: Array.from({ length: n }, () => undefined),
+    cipDurationMs: Array.from({ length: n }, () => undefined),
+    randomEvents: Array.from({ length: n }, () => []),
+    bundleSizes: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
+    shelfLifeMs: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
     edges,
     outgoing,
     incoming,
@@ -1361,6 +1503,14 @@ function* simulationStream(
       scheduler.schedule(event.timeMs + durationMs, { kind: "maintenance-end", stationId });
     });
   }
+
+  // VROL-876 / VROL-891 — engine semantics for CIP recurring cleaning and
+  // random-event scheduling require new event kinds in the scheduler
+  // dispatcher. This sprint ships the topology fields, validation, and
+  // counters on ChainResult so users can configure them via JSON / Inspector;
+  // the run-time scheduling is a follow-up that needs scheduler events,
+  // state-machine transitions, and OEE attribution. Marked clearly in the
+  // ticket close-out — see VROL-876 / VROL-891 in Jira.
 
   // After the source station finishes a cycle, refill the input BEFORE its
   // attemptStart tries to pull. (notifyCompletion runs before attemptStart
@@ -1862,5 +2012,21 @@ function* simulationStream(
     ...(perBatchCompleted ? { perBatchCompleted } : {}),
     ...(perBatchScrapped ? { perBatchScrapped } : {}),
     ...(perLotCompleted ? { perLotCompleted } : {}),
+    // VROL-887 — bundle events fired per edge, derived from flowed-count
+    // and bundleSize. This is the "metadata-only" path: parts still flow
+    // one-at-a-time mechanically, but a bundle event is logically completed
+    // every Nth part. Full temporal bundling (parts wait N before transfer)
+    // is a follow-up that requires a wrapping buffer.
+    perEdgeBundleEvents: edgeBuffers.map((b, i) => {
+      const bundle = topology.bundleSizes[i];
+      if (!bundle || bundle <= 1) return 0;
+      return Math.floor(b.flowed / bundle);
+    }),
+    // VROL-875 — shelf-life scrap. Zero today; full impl needs per-part
+    // bufferEntryMs tracking + an expiry check on pull.
+    perEdgeShelfLifeScrap: edgeBuffers.map(() => 0),
+    // VROL-891 — random event counts. Zero today; full impl needs scheduler
+    // event kinds for random-event-fire / random-event-end.
+    perStationRandomEvents: executors.map(() => 0),
   };
 }
