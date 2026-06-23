@@ -16,11 +16,34 @@ import type { Distribution } from "@/engine/distribution";
 
 export type RecommendationSeverity = "high" | "medium" | "low";
 
+/**
+ * VROL-796 — Structured apply payload. Each kind targets a different patch:
+ *   • cycle:halve         — halve the named station's operating cycle
+ *   • buffer:grow         — grow the named edge's buffer to a recommended size
+ *   • cycle:throttle10    — slow the named station's cycle by 10% (sweet spot)
+ *   • defect:halve        — halve the named station's defect rate
+ * The Recommendations card surfaces an Apply button when this is set;
+ * EditorPage receives the payload and applies the patch + re-runs.
+ */
+export type RecommendationApply =
+  | { readonly kind: "cycle:halve"; readonly stationLabel: string }
+  | {
+      readonly kind: "buffer:grow";
+      readonly edgeId: string;
+      readonly recommendedCapacity: number;
+    }
+  | { readonly kind: "cycle:throttle10"; readonly stationLabel: string }
+  | { readonly kind: "defect:halve"; readonly stationLabel: string };
+
 export interface Recommendation {
   readonly id: string;
   readonly severity: RecommendationSeverity;
   readonly title: string;
   readonly body: string;
+  /** VROL-796 — when set, the card renders an Apply button. */
+  readonly apply?: RecommendationApply;
+  /** VROL-796 — rough back-of-envelope estimate, e.g. "≈ +30% throughput". */
+  readonly previewLabel?: string;
 }
 
 /**
@@ -52,6 +75,11 @@ export function deriveRecommendations(
         severity: "high",
         title: `Speed up ${label}`,
         body: `${label} is the constraint, running ${PCT(head.runningPct)} of the time. Lowering its cycle time lifts the entire line — other stations have idle capacity to absorb the faster pace.`,
+        // VROL-796 — Apply halves the bottleneck's operating cycle. Rough
+        // estimate: line throughput approaches 2× the current rate until the
+        // next-slowest station takes over as the new constraint.
+        apply: { kind: "cycle:halve", stationLabel: label },
+        previewLabel: "≈ up to +50% throughput",
       });
     } else {
       out.push({
@@ -131,6 +159,15 @@ export function deriveRecommendations(
         severity: worst.coverageRatio < 0.5 ? "high" : "medium",
         title: `Grow buffer ${worst.label ?? worst.edgeId}`,
         body: `Capacity ${worst.capacity} parts covers ${(worst.coverageRatio * 100).toFixed(0)}% of one mean breakdown. Line stalls every time this station goes Down. Suggest sizing to ${worst.recommendedCapacity} parts (1.5× absorption).`,
+        // VROL-796 — Apply sets the interStationBufferCapacity setting to the
+        // recommended size. Rough estimate: recovers most of the throughput
+        // lost to breakdown-induced stalls.
+        apply: {
+          kind: "buffer:grow",
+          edgeId: worst.edgeId,
+          recommendedCapacity: worst.recommendedCapacity,
+        },
+        previewLabel: "≈ +10–25% throughput on breakdown-heavy lines",
       });
     }
   }
@@ -155,6 +192,12 @@ export function deriveRecommendations(
         severity: "low",
         title: `Throttle ${label} to ~90% of nominal`,
         body: `${label} is at ${(cand.nominalSpeedRatio * 100).toFixed(0)}% of nominal and the line is bottleneck-bound. Running flat-out raises breakdowns and quality losses you can't trade for throughput. The 85–95% sweet spot extends MTBF for free.`,
+        // VROL-796 — Apply slows the operating cycle by ~10% to reach the
+        // sweet spot. No throughput change expected; MTBF improvement is
+        // the win (not captured in a one-run sim, but the canvas state mix
+        // will visibly relax).
+        apply: { kind: "cycle:throttle10", stationLabel: label },
+        previewLabel: "≈ MTBF lift; throughput unchanged",
       });
       break;
     }

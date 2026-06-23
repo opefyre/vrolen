@@ -817,6 +817,7 @@ import { hasSeenOnboarding } from "./onboarding-state";
 import { Sparkline } from "./Sparkline";
 import { StateMixBar } from "@/components/canvas/state-mix-bar";
 import { StationDrilldown } from "@/components/editor/station-drilldown";
+import { SyncStatusPill } from "@/components/editor/sync-status-pill";
 
 // VROL-625 — lazy-load the result-panel cards + compare table + the charts
 // they own. Editor first paint no longer includes them; the user pays for
@@ -1052,6 +1053,9 @@ function EditorCanvas() {
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>(() => listScenarios());
   const [saveNameDraft, setSaveNameDraft] = useState<string>("");
   const [activeScenarioName, setActiveScenarioName] = useState<string | null>(null);
+  // VROL-833 — last-saved timestamp drives the sync-status pill in the
+  // toolbar. Set from payload.savedAtMs on load and Date.now() on every save.
+  const [lastSavedAtMs, setLastSavedAtMs] = useState<number | null>(null);
   /** Inline-confirm state for destructive scenario actions (VROL-605). */
   const [confirmAction, setConfirmAction] = useState<{
     scenario: string;
@@ -2350,6 +2354,69 @@ function EditorCanvas() {
     [optimizationTargetKey, setNodes],
   );
 
+  // VROL-796 — one-click Apply on Recommendations. The recommendation
+  // carries a structured apply payload; we patch the scenario + re-run so the
+  // user sees the resulting ΔKPI in the same panel they clicked from. Each
+  // kind targets a different surface (cycle scale, buffer capacity, defect
+  // rate); unknown kinds are no-ops so adding new recommendations doesn't
+  // break this handler.
+  const handleApplyRecommendation = useCallback(
+    (
+      rec: import("@/lib/recommendations").Recommendation,
+      payload: import("@/lib/recommendations").RecommendationApply,
+    ): void => {
+      const patchStation = (
+        label: string,
+        fn: (data: Record<string, unknown>) => Record<string, unknown>,
+      ) => {
+        setNodes((ns) =>
+          ns.map((n) => {
+            const data = n.data as { label?: unknown };
+            if (data?.label !== label) return n;
+            return { ...n, data: fn(n.data as Record<string, unknown>) };
+          }),
+        );
+      };
+      switch (payload.kind) {
+        case "cycle:halve":
+          patchStation(payload.stationLabel, (data) => {
+            const d = data.cycleDistribution;
+            if (!isDistribution(d)) return data;
+            return { ...data, cycleDistribution: scaleDistribution(d, 0.5) };
+          });
+          break;
+        case "cycle:throttle10":
+          patchStation(payload.stationLabel, (data) => {
+            const d = data.cycleDistribution;
+            if (!isDistribution(d)) return data;
+            return { ...data, cycleDistribution: scaleDistribution(d, 1.1) };
+          });
+          break;
+        case "defect:halve":
+          patchStation(payload.stationLabel, (data) => {
+            const cur = typeof data.defectRate === "number" ? data.defectRate : 0;
+            return { ...data, defectRate: Math.max(0, cur / 2) };
+          });
+          break;
+        case "buffer:grow":
+          setSettings((s) => ({
+            ...s,
+            interStationBufferCapacity: Math.max(
+              s.interStationBufferCapacity,
+              payload.recommendedCapacity,
+            ),
+          }));
+          break;
+      }
+      // Tick the apply-and-run effect so the user sees the ΔKPI immediately.
+      setApplyAndRunTick((x) => x + 1);
+      toast.success(`Applied: ${rec.title}`, {
+        description: rec.previewLabel ?? "Re-running to show the impact.",
+      });
+    },
+    [setNodes],
+  );
+
   const handleCompare = useCallback(
     (savedName: string): void => {
       const payload = loadScenario(savedName);
@@ -2541,13 +2608,15 @@ function EditorCanvas() {
           return;
         }
         try {
+          const stamp = Date.now();
           saveScenario(activeScenarioName, {
             graph: { nodes: [...nodes], edges: [...edges] },
             settings,
-            savedAtMs: Date.now(),
+            savedAtMs: stamp,
           });
           setScenarios(listScenarios());
           setActiveScenarioSnapshot(JSON.stringify({ graph: { nodes, edges }, settings }));
+          setLastSavedAtMs(stamp);
           toast.success("Saved");
         } catch (err) {
           const m = err instanceof Error ? err.message : String(err);
@@ -2815,6 +2884,8 @@ function EditorCanvas() {
       setResult(null);
       setRunMeta(null);
       setActiveScenarioName(name);
+      // VROL-833 — sync-status pill reads lastSavedAtMs to show "saved Nm ago".
+      setLastSavedAtMs(payload.savedAtMs);
       // VROL-789 — mark this scenario as recently used so the Scenarios drawer
       // can surface the last 2 as primary buttons.
       markScenarioUsed(name);
@@ -3253,14 +3324,16 @@ function EditorCanvas() {
         return;
       }
       try {
+        // eslint-disable-next-line react-hooks/purity -- runs on user action, not render.
+        const stamp = Date.now();
         saveScenario(activeScenarioName, {
           graph: { nodes: [...nodes], edges: [...edges] },
           settings,
-          // eslint-disable-next-line react-hooks/purity -- runs on user action, not render.
-          savedAtMs: Date.now(),
+          savedAtMs: stamp,
         });
         setScenarios(listScenarios());
         setActiveScenarioSnapshot(JSON.stringify({ graph: { nodes, edges }, settings }));
+        setLastSavedAtMs(stamp);
         toast.success("Saved");
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
@@ -3276,12 +3349,14 @@ function EditorCanvas() {
         return;
       }
       try {
+        // eslint-disable-next-line react-hooks/purity -- runs on user action, not render.
+        const stamp = Date.now();
         saveScenario(activeScenarioName, {
           graph: { nodes: [...nodes], edges: [...edges] },
           settings,
-          // eslint-disable-next-line react-hooks/purity -- runs on user action, not render.
-          savedAtMs: Date.now(),
+          savedAtMs: stamp,
         });
+        setLastSavedAtMs(stamp);
         toast.success("Saved");
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
@@ -3527,24 +3602,56 @@ function EditorCanvas() {
           <span className="text-foreground/80 truncate text-sm font-semibold">
             {activeScenarioName ?? "Untitled scenario"}
           </span>
-          {/* VROL-774 — the static "Saved" chip was decorative noise (autosave
-              to localStorage never fails visibly). The "modified" chip below
-              is the meaningful state signal. */}
-          {activeScenarioName && activeScenarioIsModified ? (
-            <span
-              className="bg-sim-setup/20 text-sim-setup-foreground rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-              title={
-                activeScenarioDiff
-                  ? `Modified vs saved: ${String(activeScenarioDiff.nodeChanges)} node${activeScenarioDiff.nodeChanges === 1 ? "" : "s"}, ${String(activeScenarioDiff.edgeChanges)} edge${activeScenarioDiff.edgeChanges === 1 ? "" : "s"}, ${String(activeScenarioDiff.settingsChanges)} setting${activeScenarioDiff.settingsChanges === 1 ? "" : "s"}`
-                  : "Modified vs saved"
+          {/* VROL-833 — sync-status pill. Subsumes the prior "modified" chip
+              (VROL-774): green dot when saved + clean, amber when there are
+              unsaved diffs, red when the scenario has no name yet. <details>
+              gives a native popover with last-saved time + Save now + Restore.
+              The eslint-disable handles the toolbar's relative-time tick. */}
+          <SyncStatusPill
+            scenarioName={activeScenarioName}
+            isModified={activeScenarioIsModified}
+            diff={activeScenarioDiff}
+            lastSavedAtMs={lastSavedAtMs}
+            onSaveNow={() => {
+              if (!activeScenarioName) {
+                setSaveNameDialogOpen(true);
+                return;
               }
-            >
-              modified
-              {activeScenarioDiff
-                ? ` · ${String(activeScenarioDiff.nodeChanges + activeScenarioDiff.edgeChanges + activeScenarioDiff.settingsChanges)} Δ`
-                : ""}
-            </span>
-          ) : null}
+              try {
+                const stamp = Date.now();
+                saveScenario(activeScenarioName, {
+                  graph: { nodes: [...nodes], edges: [...edges] },
+                  settings,
+                  savedAtMs: stamp,
+                });
+                setScenarios(listScenarios());
+                setActiveScenarioSnapshot(JSON.stringify({ graph: { nodes, edges }, settings }));
+                setLastSavedAtMs(stamp);
+                toast.success("Saved");
+              } catch (err) {
+                toast.error("Save failed", {
+                  description: err instanceof Error ? err.message : String(err),
+                });
+              }
+            }}
+            onRestore={() => {
+              if (!activeScenarioSnapshot) return;
+              try {
+                const saved = JSON.parse(activeScenarioSnapshot) as {
+                  graph: { nodes: Node[]; edges: Edge[] };
+                  settings: typeof settings;
+                };
+                setNodes(saved.graph.nodes);
+                setEdges(saved.graph.edges);
+                setSettings(saved.settings);
+                toast.success("Restored from last save");
+              } catch {
+                toast.error("Restore failed", {
+                  description: "Saved snapshot is unreadable.",
+                });
+              }
+            }}
+          />
         </div>
         <span
           className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${
@@ -4022,12 +4129,19 @@ function EditorCanvas() {
       </div>
       <div
         className={`grid h-[calc(100vh-15rem)] gap-3 ${
-          selectedNode || selectedNodeIds.length > 1
-            ? "grid-cols-[200px_1fr_260px]"
-            : "grid-cols-[200px_1fr]"
+          // VROL-771 — right rail is always present on ≥ lg screens so the
+          // layout doesn't jump when the user clicks/unclicks a station. Empty
+          // state fills the rail otherwise.
+          // VROL-772 — below lg, drop the palette + rail columns; the slide-over
+          // Sheets handle that surface on small screens.
+          "grid-cols-1 lg:grid-cols-[200px_1fr_260px]"
         }`}
       >
-        <Card className="overflow-y-auto" data-tour="palette">
+        {/* VROL-772 — palette + right rail are docked columns ≥ lg; below
+            lg they collapse out of the grid and the user reaches them via
+            top-bar drawer affordances (the existing Sheets in Scenarios /
+            Comparison / etc. already follow that pattern). */}
+        <Card className="hidden overflow-y-auto lg:block" data-tour="palette">
           <CardHeader>
             <CardTitle className="font-heading text-base">Stations</CardTitle>
             <CardDescription>Drag onto the canvas</CardDescription>
@@ -4417,13 +4531,15 @@ function EditorCanvas() {
               return;
             }
             try {
+              const stamp = Date.now();
               saveScenario(name, {
                 graph: { nodes, edges },
                 settings,
-                savedAtMs: Date.now(),
+                savedAtMs: stamp,
               });
               setScenarios(listScenarios());
               setActiveScenarioName(name);
+              setLastSavedAtMs(stamp);
               setActiveScenarioSnapshot(JSON.stringify({ graph: { nodes, edges }, settings }));
               toast.success("Saved");
             } catch (err) {
@@ -4435,7 +4551,8 @@ function EditorCanvas() {
 
         {selectedNodeIds.length > 1 ? (
           // VROL-663 — bulk panel when 2+ stations are selected.
-          <Card className="overflow-y-auto">
+          // VROL-772 — docked column on ≥ lg only; below lg the rail collapses.
+          <Card className="hidden overflow-y-auto lg:block">
             <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
               <div className="space-y-1">
                 <CardTitle className="font-heading text-base">Bulk edit</CardTitle>
@@ -4464,16 +4581,18 @@ function EditorCanvas() {
             </CardContent>
           </Card>
         ) : selectedNode && (selectedNode.type === "sticky" || selectedNode.type === "frame") ? (
-          <NonStationInspector
-            node={selectedNode}
-            onClose={() => {
-              setSelectedNodeId(null);
-            }}
-            onPatch={updateSelectedNodeData}
-            scenarioName={activeScenarioName}
-          />
+          <div className="hidden lg:block">
+            <NonStationInspector
+              node={selectedNode}
+              onClose={() => {
+                setSelectedNodeId(null);
+              }}
+              onPatch={updateSelectedNodeData}
+              scenarioName={activeScenarioName}
+            />
+          </div>
         ) : selectedNode ? (
-          <Card className="overflow-y-auto">
+          <Card className="hidden overflow-y-auto lg:block">
             <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
               <div className="space-y-1">
                 <CardTitle className="font-heading text-base">Inspector</CardTitle>
@@ -5115,7 +5234,28 @@ function EditorCanvas() {
               );
             })()}
           </Card>
-        ) : null}
+        ) : (
+          // VROL-771 — always-on right rail. When nothing is selected the
+          // column stays put with an empty-state card explaining how to fill
+          // it. Avoids the "canvas jumps wider on deselect" reflow the prior
+          // conditional column count caused.
+          <Card className="hidden overflow-y-auto lg:block">
+            <CardHeader>
+              <CardTitle className="font-heading text-base">Inspector</CardTitle>
+              <CardDescription>
+                Click any station, sticky note, or frame to edit its details here.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="text-muted-foreground space-y-1.5 text-xs leading-snug">
+                <li>· Drag from the Stations palette on the left to add a node.</li>
+                <li>· Drag handles between two stations to connect them.</li>
+                <li>· Select 2+ stations to bulk-edit shared settings.</li>
+                <li>· Hit Run when you're ready — KPIs land below the canvas.</li>
+              </ul>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {result && runMeta ? (
@@ -5217,6 +5357,7 @@ function EditorCanvas() {
             // samples to [0..playheadIdx] so the curves fill in left-to-right
             // as the scrubber advances. Null when paused / no playback.
             playheadIdx={playbackSnapshot?.sampleIdxAtT ?? null}
+            onApplyRecommendation={handleApplyRecommendation}
           />
         </Suspense>
       ) : null}

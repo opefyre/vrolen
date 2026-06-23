@@ -57,6 +57,7 @@ import { StepArrivals } from "./step-arrivals";
 import { StepConnections } from "./step-connections";
 import { StepProducts } from "./step-products";
 import { StepRealism } from "./step-realism";
+import { analyzeWizardDraft } from "./wizard-advisor";
 import { StepReview } from "./step-review";
 import { StepRunWindow } from "./step-run-window";
 import { StepShape } from "./step-shape";
@@ -892,6 +893,20 @@ function Header({
   );
 }
 
+// VROL-795 — step idx ↔ advisor step name. Steps without warnings get no
+// banner; the wizard advisor handles "should I flag anything here?" so we
+// just need the lookup.
+const STEP_NAME_BY_IDX: Readonly<
+  Record<number, "shape" | "stations" | "products" | "realism" | "arrivals" | "run-window">
+> = {
+  0: "shape",
+  1: "stations",
+  3: "products",
+  4: "realism",
+  5: "arrivals",
+  6: "run-window",
+};
+
 function StepBody({
   stepIdx,
   draft,
@@ -907,26 +922,61 @@ function StepBody({
   readonly errors: Readonly<Record<string, string>>;
   readonly onJump: (idx: number) => void;
 }): ReactNode {
-  switch (stepIdx) {
-    case 0:
-      return <StepShape draft={draft} update={update} errors={errors} />;
-    case 1:
-      return <StepStations draft={draft} update={update} errors={errors} />;
-    case 2:
-      return <StepConnections draft={draft} update={update} errors={errors} />;
-    case 3:
-      return <StepProducts draft={draft} update={update} errors={errors} />;
-    case 4:
-      return <StepRealism draft={draft} update={update} setRealism={setRealism} errors={errors} />;
-    case 5:
-      return <StepArrivals draft={draft} update={update} errors={errors} />;
-    case 6:
-      return <StepRunWindow draft={draft} update={update} errors={errors} />;
-    case 7:
-      return <StepReview draft={draft} onJump={onJump} />;
-    default:
-      return null;
-  }
+  const stepName = STEP_NAME_BY_IDX[stepIdx];
+  const warnings = stepName ? analyzeWizardDraft(draft).filter((w) => w.step === stepName) : [];
+  const stepContent = (() => {
+    switch (stepIdx) {
+      case 0:
+        return <StepShape draft={draft} update={update} errors={errors} />;
+      case 1:
+        return <StepStations draft={draft} update={update} errors={errors} />;
+      case 2:
+        return <StepConnections draft={draft} update={update} errors={errors} />;
+      case 3:
+        return <StepProducts draft={draft} update={update} errors={errors} />;
+      case 4:
+        return (
+          <StepRealism draft={draft} update={update} setRealism={setRealism} errors={errors} />
+        );
+      case 5:
+        return <StepArrivals draft={draft} update={update} errors={errors} />;
+      case 6:
+        return <StepRunWindow draft={draft} update={update} errors={errors} />;
+      case 7:
+        return <StepReview draft={draft} onJump={onJump} />;
+      default:
+        return null;
+    }
+  })();
+  if (warnings.length === 0) return stepContent;
+  return (
+    <div className="space-y-3">
+      <ul className="space-y-1.5" aria-label="Advisor warnings">
+        {warnings.map((w) => (
+          <li
+            key={w.id}
+            className={`flex items-start gap-2 rounded-md border p-2 text-xs ${
+              w.severity === "warning"
+                ? "border-sim-setup/40 bg-sim-setup/5"
+                : "border-border bg-muted/30"
+            }`}
+          >
+            <AlertTriangle
+              className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
+                w.severity === "warning" ? "text-sim-setup-foreground" : "text-muted-foreground"
+              }`}
+              aria-hidden
+            />
+            <div>
+              <div className="text-foreground font-medium">{w.title}</div>
+              <div className="text-muted-foreground">{w.body}</div>
+            </div>
+          </li>
+        ))}
+      </ul>
+      {stepContent}
+    </div>
+  );
 }
 
 function Footer({

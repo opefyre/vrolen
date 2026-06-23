@@ -87,6 +87,7 @@ import {
   type RenderStation,
   type WorkerToMain,
 } from "./protocol";
+import { buildPlaceholderAtlas, loadManifestAtlas } from "./sprite-atlas";
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -155,6 +156,18 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
     world.addChild(edgeLayer);
     world.addChild(stationLayer);
     app.stage.addChild(world);
+
+    // VROL-195 — load the sprite atlas. Prefers public/sprites/manifest.json
+    // when present (real art); falls back to placeholder textures generated
+    // programmatically so the demo still renders something for each state.
+    // Errors here are non-fatal: drawStation defaults to roundRect if
+    // Texture.from(name) misses.
+    try {
+      const manifestAtlas = await loadManifestAtlas();
+      if (!manifestAtlas) buildPlaceholderAtlas(app);
+    } catch (err) {
+      reportError("init", err);
+    }
 
     // Bootstrap placeholder: a centred dotted box so the user sees the
     // renderer is alive before any scene arrives. Text labels live in

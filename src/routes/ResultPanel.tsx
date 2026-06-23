@@ -117,6 +117,11 @@ interface ResultPanelProps {
   /** VROL-908 — when set (live playback), every chart clips its series to
    *  samples[0..playheadIdx]. null/undefined renders the full series. */
   readonly playheadIdx?: number | null;
+  /** VROL-796 — handler for one-click Apply on actionable recommendations. */
+  readonly onApplyRecommendation?: (
+    rec: import("@/lib/recommendations").Recommendation,
+    payload: import("@/lib/recommendations").RecommendationApply,
+  ) => void;
 }
 
 /**
@@ -887,6 +892,7 @@ export function ResultPanel({
   mttrDistribution,
   bufferEdges,
   playheadIdx,
+  onApplyRecommendation,
 }: ResultPanelProps) {
   type TabId = "overview" | "throughput" | "oee" | "states" | "quality" | "buffers" | "stations";
   const [activeTab, setActiveTab] = useState<TabId>("overview");
@@ -1221,6 +1227,7 @@ export function ResultPanel({
                 result={result}
                 {...(mttrDistribution ? { mttrDistribution } : {})}
                 {...(bufferEdges ? { bufferEdges } : {})}
+                {...(onApplyRecommendation ? { onApply: onApplyRecommendation } : {})}
               />
             </CardContent>
           </Card>
