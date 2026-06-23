@@ -222,6 +222,9 @@ export class CycleExecutor<P> {
       // and worker starvation in the same cycle is a degenerate scenario, and
       // real scenarios get a fresh consume retry on every attemptStart anyway.
       let assignedWorkerId: ResourceId | undefined;
+      // VROL-884 — per-worker cycle multiplier. Defaults to 1.0 when no
+      // workers are configured or the worker doesn't declare a multiplier.
+      let workerCycleMultiplier = 1;
       if (this.config.workerPool) {
         const worker = this.config.workerPool.request(this.config.requiredSkills ?? [], timeMs);
         if (!worker) {
@@ -231,6 +234,10 @@ export class CycleExecutor<P> {
           return;
         }
         assignedWorkerId = worker.id;
+        const mult = worker.cycleMultiplier;
+        if (typeof mult === "number" && Number.isFinite(mult) && mult > 0) {
+          workerCycleMultiplier = mult;
+        }
       }
 
       const part = this.config.upstream.pull();
@@ -248,7 +255,8 @@ export class CycleExecutor<P> {
         this.config.setupTimeFor?.(this.lastProductId_, part) ?? this.config.setupTimeMs;
       const setupMs = setupDistribution ? sample(setupDistribution, this.prng, { min: 0 }) : 0;
       const partDistribution = this.config.cycleTimeFor?.(part) ?? this.config.cycleTimeMs;
-      const cycleTimeMs = sample(partDistribution, this.prng, { min: 0 });
+      // VROL-884 — apply the worker multiplier to the sampled cycle time.
+      const cycleTimeMs = sample(partDistribution, this.prng, { min: 0 }) * workerCycleMultiplier;
       const completeAt = timeMs + setupMs + cycleTimeMs;
 
       this.inFlight.push({

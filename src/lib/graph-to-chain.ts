@@ -121,6 +121,29 @@ function capacityOf(node: Node): number | undefined {
   return n;
 }
 
+function materialRequirementsOf(
+  node: Node,
+): ReadonlyArray<{ readonly materialId: string; readonly qtyPerPart: number }> | undefined {
+  // VROL-871 — per-station recipe override. Validated; non-positive or
+  // malformed rows are silently dropped.
+  const raw = (
+    node.data as
+      | { materialRequirements?: ReadonlyArray<{ materialId: string; qtyPerPart: number }> }
+      | undefined
+  )?.materialRequirements;
+  if (!Array.isArray(raw)) return undefined;
+  const out: { materialId: string; qtyPerPart: number }[] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    if (typeof r.materialId !== "string" || r.materialId.length === 0) continue;
+    if (typeof r.qtyPerPart !== "number" || !Number.isFinite(r.qtyPerPart) || r.qtyPerPart <= 0) {
+      continue;
+    }
+    out.push({ materialId: r.materialId, qtyPerPart: r.qtyPerPart });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 function nonNegNumOf(node: Node, key: string): number | undefined {
   const raw = (node.data as Record<string, unknown> | undefined)?.[key];
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return undefined;
@@ -251,6 +274,7 @@ function buildTopologyNode(node: Node, id: string, topoSet: Set<string>): ChainT
   const waterPerCycleL = nonNegNumOf(node, "waterPerCycleL");
   const co2ePerCycleG = nonNegNumOf(node, "co2ePerCycleG");
   const qualityGrades = qualityGradesOf(node);
+  const materialRequirements = materialRequirementsOf(node);
   return {
     id,
     label: labelOf(node),
@@ -268,6 +292,7 @@ function buildTopologyNode(node: Node, id: string, topoSet: Set<string>): ChainT
     ...(waterPerCycleL !== undefined ? { waterPerCycleL } : {}),
     ...(co2ePerCycleG !== undefined ? { co2ePerCycleG } : {}),
     ...(qualityGrades ? { qualityGrades } : {}),
+    ...(materialRequirements ? { materialRequirements } : {}),
   };
 }
 

@@ -27,7 +27,7 @@ import type { Distribution } from "./distribution";
 import { meanOf } from "./distribution";
 import type { EngineEvent } from "./events";
 import type { ScheduledEvent } from "./scheduler";
-import type { MaterialId, StationId } from "./ids";
+import { asMaterialId, type MaterialId, type StationId } from "./ids";
 import { newStationId } from "./ids";
 import { MaintenanceManager, type MaintenanceWindow } from "./maintenance";
 import { MaterialPool, type MaterialRequirement } from "./material-pool";
@@ -532,6 +532,17 @@ export interface ChainTopologyNode {
     readonly meanIntervalMs: number;
     readonly durationMs: number;
   }>;
+  /**
+   * VROL-871 — per-station material recipe override. When present and the
+   * run has a materials pool, this station consumes these materials per
+   * cycle instead of the scenario-level recipe (which is implicitly
+   * bottles+caps via settings-to-materials-cfg). Lets the canvas author
+   * any SMT feeder runout, paint pigment, etc.
+   */
+  readonly materialRequirements?: ReadonlyArray<{
+    readonly materialId: string;
+    readonly qtyPerPart: number;
+  }>;
 }
 
 /**
@@ -580,6 +591,16 @@ export interface ChainOptions {
   readonly horizonMs: number;
   readonly warmupMs: number;
   readonly prng: Prng;
+  /**
+   * VROL-883 — Pull / Kanban with finished-goods cap. When set, the sink
+   * station's input buffer is sized to kanbanCap instead of
+   * interStationBufferCapacity, capping how many finished parts can be
+   * "in flight" toward the sink at once. Back-pressures the chain via the
+   * existing buffer-full machinery: when the sink can't accept, upstream
+   * BlocksOut, propagating Idle/Starved waves through the line.
+   * Default undefined → push mode (current behaviour).
+   */
+  readonly kanbanCap?: number;
   /** Optional labels for each station (matches stationCycleTimes by index). Ignored in DAG mode. */
   readonly stationLabels?: readonly string[];
   /** Optional material consumption + replenishment configuration. */
@@ -692,6 +713,11 @@ interface NormalizedTopology {
     readonly meanIntervalMs: number;
     readonly durationMs: number;
   }>[];
+  /**
+   * VROL-871 — per-station material recipe override. undefined means the
+   * station uses the scenario-level recipe (or none if materials disabled).
+   */
+  perStationRecipes: (ReadonlyArray<MaterialRequirement> | undefined)[];
   /**
    * VROL-887 — per-edge bundle size. undefined or 1 = no bundling.
    * Aligned with `edges` by index.
@@ -877,6 +903,31 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       }
       return ms;
     });
+    // VROL-871 — per-station recipe override. Validated to be an array of
+    // { materialId: string, qtyPerPart: number > 0 }. Invalid entries dropped.
+    const perStationRecipes: (ReadonlyArray<MaterialRequirement> | undefined)[] = nodes.map(
+      (node) => {
+        const raw = node.materialRequirements;
+        if (!Array.isArray(raw) || raw.length === 0) return undefined;
+        const out: MaterialRequirement[] = [];
+        for (const entry of raw) {
+          if (!entry || typeof entry !== "object") continue;
+          if (typeof entry.materialId !== "string" || entry.materialId.length === 0) continue;
+          if (
+            typeof entry.qtyPerPart !== "number" ||
+            !Number.isFinite(entry.qtyPerPart) ||
+            entry.qtyPerPart <= 0
+          ) {
+            continue;
+          }
+          out.push({
+            materialId: asMaterialId(entry.materialId),
+            qtyPerPart: entry.qtyPerPart,
+          });
+        }
+        return out.length > 0 ? out : undefined;
+      },
+    );
     // VROL-891 — random event library. Validated; missing or empty defaults
     // to an empty array so the engine just skips scheduling for that station.
     const randomEvents = nodes.map((node) => {
@@ -935,6 +986,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       cipEveryMs,
       cipDurationMs,
       randomEvents,
+      perStationRecipes,
       // VROL-887 / VROL-875 — per-edge fields, aligned with normalizedEdges
       // by index. Bundle size must be a positive integer 1..1000; shelf life
       // must be > 0.
@@ -1002,6 +1054,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     cipEveryMs: Array.from({ length: n }, () => undefined),
     cipDurationMs: Array.from({ length: n }, () => undefined),
     randomEvents: Array.from({ length: n }, () => []),
+    perStationRecipes: Array.from({ length: n }, () => undefined),
     bundleSizes: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
     shelfLifeMs: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
     edges,
@@ -1158,10 +1211,17 @@ function* simulationStream(
   // in a balanced chain, causing a measurable L vs λW drift).
   const inputBuffer = new TrackedBuffer<TrackedPart>(10_000_000);
   const sinkBuffer = new Buffer<TrackedPart>(10_000_000);
-  // One CountingTrackedBuffer per topology edge.
-  const edgeBuffers: CountingTrackedBuffer<TrackedPart>[] = topology.edges.map(
-    () => new CountingTrackedBuffer<TrackedPart>(opts.interStationBufferCapacity),
-  );
+  // One CountingTrackedBuffer per topology edge. VROL-883 — when kanbanCap
+  // is set, the edge feeding the sink station gets that cap instead of the
+  // default. Back-pressures the rest of the chain via existing buffer-full
+  // mechanics; no special engine path needed beyond a smaller buffer.
+  const kanbanCap = opts.kanbanCap;
+  const edgeBuffers: CountingTrackedBuffer<TrackedPart>[] = topology.edges.map((edge) => {
+    const feedsSink = edge.targetIdx === topology.sinkIdx;
+    const cap =
+      feedsSink && kanbanCap && kanbanCap > 0 ? kanbanCap : opts.interStationBufferCapacity;
+    return new CountingTrackedBuffer<TrackedPart>(cap);
+  });
 
   // Workers — optional. The TrackingWorkerPool below extends WorkerPool with
   // acquire/release time bookkeeping so we can compute labor utilization at
@@ -1179,6 +1239,15 @@ function* simulationStream(
     materialPool = new MaterialPool(opts.materials.initialInventory);
     for (const r of opts.materials.stationRecipes) {
       recipeByStation.set(r.stationIndex, r.requirements);
+    }
+  }
+  // VROL-871 — per-station recipe overrides from topology. Override the
+  // materials-level recipe when present (a station with its own recipe wins).
+  // Only takes effect when materials are enabled (i.e., materialPool exists).
+  if (materialPool) {
+    for (let i = 0; i < n; i++) {
+      const override = topology.perStationRecipes[i];
+      if (override) recipeByStation.set(i, override);
     }
   }
 

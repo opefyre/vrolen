@@ -1171,6 +1171,103 @@ describe("audit VROL-899/900 — nominalCycleTimeMs + composite ranking", () => 
     expect(result.perStationMaintenanceMs?.[0] ?? 0).toBeGreaterThan(0);
   });
 
+  it("VROL-883 — kanbanCap on settings caps the sink edge buffer + back-pressures", () => {
+    // Without kanbanCap, A→B at 50ms cycles for 10s = ~200 parts.
+    const baseline = runChain({
+      topology: {
+        nodes: [
+          { id: "src", cycleTimeMs: constant(50) },
+          { id: "snk", cycleTimeMs: constant(100) },
+        ],
+        edges: [{ source: "src", target: "snk" }],
+      },
+      interStationBufferCapacity: 50,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // With kanbanCap=2, the sink-edge buffer is capped at 2 → upstream
+    // BlockedOut most of the time → upstream completes fewer parts.
+    const capped = runChain({
+      topology: {
+        nodes: [
+          { id: "src", cycleTimeMs: constant(50) },
+          { id: "snk", cycleTimeMs: constant(100) },
+        ],
+        edges: [{ source: "src", target: "snk" }],
+      },
+      interStationBufferCapacity: 50,
+      kanbanCap: 2,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // Sink throughput stays the same (paced by sink cycle).
+    expect(Math.abs(capped.completed - baseline.completed)).toBeLessThanOrEqual(2);
+    // Source counted FAR fewer cycles in capped mode (back-pressured).
+    expect(capped.perStationCompleted[0] ?? 0).toBeLessThan(baseline.perStationCompleted[0] ?? 0);
+  });
+
+  it("VROL-871 — per-station materialRequirements override the materials-level recipe", () => {
+    // Station with its own recipe (asks for 2 'foo' per part). Materials
+    // pool has 5 'foo' → expect ~2-3 parts before starvation.
+    const result = runChain({
+      topology: {
+        nodes: [
+          {
+            id: "s",
+            cycleTimeMs: constant(100),
+            materialRequirements: [{ materialId: "foo", qtyPerPart: 2 }],
+          },
+        ],
+        edges: [],
+      },
+      interStationBufferCapacity: 10,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+      materials: {
+        initialInventory: [[asMaterialId("foo"), 5]],
+        stationRecipes: [
+          { stationIndex: 0, requirements: [{ materialId: asMaterialId("bar"), qtyPerPart: 999 }] },
+        ],
+      },
+    });
+    // Per-station override consumes 2 'foo' per part; only 5/2 = 2 parts.
+    expect(result.perStationCompleted[0] ?? 0).toBeLessThanOrEqual(3);
+    expect(result.perStationCompleted[0] ?? 0).toBeGreaterThanOrEqual(1);
+  });
+
+  it("VROL-884 — per-worker cycleMultiplier scales station cycle time", () => {
+    // Junior worker, multiplier 2.0 → station cycle is doubled → completed halves.
+    const result = runChain({
+      topology: {
+        nodes: [{ id: "s", cycleTimeMs: constant(100) }],
+        edges: [],
+      },
+      interStationBufferCapacity: 10,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+      workers: {
+        workers: [
+          {
+            id: asResourceId("w1"),
+            name: "Junior",
+            skills: ["any"],
+            shifts: [{ startMs: 0, endMs: 10_000 }],
+            tier: "junior",
+            cycleMultiplier: 2,
+          },
+        ],
+        requireDefault: ["any"],
+      },
+    });
+    // Baseline: 10s / 100ms = 100 parts. With 2× multiplier: ~50.
+    expect(result.perStationCompleted[0] ?? 0).toBeLessThanOrEqual(55);
+    expect(result.perStationCompleted[0] ?? 0).toBeGreaterThanOrEqual(45);
+  });
+
   it("VROL-887 — bundleSize on an edge produces a per-edge bundle-event count", () => {
     // Single A→B chain; 1000ms / 100ms = ~10 parts flow A→B over 1s.
     // bundleSize=3 → ~3 bundle events.

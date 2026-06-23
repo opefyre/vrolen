@@ -5007,6 +5007,53 @@ function EditorCanvas() {
                   </TabsContent>
                   <TabsContent value="schedule">
                     <CardContent className="space-y-3" data-testid="inspector-panel-schedule">
+                      {/* VROL-915 — CIP recurring cleaning (VROL-876 engine
+                          field). Period + duration both in minutes for sane
+                          UX; written to node.data as ms. */}
+                      <div className="border-border space-y-2 rounded-md border border-dashed p-3">
+                        <div className="text-foreground text-xs font-medium">
+                          CIP / forced cleaning
+                        </div>
+                        <p className="text-muted-foreground text-xs">
+                          Recurring clean-in-place cycle. Food / pharma / dairy / cosmetics lines
+                          that need allergen or batch cleanout between runs.
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <NumberField
+                            id="inspector-cip-every"
+                            label="Every (min)"
+                            value={Math.round(
+                              Number(
+                                (selectedNode.data as { cipEveryMs?: unknown }).cipEveryMs ?? 0,
+                              ) / 60_000,
+                            )}
+                            min={0}
+                            step={1}
+                            onChange={(n) => {
+                              updateSelectedNodeData({
+                                cipEveryMs: n > 0 ? n * 60_000 : undefined,
+                              });
+                            }}
+                          />
+                          <NumberField
+                            id="inspector-cip-duration"
+                            label="Duration (min)"
+                            value={Math.round(
+                              Number(
+                                (selectedNode.data as { cipDurationMs?: unknown }).cipDurationMs ??
+                                  0,
+                              ) / 60_000,
+                            )}
+                            min={0}
+                            step={1}
+                            onChange={(n) => {
+                              updateSelectedNodeData({
+                                cipDurationMs: n > 0 ? n * 60_000 : undefined,
+                              });
+                            }}
+                          />
+                        </div>
+                      </div>
                       <MaintenanceWindowsEditor
                         value={
                           Array.isArray(

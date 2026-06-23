@@ -41,6 +41,18 @@ export interface PoolWorker {
    * the break window).
    */
   readonly breaks?: readonly ShiftWindow[];
+  /**
+   * VROL-884 — skill tier label, free-form (e.g., "junior", "senior",
+   * "trainee"). Display-only; not consumed by the engine. Defaults undefined.
+   */
+  readonly tier?: string;
+  /**
+   * VROL-884 — per-worker cycle multiplier. When set, the station cycle time
+   * is multiplied by this value while the worker is assigned. junior=1.3
+   * means the worker takes 30% longer than nominal; senior=0.85 means 15%
+   * faster. Defaults to 1.0 (no effect). Validated as > 0 at run init.
+   */
+  readonly cycleMultiplier?: number;
 }
 
 export class WorkerPool {
