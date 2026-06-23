@@ -486,6 +486,15 @@ export interface ChainTopologyNode {
    * Unknown entries default the station to {A: 1.0}.
    */
   readonly qualityGrades?: ReadonlyArray<{ readonly grade: string; readonly pct: number }>;
+  /**
+   * VROL-877 — preventive maintenance triggered by cycle count (press dies,
+   * milling tools, roll changes). When set, every Nth completed cycle the
+   * station enters Maintenance for pmCycleDurationMs (default 60s when only
+   * pmEveryNCycles is set). Coexists with calendar PM windows — both can
+   * fire on the same station, whichever hits first wins.
+   */
+  readonly pmEveryNCycles?: number;
+  readonly pmCycleDurationMs?: number;
 }
 
 /**
@@ -620,6 +629,9 @@ interface NormalizedTopology {
    * surface a single A-grade count.
    */
   qualityGrades: ReadonlyArray<{ readonly grade: string; readonly pct: number }>[];
+  /** VROL-877 — per-station cycle-count PM trigger + window length. */
+  pmEveryNCycles: (number | undefined)[];
+  pmCycleDurationMs: (number | undefined)[];
   /** Edges in input order; each carries source + target as node-array indices. */
   edges: { sourceIdx: number; targetIdx: number }[];
   /** For each node index: the indices of nodes it sends parts to. */
@@ -751,6 +763,30 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
         if (sum <= 0) return [{ grade: "A", pct: 1 }];
         return raw.map((g) => ({ grade: g.grade, pct: Math.max(0, g.pct) / sum }));
       });
+    // VROL-877 — cycle-count PM. Both fields optional + co-validated: when
+    // pmEveryNCycles is set, default the window to 60s; when only duration
+    // is set, ignore it (no trigger). Negative / non-integer N throws.
+    const pmEveryNCycles: (number | undefined)[] = nodes.map((node) => {
+      const n = node.pmEveryNCycles;
+      if (n === undefined) return undefined;
+      if (!Number.isInteger(n) || n < 1) {
+        throw new Error(
+          `topology: station "${node.id}" pmEveryNCycles must be a positive integer (got ${String(n)})`,
+        );
+      }
+      return n;
+    });
+    const pmCycleDurationMs: (number | undefined)[] = nodes.map((node, idx) => {
+      if (pmEveryNCycles[idx] === undefined) return undefined;
+      const ms = node.pmCycleDurationMs;
+      if (ms === undefined) return 60_000;
+      if (!Number.isFinite(ms) || ms <= 0) {
+        throw new Error(
+          `topology: station "${node.id}" pmCycleDurationMs must be > 0 (got ${String(ms)})`,
+        );
+      }
+      return ms;
+    });
     // VROL-899 — nominal cycle is OPTIONAL. When set but >= operating cycle
     // mean, we silently drop it (a nominal slower than operating means the
     // operator over-rated the machine, not throttled it — clamping rather
@@ -783,6 +819,8 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       waterPerCycleL,
       co2ePerCycleG,
       qualityGrades,
+      pmEveryNCycles,
+      pmCycleDurationMs,
       edges: normalizedEdges,
       outgoing,
       incoming,
@@ -822,6 +860,8 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     waterPerCycleL: Array.from({ length: n }, () => 0),
     co2ePerCycleG: Array.from({ length: n }, () => 0),
     qualityGrades: Array.from({ length: n }, () => [{ grade: "A", pct: 1 } as const]),
+    pmEveryNCycles: Array.from({ length: n }, () => undefined),
+    pmCycleDurationMs: Array.from({ length: n }, () => undefined),
     edges,
     outgoing,
     incoming,
@@ -937,11 +977,20 @@ function* simulationStream(
     ? new Array(n).fill(0)
     : undefined;
 
-  // Maintenance — one manager per station that has at least one window.
+  // Maintenance — one manager per station that has at least one window OR
+  // has a cycle-count PM trigger configured. The shadow manager (empty
+  // windows) handles state machine transitions when the cycle-count trigger
+  // (VROL-877) fires a maintenance-start/-end pair below.
   const maintenanceManagers: (MaintenanceManager | undefined)[] = stationIds.map((id, i) => {
     const windows = opts.maintenance?.perStationWindows.get(i);
-    if (!windows || windows.length === 0) return undefined;
-    return new MaintenanceManager(id, windows, stateMachines[i] as StationStateMachine, scheduler);
+    const hasCyclePm = topology.pmEveryNCycles[i] !== undefined;
+    if ((!windows || windows.length === 0) && !hasCyclePm) return undefined;
+    return new MaintenanceManager(
+      id,
+      windows ?? [],
+      stateMachines[i] as StationStateMachine,
+      scheduler,
+    );
   });
 
   // Wire each tracker (and, if applicable, breakdown manager) to its state machine.
@@ -1278,6 +1327,38 @@ function* simulationStream(
       for (const downIdx of downstreamNodes) {
         executors[downIdx]?.onUpstreamAvailable(event.timeMs);
       }
+    });
+  }
+
+  // VROL-877 — cycle-count preventive maintenance. When pmEveryNCycles is
+  // set, every Nth completion (good or defective) flips the state machine to
+  // Maintenance directly, then schedules a maintenance-end event after
+  // pmCycleDurationMs. Calling stateMachine.transition() directly (instead
+  // of scheduling a maintenance-start) avoids the manager-vs-no-manager
+  // branch in the dispatcher and keeps OEE attribution consistent — the
+  // window time is recorded under the Maintenance state by state-time-tracker.
+  for (let i = 0; i < n; i++) {
+    const ex = executors[i];
+    const everyN = topology.pmEveryNCycles[i];
+    const durationMs = topology.pmCycleDurationMs[i];
+    if (!ex || !everyN || everyN <= 0 || !durationMs || durationMs <= 0) continue;
+    const stationId = stationIds[i] as StationId;
+    const sm = stateMachines[i] as StationStateMachine;
+    let lastCount = 0;
+    ex.onCompletion((event) => {
+      const cur = ex.completed + ex.scrapped;
+      if (cur === lastCount) return;
+      const triggeredBoundary = Math.floor(cur / everyN) > Math.floor(lastCount / everyN);
+      lastCount = cur;
+      if (!triggeredBoundary) return;
+      // Skip if already Down / Maintenance — same precedence rule as
+      // MaintenanceManager. A real factory would extend the calendar PM
+      // to the next cycle, but the simpler engine model is fine for Phase 0.
+      const state = sm.state;
+      if (state === "Down" || state === "Maintenance") return;
+      sm.transition("Maintenance", "pm-cycle-count", event.timeMs);
+      ex.handleBreakdown(event.timeMs);
+      scheduler.schedule(event.timeMs + durationMs, { kind: "maintenance-end", stationId });
     });
   }
 
@@ -1767,7 +1848,11 @@ function* simulationStream(
     ...(materialFinal ? { materialFinal, replenishmentsFired } : {}),
     ...(sourceMode ? { sourceArrivalsFired } : {}),
     ...(breakdownCounts ? { perStationBreakdowns: breakdownCounts } : {}),
-    ...(opts.maintenance
+    // VROL-877 — expose perStationMaintenanceMs whenever ANY station could
+    // enter Maintenance (calendar windows OR cycle-count PM), so the cycle-
+    // count audit tests can read the bucket without depending on a calendar
+    // config being present too.
+    ...(opts.maintenance || topology.pmEveryNCycles.some((n) => n !== undefined)
       ? {
           perStationMaintenanceMs: stateTimeTrackers.map((t) => t.timeInState("Maintenance")),
         }

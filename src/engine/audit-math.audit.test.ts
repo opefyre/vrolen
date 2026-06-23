@@ -1120,6 +1120,57 @@ describe("audit VROL-899/900 — nominalCycleTimeMs + composite ranking", () => 
     expect(result.totalCO2eG).toBeGreaterThan(250);
   });
 
+  it("VROL-877 — pmEveryNCycles triggers Maintenance windows and shows in Maintenance bucket", () => {
+    // 60s run, station does ~600 cycles at 100ms; pmEveryNCycles=200 should
+    // fire ~3 times. pmCycleDurationMs=10_000 each → ~30s of Maintenance.
+    const result = runChain({
+      topology: {
+        nodes: [
+          {
+            id: "press",
+            label: "Press",
+            cycleTimeMs: constant(100),
+            pmEveryNCycles: 200,
+            pmCycleDurationMs: 10_000,
+          },
+        ],
+        edges: [],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // Maintenance bucket should have meaningful time (at least 5s).
+    const maintenanceMs = result.perStationMaintenanceMs?.[0] ?? 0;
+    expect(maintenanceMs).toBeGreaterThan(5_000);
+    // And completed should be reduced from the baseline 600 (since the
+    // press is forced offline ~30s).
+    expect(result.perStationCompleted[0] ?? 0).toBeLessThan(500);
+  });
+
+  it("VROL-877 — pmEveryNCycles defaults durationMs to 60s when not provided", () => {
+    const result = runChain({
+      topology: {
+        nodes: [
+          {
+            id: "press",
+            label: "Press",
+            cycleTimeMs: constant(100),
+            pmEveryNCycles: 100,
+            // pmCycleDurationMs not set → engine defaults to 60_000
+          },
+        ],
+        edges: [],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 120_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    expect(result.perStationMaintenanceMs?.[0] ?? 0).toBeGreaterThan(0);
+  });
+
   it("VROL-886 — batch + lot IDs propagate from source to sink and appear in per-batch counts", () => {
     const result = runChain({
       topology: {

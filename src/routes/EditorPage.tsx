@@ -315,6 +315,12 @@ const PALETTE: readonly PaletteItem[] = [
     key: "p",
     keyHint: "P",
   },
+  // VROL-874 — residence-time station: conveyor / tunnel oven / pasteuriser.
+  // The model is just "capacity > 1 + constant cycle = N parts in flight,
+  // each with a fixed residence." Distinct palette item so the user reaches
+  // for it directly instead of building it from a Machine + manual config.
+  // prettier-ignore
+  { stationType: "conveyor", label: "Conveyor", icon: Truck, summary: "N parts in flight, fixed residence", key: "v", keyHint: "V" },
   // VROL-274 — generic escape-hatch.
   // prettier-ignore
   { stationType: "custom", label: "Custom", icon: HelpCircle, summary: "Generic timed-delay", key: "c", keyHint: "C" },
@@ -1835,6 +1841,11 @@ function EditorCanvas() {
       if (!item) return;
 
       const id = `n${String(nodeIdRef.current++)}`;
+      // VROL-874 — type-specific defaults so the conveyor lands ready-to-run
+      // with capacity 10 + 60s residence. Other types stick to capacity 1 +
+      // 100ms cycle. Keeps the drop interaction "drop and Run" useful for the
+      // residence-time pattern.
+      const isConveyor = item.stationType === "conveyor";
       const newNode: Node = {
         id,
         type: "station",
@@ -1842,9 +1853,10 @@ function EditorCanvas() {
         data: {
           label: item.label,
           stationType: item.stationType,
-          cycleDistribution: constant(100),
+          cycleDistribution: constant(isConveyor ? 60_000 : 100),
           defectRate: 0,
           stationKey: generateStationKey(),
+          ...(isConveyor ? { capacity: 10 } : {}),
         },
       };
       setNodes((nds) => nds.concat(newNode));

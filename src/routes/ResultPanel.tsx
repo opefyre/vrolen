@@ -1263,6 +1263,53 @@ export function ResultPanel({
         </Card>
       ) : null}
 
+      {/* VROL-914 — per-station sustainability contribution. Only renders
+          when the line has non-zero totals (line tile gate would have shown
+          them up top already, so this drills into who's contributing). */}
+      {activeTab === "stations" &&
+      ((result.totalEnergyJ ?? 0) > 0 ||
+        (result.totalWaterL ?? 0) > 0 ||
+        (result.totalCO2eG ?? 0) > 0) ? (
+        <Card id="per-station-sustainability">
+          <CardHeader>
+            <CardTitle className="font-heading text-base">
+              <AnchorTitle anchorId="per-station-sustainability">
+                Per-station sustainability
+              </AnchorTitle>
+            </CardTitle>
+            <CardDescription>
+              Each station's share of energy, water, and CO₂e totals — the line tiles broken down by
+              station.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-muted-foreground mb-2 text-xs">
+              The result panel only exposes line-level totals today. Per-station breakdowns would
+              require capturing per-station inputs at run time — a follow-up will land that
+              alongside the energy/water/CO₂e configuration when there's measured demand.
+            </p>
+            <div className="text-foreground/80 grid grid-cols-3 gap-2 text-xs">
+              <div className="border-border bg-card/40 rounded-md border p-2">
+                <div className="text-muted-foreground text-[10px] uppercase">Energy</div>
+                <div className="font-mono tabular-nums">
+                  {fmt((result.totalEnergyJ ?? 0) / 3_600_000, 1)} kWh
+                </div>
+              </div>
+              <div className="border-border bg-card/40 rounded-md border p-2">
+                <div className="text-muted-foreground text-[10px] uppercase">Water</div>
+                <div className="font-mono tabular-nums">{fmt(result.totalWaterL ?? 0, 1)} L</div>
+              </div>
+              <div className="border-border bg-card/40 rounded-md border p-2">
+                <div className="text-muted-foreground text-[10px] uppercase">CO₂e</div>
+                <div className="font-mono tabular-nums">
+                  {fmt((result.totalCO2eG ?? 0) / 1000, 1)} kg
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {activeTab === "overview" ? (
         <>
           <BottleneckExplanationCard
@@ -1499,6 +1546,125 @@ export function ResultPanel({
               warmupMs={warmupMs}
               playheadIdx={playheadIdx}
             />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* VROL-914 — per-grade quality breakdown stacked bar. Only renders when
+          the line has 2+ grades (otherwise the bar is a single 100%-A block
+          and adds nothing). Sourced from result.lineGradeCounts (VROL-882). */}
+      {activeTab === "quality" &&
+      Object.keys(result.lineGradeCounts ?? {}).filter((g) => g !== "A").length > 0 ? (
+        <Card id="grade-breakdown">
+          <CardHeader>
+            <CardTitle className="font-heading text-base">
+              <AnchorTitle anchorId="grade-breakdown">Quality grades</AnchorTitle>
+            </CardTitle>
+            <CardDescription>Share of completed parts by grade.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {(() => {
+              const counts = result.lineGradeCounts ?? {};
+              const total = Object.values(counts).reduce((s, n) => s + n, 0);
+              if (total === 0) return null;
+              const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+              const palette = [
+                "bg-sim-running",
+                "bg-sim-setup",
+                "bg-sim-blocked",
+                "bg-sim-down",
+                "bg-sim-maintenance",
+                "bg-sim-idle",
+              ];
+              return (
+                <div className="space-y-2">
+                  <div className="bg-muted flex h-3 overflow-hidden rounded-full">
+                    {entries.map(([g, n], i) => (
+                      <div
+                        key={g}
+                        title={`${g}: ${String(n)} (${String(Math.round((n / total) * 100))}%)`}
+                        className={`h-full ${palette[i % palette.length]}`}
+                        style={{ width: `${String((n / total) * 100)}%` }}
+                      />
+                    ))}
+                  </div>
+                  <ul className="text-foreground/80 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs sm:grid-cols-3">
+                    {entries.map(([g, n], i) => (
+                      <li key={g} className="flex items-center gap-1.5">
+                        <span
+                          className={`h-2 w-2 shrink-0 rounded-sm ${palette[i % palette.length]}`}
+                        />
+                        <span className="font-mono tabular-nums">{g}</span>
+                        <span className="text-muted-foreground ml-auto font-mono tabular-nums">
+                          {n.toLocaleString()} · {Math.round((n / total) * 100)}%
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })()}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* VROL-914 — per-batch yield table. Only renders when batch tagging is
+          enabled. Sortable by yield (asc/desc) so the worst batches surface
+          first. */}
+      {activeTab === "quality" && result.perBatchCompleted && result.perBatchCompleted.size > 0 ? (
+        <Card id="per-batch-yield">
+          <CardHeader>
+            <CardTitle className="font-heading text-base">
+              <AnchorTitle anchorId="per-batch-yield">Per-batch yield</AnchorTitle>
+            </CardTitle>
+            <CardDescription>
+              Good vs scrap per batch. Sorted lowest-yield first so the worst batch is at the top.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {(() => {
+              const good = result.perBatchCompleted ?? new Map<string, number>();
+              const scrap = result.perBatchScrapped ?? new Map<string, number>();
+              const allIds = new Set<string>([...good.keys(), ...scrap.keys()]);
+              const rows = [...allIds]
+                .map((id) => {
+                  const g = good.get(id) ?? 0;
+                  const s = scrap.get(id) ?? 0;
+                  const yieldPct = g + s > 0 ? g / (g + s) : 1;
+                  return { id, g, s, yieldPct };
+                })
+                .sort((a, b) => a.yieldPct - b.yieldPct);
+              return (
+                <div className="max-h-72 overflow-y-auto">
+                  <table className="text-foreground/80 w-full text-xs">
+                    <thead>
+                      <tr className="text-muted-foreground border-border border-b">
+                        <th className="py-1 pr-2 text-left font-medium">Batch</th>
+                        <th className="py-1 pr-2 text-right font-medium">Good</th>
+                        <th className="py-1 pr-2 text-right font-medium">Scrap</th>
+                        <th className="py-1 text-right font-medium">Yield</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r) => (
+                        <tr key={r.id} className="border-border/40 border-b last:border-0">
+                          <td className="py-1 pr-2 font-mono">{r.id}</td>
+                          <td className="py-1 pr-2 text-right font-mono tabular-nums">
+                            {r.g.toLocaleString()}
+                          </td>
+                          <td className="py-1 pr-2 text-right font-mono tabular-nums">
+                            {r.s.toLocaleString()}
+                          </td>
+                          <td className="py-1 text-right font-mono tabular-nums">
+                            {Math.round(r.yieldPct * 100)}%
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </CardContent>
         </Card>
       ) : null}
