@@ -9,10 +9,7 @@
  * these two intents stay separate.
  */
 
-import { X } from "lucide-react";
-
 import { StateMixBar } from "@/components/canvas/state-mix-bar";
-import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
@@ -167,17 +164,10 @@ export function StationDrilldown({
             read-only analytics.
           </SheetDescription>
         </SheetHeader>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Close station report"
-          onClick={() => {
-            onOpenChange(false);
-          }}
-          className="absolute top-2 right-2 h-7 w-7"
-        >
-          <X className="h-4 w-4" />
-        </Button>
+        {/* VROL-912 follow-up — shadcn SheetContent renders its own X close
+            button. We previously layered a second one on top, producing two
+            close affordances. Drop ours; SheetHeader's pr-10 already reserves
+            the space the built-in needs. */}
         {!haveData ? (
           <div className="text-muted-foreground p-4 text-sm">
             No run results for this station yet. Hit Run to populate the report.

@@ -84,8 +84,17 @@ describe("StationDrilldown (VROL-894)", () => {
         edges={[]}
       />,
     );
-    await user.click(screen.getByLabelText("Close station report"));
-    expect(onOpenChange).toHaveBeenCalledWith(false);
+    // shadcn SheetContent renders the close X with an sr-only "Close" label.
+    // We no longer layer our own close button on top — that was producing two
+    // X buttons in the same corner.
+    const closeButtons = screen.getAllByText(/^Close$/i);
+    expect(closeButtons.length).toBeGreaterThan(0);
+    // Walk up to the closest button — sr-only span sits inside the
+    // PrimitiveSheet.Close button.
+    const closeBtn = closeButtons[0]?.closest("button");
+    expect(closeBtn).toBeTruthy();
+    await user.click(closeBtn!);
+    expect(onOpenChange).toHaveBeenCalled();
   });
 
   it("surfaces a state-specific recommendation derived from the dominant state", () => {
