@@ -123,4 +123,66 @@ describe("StationDrilldown (VROL-894)", () => {
     );
     expect(screen.getByText(/No run results for this station yet/i)).toBeTruthy();
   });
+
+  // ────────────────────────────────────────────────────────────────────
+  // VROL-912 — visual chart sections in the drilldown.
+  // ────────────────────────────────────────────────────────────────────
+  it("VROL-912 — renders the Cumulative-over-time section when samples are present", () => {
+    const withSamples = {
+      ...makeResult(),
+      samples: [
+        {
+          tMs: 0,
+          perStationCompleted: [0],
+          perEdgeBufferFill: [],
+          perStationStateMs: [{ Running: 0 }],
+        },
+        {
+          tMs: 1000,
+          perStationCompleted: [10],
+          perEdgeBufferFill: [],
+          perStationStateMs: [{ Running: 800 }],
+        },
+        {
+          tMs: 2000,
+          perStationCompleted: [25],
+          perEdgeBufferFill: [],
+          perStationStateMs: [{ Running: 1700 }],
+        },
+      ],
+    } as unknown as Parameters<typeof StationDrilldown>[0]["result"];
+    render(
+      <StationDrilldown
+        open
+        onOpenChange={() => {}}
+        nodeId="node-1"
+        nodeLabel="Filler"
+        nodeTypeLabel="machine"
+        result={withSamples}
+        chainNodeIds={["node-1"]}
+        edges={[]}
+      />,
+    );
+    expect(screen.getByText(/Cumulative over time/i)).toBeTruthy();
+    expect(screen.getByText(/Utilisation over time/i)).toBeTruthy();
+  });
+
+  it("VROL-912 — chart sections hide when there are no samples (sampler off)", () => {
+    // Default makeResult fixture has no samples field — neither chart section
+    // should render its header.
+    render(
+      <StationDrilldown
+        open
+        onOpenChange={() => {}}
+        nodeId="node-1"
+        nodeLabel="Filler"
+        nodeTypeLabel="machine"
+        result={makeResult()}
+        chainNodeIds={["node-1"]}
+        edges={[]}
+      />,
+    );
+    expect(screen.queryByText(/Cumulative over time/i)).toBeNull();
+    expect(screen.queryByText(/Utilisation over time/i)).toBeNull();
+  });
 });

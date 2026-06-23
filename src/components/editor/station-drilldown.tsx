@@ -21,6 +21,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import type { ChainResult } from "@/engine/chain-harness";
+import { Sparkline } from "@/routes/Sparkline";
 
 interface StationDrilldownProps {
   readonly open: boolean;
@@ -39,6 +40,13 @@ interface StationDrilldownProps {
     readonly fillL?: number;
     readonly capacity?: number;
   }>;
+  /**
+   * VROL-912 — engine edge keys ("sourceNodeId→targetNodeId"), index-aligned
+   * with result.samples[].perEdgeBufferFill. Lets the drilldown render per-edge
+   * buffer-fill sparklines without a separate index lookup. When undefined the
+   * buffer-fill sparklines hide and the section falls back to text.
+   */
+  readonly edgeKeys?: readonly string[];
 }
 
 function pct(n: number): string {
@@ -70,6 +78,16 @@ function buildRecommendation(state: string, sharePct: number): string {
   }
 }
 
+const STATE_KEYS_FOR_RATIO = [
+  "Running",
+  "Setup",
+  "Idle",
+  "BlockedOut",
+  "Starved",
+  "Maintenance",
+  "Down",
+] as const;
+
 export function StationDrilldown({
   open,
   onOpenChange,
@@ -79,6 +97,7 @@ export function StationDrilldown({
   result,
   chainNodeIds,
   edges,
+  edgeKeys,
 }: StationDrilldownProps) {
   const stationIdx = result && chainNodeIds && nodeId ? chainNodeIds.indexOf(nodeId) : -1;
   const haveData = stationIdx >= 0 && result !== null;
@@ -95,6 +114,39 @@ export function StationDrilldown({
     bottleneck.breakdown[0] ?? { state: "Idle", pct: 0 },
   );
   const recommendation = primary ? buildRecommendation(primary.state, primary.pct) : null;
+
+  // VROL-912 — derive per-station time series from result.samples. Empty arrays
+  // when no sampler ran (sampler off in Run Settings); the chart sections
+  // hide cleanly below.
+  const samples = haveData ? (result.samples ?? []) : [];
+  const completedSeries: number[] = [];
+  const runningPctSeries: number[] = [];
+  for (const s of samples) {
+    completedSeries.push(s.perStationCompleted[stationIdx] ?? 0);
+    const stateMs = s.perStationStateMs[stationIdx] ?? {};
+    let total = 0;
+    for (const k of STATE_KEYS_FOR_RATIO) total += stateMs[k] ?? 0;
+    const ratio = total > 0 ? (stateMs.Running ?? 0) / total : 0;
+    // Sparkline component skips peak <= 0; multiply by 100 so the curve is
+    // visible (otherwise a 1.0 max would render as a single hairline pixel).
+    runningPctSeries.push(ratio * 100);
+  }
+  const incomingEdgeBufferSeries = inEdges.map((e) => {
+    const key = `${e.source}→${e.target}`;
+    const idx = edgeKeys?.indexOf(key) ?? -1;
+    return {
+      edge: e,
+      series: idx >= 0 ? samples.map((s) => s.perEdgeBufferFill[idx] ?? 0) : [],
+    };
+  });
+  const outgoingEdgeBufferSeries = outEdges.map((e) => {
+    const key = `${e.source}→${e.target}`;
+    const idx = edgeKeys?.indexOf(key) ?? -1;
+    return {
+      edge: e,
+      series: idx >= 0 ? samples.map((s) => s.perEdgeBufferFill[idx] ?? 0) : [],
+    };
+  });
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -287,46 +339,85 @@ export function StationDrilldown({
                   <span className="font-mono tabular-nums">{reworked.toLocaleString()}</span>
                 </li>
               </ul>
+              {/* VROL-912 — cumulative-completed sparkline for THIS station.
+                  Unlike the line-total sparkline the user complained about,
+                  this one is per-station and actually differs across nodes
+                  when defects, scrap, or rework split the line completions. */}
+              {completedSeries.length > 1 ? (
+                <div className="mt-1.5">
+                  <div className="text-muted-foreground text-[10px] uppercase">
+                    Cumulative over time
+                  </div>
+                  <Sparkline series={completedSeries} width={240} height={36} unit="parts" />
+                </div>
+              ) : null}
             </section>
+
+            {/* VROL-912 — running % over time. Tells the user how busy this
+                station was MOMENT-TO-MOMENT, not just on average. A flat-near-
+                100% curve marks the bottleneck; choppy curves mean the station
+                was alternating busy ↔ starved/blocked. */}
+            {runningPctSeries.length > 1 ? (
+              <section className="space-y-1.5">
+                <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+                  Utilisation over time
+                </div>
+                <Sparkline series={runningPctSeries} width={240} height={36} unit="% running" />
+                <p className="text-muted-foreground text-[10px] leading-snug">
+                  Flat-near-the-top: this station is the constraint. Choppy: it's alternating
+                  between busy and waiting on neighbours.
+                </p>
+              </section>
+            ) : null}
 
             {(inEdges.length > 0 || outEdges.length > 0) && (
               <section className="space-y-1.5">
                 <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
                   Buffer pressure
                 </div>
-                {inEdges.length > 0 ? (
-                  <div className="text-foreground/80 space-y-0.5 text-xs">
+                {incomingEdgeBufferSeries.length > 0 ? (
+                  <div className="text-foreground/80 space-y-1 text-xs">
                     <div className="text-muted-foreground text-[10px] uppercase">Incoming</div>
-                    {inEdges.map((e) => {
-                      const fill = e.fillL ?? 0;
-                      const cap = e.capacity ?? 0;
-                      const ratio = cap > 0 ? fill / cap : 0;
+                    {incomingEdgeBufferSeries.map(({ edge: e, series }) => {
                       const label = `${e.sourceLabel ?? e.source} → ${e.targetLabel ?? e.target}`;
+                      const peak = series.length > 0 ? Math.max(0, ...series) : 0;
                       return (
-                        <div key={e.id} className="flex justify-between">
-                          <span className="truncate pr-2">{label}</span>
-                          <span className="font-mono tabular-nums">
-                            {cap > 0 ? `${pct(ratio)} full` : "—"}
-                          </span>
+                        <div key={e.id} className="space-y-0.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate pr-2">{label}</span>
+                            <span className="text-muted-foreground font-mono tabular-nums">
+                              {peak > 0 ? `peak ${peak}` : "—"}
+                            </span>
+                          </div>
+                          {/* VROL-912 — per-edge fill sparkline. Picks up the
+                              "buffer breathing" pattern that the static peak
+                              alone hides (e.g., one big spike vs sustained
+                              pressure look identical in the peak number). */}
+                          {series.length > 1 ? (
+                            <Sparkline series={series} width={240} height={24} unit="parts" />
+                          ) : null}
                         </div>
                       );
                     })}
                   </div>
                 ) : null}
-                {outEdges.length > 0 ? (
-                  <div className="text-foreground/80 space-y-0.5 text-xs">
+                {outgoingEdgeBufferSeries.length > 0 ? (
+                  <div className="text-foreground/80 space-y-1 text-xs">
                     <div className="text-muted-foreground text-[10px] uppercase">Outgoing</div>
-                    {outEdges.map((e) => {
-                      const fill = e.fillL ?? 0;
-                      const cap = e.capacity ?? 0;
-                      const ratio = cap > 0 ? fill / cap : 0;
+                    {outgoingEdgeBufferSeries.map(({ edge: e, series }) => {
                       const label = `${e.sourceLabel ?? e.source} → ${e.targetLabel ?? e.target}`;
+                      const peak = series.length > 0 ? Math.max(0, ...series) : 0;
                       return (
-                        <div key={e.id} className="flex justify-between">
-                          <span className="truncate pr-2">{label}</span>
-                          <span className="font-mono tabular-nums">
-                            {cap > 0 ? `${pct(ratio)} full` : "—"}
-                          </span>
+                        <div key={e.id} className="space-y-0.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate pr-2">{label}</span>
+                            <span className="text-muted-foreground font-mono tabular-nums">
+                              {peak > 0 ? `peak ${peak}` : "—"}
+                            </span>
+                          </div>
+                          {series.length > 1 ? (
+                            <Sparkline series={series} width={240} height={24} unit="parts" />
+                          ) : null}
                         </div>
                       );
                     })}

@@ -7429,6 +7429,10 @@ function EditorCanvas() {
             targetLabel: typeof tgtLabel === "string" ? tgtLabel : undefined,
           };
         })}
+        // VROL-912 — engine edge keys so the drilldown can map its
+        // (source, target) edges back to result.samples[].perEdgeBufferFill
+        // indices and render per-edge buffer-fill sparklines.
+        edgeKeys={runMeta?.edgeKeys}
       />
       <WizardShell
         open={wizardOpen}
