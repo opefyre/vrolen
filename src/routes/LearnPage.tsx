@@ -92,8 +92,28 @@ const KPI_TERMS: readonly Term[] = [
     icon: Wrench,
     title: "Bottleneck",
     definition:
-      "The station with the highest Running %. Its rate caps the entire line — speeding up any other station won't help.",
+      "The station with the highest binding score (utilization × nominalSpeedRatio). Its effective rate caps the entire line — speeding up any other station won't help. On an unbalanced line the bottleneck is whichever station runs the most. On a perfectly balanced line where every station is at 100% running, the at-nominal-max station is the bottleneck (everyone else is throttled to match).",
     learnMore: "https://en.wikipedia.org/wiki/Theory_of_constraints",
+  },
+  {
+    icon: Wrench,
+    title: "Subordination",
+    definition:
+      "Deliberately running a non-bottleneck station BELOW its nominal max so it paces the bottleneck instead of jamming the line or burning MTBF for throughput it can't realise. Goldratt's second step of the Theory of Constraints. Surfaces in the canvas as a 'X% nom' chip on each subordinated station.",
+    learnMore: "https://en.wikipedia.org/wiki/Theory_of_constraints",
+  },
+  {
+    icon: Wrench,
+    title: "Tight coupling",
+    definition:
+      "A line where buffers between stations are smaller than `bottleneck rate × mean MTTR`. The whole line stalls every time any station goes Down because there's no buffered WIP to absorb the outage. The Recommendations card warns when any buffer's coverage ratio is < 1.0 and suggests sizing at 1.5× absorption.",
+    formula: "buffer ≥ bottleneck rate × MTTR",
+  },
+  {
+    icon: Gauge,
+    title: "Speed sweet spot (85–95% of nominal)",
+    definition:
+      "The operational sweet spot for running a non-bottleneck station. Below 85% is wasted capacity you could trade for MTBF later; above 95% raises breakdown rates non-linearly without lifting throughput (the line is bottleneck-bound). The simulator emits a low-severity recommendation when a non-bottleneck is at > 95% AND has non-zero breakdowns or defects.",
   },
 ];
 

@@ -424,6 +424,10 @@ function StationNode({ data, selected, id }: NodeProps) {
     ._validationSeverity;
   // VROL-692 — bottleneck badge injected by EditorPage's nodesForFlow.
   const isBottleneck = (d as { _isBottleneck?: boolean })._isBottleneck === true;
+  // VROL-901 — nominal/operating ratio. Present (< 0.95) only when the user
+  // set nominalCycleTimeMs AND the station is operating below it.
+  const nominalSpeedRatio = (d as { _nominalSpeedRatio?: number })._nominalSpeedRatio;
+  const showThrottleChip = typeof nominalSpeedRatio === "number" && nominalSpeedRatio < 0.95;
   // Live playback — when EditorPage is playing back a finished run, it
   // injects the station's current dominant state. Drives the body tint
   // + the pulsing dot so the canvas reads like a live simulation.
@@ -533,6 +537,18 @@ function StationNode({ data, selected, id }: NodeProps) {
           title="This station capped the line in the last run."
         >
           Bottleneck
+        </span>
+      ) : null}
+      {/* VROL-901 — subordination chip. A non-bottleneck station running
+          below its OEM-rated nominal max is "subordinated" — deliberately
+          paced to match the binding constraint. Muted, informational. */}
+      {showThrottleChip && !isBottleneck ? (
+        <span
+          className="bg-muted text-muted-foreground absolute -top-2 right-2 z-10 rounded-full px-1.5 py-0.5 text-[9px] font-semibold shadow-sm ring-2 ring-white"
+          aria-label={`Subordinated — running at ${String(Math.round(nominalSpeedRatio * 100))} percent of nominal`}
+          title={`Subordinated to the bottleneck. Running at ${String(Math.round(nominalSpeedRatio * 100))}% of nominal — speeding it up alone wouldn't lift line throughput.`}
+        >
+          {Math.round(nominalSpeedRatio * 100)}% nom
         </span>
       ) : null}
       {/* Lock badge — set via right-click → Lock. The node's draggable
@@ -2973,21 +2989,38 @@ function EditorCanvas() {
         nextData = stripped;
       }
       // VROL-692 — mark the bottleneck station so the renderer can show a pulse.
-      // VROL-895 — use the empirical bottleneck (highest observed running %) so
-      // the canvas badge agrees with the Hero card + State Pareto. The legacy
-      // result.bottleneckStationIdx is the THEORETICAL slowest-declared-cycle
-      // station, which disagrees with reality once capacity/setup/changeovers
-      // shift the binding constraint.
+      // VROL-895 / VROL-900 — use result.bottlenecks[0], which is now sorted
+      // by bindingScore (= runningPct × nominalSpeedRatio). Captures both
+      // util-driven bottlenecks (unbalanced lines) and performance-driven
+      // bottlenecks (balanced lines where the at-nominal-max station is the
+      // real constraint).
       const empiricalBottleneckStationId =
-        result && result.bottlenecks.length > 0
-          ? [...result.bottlenecks].sort((a, b) => b.runningPct - a.runningPct)[0]?.stationId
-          : undefined;
+        result && result.bottlenecks.length > 0 ? result.bottlenecks[0]?.stationId : undefined;
       if (result && runMeta && n.id === empiricalBottleneckStationId) {
         if (nextData === baseData) nextData = { ...baseData };
         nextData = { ...nextData, _isBottleneck: true };
       } else if ("_isBottleneck" in nextData) {
         const stripped = { ...nextData };
         delete stripped._isBottleneck;
+        nextData = stripped;
+      }
+      // VROL-901 — inject the per-station nominalSpeedRatio so the renderer
+      // can show a "Throttled / X% nominal" chip when ratio < 0.95. Only
+      // surfaces when the user actually set nominalCycleTimeMs; legacy
+      // stations report ratio 1.0 and the chip stays hidden.
+      if (result) {
+        const ratio = result.bottlenecks.find((b) => b.stationId === n.id)?.nominalSpeedRatio;
+        if (typeof ratio === "number" && ratio < 0.95) {
+          if (nextData === baseData) nextData = { ...baseData };
+          nextData = { ...nextData, _nominalSpeedRatio: ratio };
+        } else if ("_nominalSpeedRatio" in nextData) {
+          const stripped = { ...nextData };
+          delete stripped._nominalSpeedRatio;
+          nextData = stripped;
+        }
+      } else if ("_nominalSpeedRatio" in nextData) {
+        const stripped = { ...nextData };
+        delete stripped._nominalSpeedRatio;
         nextData = stripped;
       }
       // Live playback — paint the station with its current dominant state.
@@ -4610,6 +4643,51 @@ function EditorCanvas() {
                             );
                           })()
                         : null}
+                      {/* VROL-899 — OEM-rated nominal max. When set, Performance
+                          drops below 100% to reflect subordination — running
+                          this machine below its rated speed to pace a slower
+                          downstream or to extend MTBF. Field is optional;
+                          legacy stations leave it blank and behaviour is
+                          unchanged. */}
+                      <NumberField
+                        id="inspector-nominal-cycle"
+                        label="Nominal max (ms)"
+                        value={Number(
+                          (selectedNode.data as { nominalCycleTimeMs?: unknown })
+                            .nominalCycleTimeMs ?? 0,
+                        )}
+                        min={0}
+                        max={60_000}
+                        step={1}
+                        helperText="OEM-rated design max cycle time. Leave 0/blank when operating == nominal. Performance drops below 100% when the operating cycle is slower than nominal."
+                        inputClassName="font-mono tabular-nums w-32"
+                        onChange={(n) => {
+                          updateSelectedNodeData({
+                            nominalCycleTimeMs: n > 0 ? n : undefined,
+                          });
+                        }}
+                      />
+                      {/* VROL-901 — surface the operating vs nominal speed
+                          ratio when a run exists, so the user gets an immediate
+                          read on whether this station is subordinated or
+                          at-max. Mirrors what the canvas chip shows. */}
+                      {result && runMeta
+                        ? (() => {
+                            const ratio = result.bottlenecks.find(
+                              (b) => b.stationId === selectedNode.id,
+                            )?.nominalSpeedRatio;
+                            if (typeof ratio !== "number" || ratio >= 0.999) return null;
+                            return (
+                              <div className="text-muted-foreground text-xs">
+                                Running at{" "}
+                                <span className="font-mono tabular-nums">
+                                  {Math.round(ratio * 100)}%
+                                </span>{" "}
+                                of nominal — subordinated to the bottleneck.
+                              </div>
+                            );
+                          })()
+                        : null}
                       <NumberField
                         id="inspector-defect"
                         label="Defect rate"
@@ -5077,6 +5155,30 @@ function EditorCanvas() {
                   )
                 : null
             }
+            // VROL-902 — pass MTTR + per-edge buffer capacities so the
+            // Recommendations card can surface tightly-coupled warnings.
+            // settings.breakdowns is only meaningful when .enabled is true;
+            // wrap mttrMs in a constant distribution to match the engine.
+            {...(settings.breakdowns.enabled
+              ? {
+                  mttrDistribution: constant(Math.max(1, settings.breakdowns.mttrMs)),
+                }
+              : {})}
+            bufferEdges={edges.map((e) => {
+              const src = nodes.find((n) => n.id === e.source);
+              const tgt = nodes.find((n) => n.id === e.target);
+              const srcLabel = (src?.data as { label?: unknown } | undefined)?.label;
+              const tgtLabel = (tgt?.data as { label?: unknown } | undefined)?.label;
+              const label =
+                typeof srcLabel === "string" && typeof tgtLabel === "string"
+                  ? `${srcLabel} → ${tgtLabel}`
+                  : undefined;
+              return {
+                edgeId: e.id,
+                capacity: settings.interStationBufferCapacity,
+                ...(label !== undefined ? { label } : {}),
+              };
+            })}
           />
         </Suspense>
       ) : null}

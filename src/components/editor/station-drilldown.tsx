@@ -220,6 +220,55 @@ export function StationDrilldown({
               </section>
             ) : null}
 
+            {/* VROL-901 — Speed section. Surfaces nominal vs operating cycle
+                + the throttle %, so the user can see at a glance whether this
+                station is subordinated, at max, or somewhere in between. */}
+            {oee && oee.idealCycleTimeMs > 0 ? (
+              <section className="space-y-1.5">
+                <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+                  Speed
+                </div>
+                {(() => {
+                  const operatingMs = oee.idealCycleTimeMs;
+                  const ratio = bottleneck?.nominalSpeedRatio ?? 1;
+                  const nominalMs = ratio < 1 ? operatingMs * ratio : operatingMs;
+                  const operatingPerHr = operatingMs > 0 ? 3_600_000 / operatingMs : 0;
+                  const nominalPerHr = nominalMs > 0 ? 3_600_000 / nominalMs : 0;
+                  const throttlePct = Math.round(ratio * 100);
+                  const isThrottled = ratio < 0.95;
+                  return (
+                    <>
+                      <ul className="text-foreground/80 space-y-0.5 text-xs">
+                        <li className="flex justify-between">
+                          <span>Nominal max (rated)</span>
+                          <span className="font-mono tabular-nums">
+                            {ratio < 1 ? `${Math.round(nominalPerHr).toLocaleString()} / h` : "—"}
+                          </span>
+                        </li>
+                        <li className="flex justify-between">
+                          <span>Operating</span>
+                          <span className="font-mono tabular-nums">
+                            {Math.round(operatingPerHr).toLocaleString()} / h
+                          </span>
+                        </li>
+                        <li className="flex justify-between">
+                          <span>Running at</span>
+                          <span className="font-mono tabular-nums">{throttlePct}% of nominal</span>
+                        </li>
+                      </ul>
+                      {isThrottled ? (
+                        <p className="text-muted-foreground border-border bg-card mt-1 rounded-md border p-2 text-[11px] leading-relaxed">
+                          This station is paced to the bottleneck — speeding it up alone wouldn't
+                          lift throughput. That's the right call; running it flat-out would jam the
+                          next station or burn MTBF for no gain.
+                        </p>
+                      ) : null}
+                    </>
+                  );
+                })()}
+              </section>
+            ) : null}
+
             <section className="space-y-1.5">
               <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
                 Throughput

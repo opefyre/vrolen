@@ -6,10 +6,17 @@
 import { AlertTriangle, Lightbulb } from "lucide-react";
 
 import type { ChainResult } from "@/engine";
+import type { BufferCoverageInput } from "@/lib/buffer-coverage";
 import { deriveRecommendations, type RecommendationSeverity } from "@/lib/recommendations";
+import type { Distribution } from "@/engine/distribution";
 
 interface RecommendationsCardProps {
   readonly result: ChainResult;
+  /** VROL-902 — optional MTTR distribution; lets the recommendation surface
+   *  tightly-coupled buffer warnings. Hidden when undefined. */
+  readonly mttrDistribution?: Distribution;
+  /** VROL-902 — per-edge buffer capacities + labels, in canvas-edge order. */
+  readonly bufferEdges?: ReadonlyArray<BufferCoverageInput>;
 }
 
 const SEVERITY_STYLE: Record<RecommendationSeverity, { ring: string; icon: string }> = {
@@ -18,8 +25,15 @@ const SEVERITY_STYLE: Record<RecommendationSeverity, { ring: string; icon: strin
   low: { ring: "border-sim-running/40 bg-sim-running/5", icon: "text-sim-running" },
 };
 
-export function RecommendationsCard({ result }: RecommendationsCardProps) {
-  const recs = deriveRecommendations(result);
+export function RecommendationsCard({
+  result,
+  mttrDistribution,
+  bufferEdges,
+}: RecommendationsCardProps) {
+  const recs = deriveRecommendations(result, {
+    ...(mttrDistribution ? { mttrDistribution } : {}),
+    ...(bufferEdges ? { bufferEdges } : {}),
+  });
   if (recs.length === 0) return null;
   return (
     <ul className="space-y-2" data-testid="recommendations">

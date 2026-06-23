@@ -121,6 +121,14 @@ function capacityOf(node: Node): number | undefined {
   return n;
 }
 
+function nominalCycleTimeMsOf(node: Node): number | undefined {
+  // VROL-899 — read the OEM-rated design max if the user set one. Engine
+  // drops it silently when >= operating mean (over-rated → no throttle).
+  const raw = (node.data as { nominalCycleTimeMs?: unknown } | undefined)?.nominalCycleTimeMs;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return undefined;
+  return raw;
+}
+
 function cycleByProductOf(node: Node): Record<string, Distribution> | undefined {
   const raw = (node.data as { cycleByProduct?: unknown } | undefined)?.cycleByProduct;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
@@ -307,6 +315,7 @@ export function graphToChainOptions(
         const reworkTargetId = reworkRaw && topoSet.has(reworkRaw) ? reworkRaw : undefined;
         const reworkPassLimit = reworkTargetId ? reworkPassLimitOf(node) : undefined;
         const capacity = capacityOf(node);
+        const nominalCycleTimeMs = nominalCycleTimeMsOf(node);
         return {
           id,
           label: labelOf(node),
@@ -318,6 +327,7 @@ export function graphToChainOptions(
           ...(reworkTargetId ? { reworkTargetId } : {}),
           ...(reworkPassLimit !== undefined ? { reworkPassLimit } : {}),
           ...(capacity !== undefined ? { capacity } : {}),
+          ...(nominalCycleTimeMs !== undefined ? { nominalCycleTimeMs } : {}),
         };
       });
       const topoEdges: ChainTopologyEdge[] = edges

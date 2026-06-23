@@ -109,6 +109,11 @@ interface ResultPanelProps {
   readonly onApplyOptimization?: (
     candidate: import("@/lib/optimization-search").OptimizationCandidate,
   ) => void;
+  /** VROL-902 — MTTR distribution from the breakdown config. Optional; lets
+   *  the RecommendationsCard surface tightly-coupled buffer warnings. */
+  readonly mttrDistribution?: import("@/engine/distribution").Distribution;
+  /** VROL-902 — per-edge buffer capacities + labels for buffer coverage. */
+  readonly bufferEdges?: ReadonlyArray<import("@/lib/buffer-coverage").BufferCoverageInput>;
 }
 
 /**
@@ -865,6 +870,8 @@ export function ResultPanel({
   optimizationRunning,
   onRunOptimization,
   onApplyOptimization,
+  mttrDistribution,
+  bufferEdges,
 }: ResultPanelProps) {
   type TabId = "overview" | "throughput" | "oee" | "states" | "quality" | "buffers" | "stations";
   const [activeTab, setActiveTab] = useState<TabId>("overview");
@@ -1195,7 +1202,11 @@ export function ResultPanel({
               <CardDescription>Ranked by expected impact on throughput.</CardDescription>
             </CardHeader>
             <CardContent>
-              <RecommendationsCard result={result} />
+              <RecommendationsCard
+                result={result}
+                {...(mttrDistribution ? { mttrDistribution } : {})}
+                {...(bufferEdges ? { bufferEdges } : {})}
+              />
             </CardContent>
           </Card>
           <Card id="final-state-overview">

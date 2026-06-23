@@ -409,6 +409,17 @@ export interface ChainTopologyNode {
    * time so a typo can't spawn thousands of parallel cycles.
    */
   readonly capacity?: number;
+  /**
+   * Optional OEM-rated design max cycle time, ms (VROL-899). When set,
+   * Performance is computed against THIS instead of the operating cycle
+   * mean — so a station deliberately throttled below its nominal (e.g. a
+   * filler paced to a slower downstream labeler) reports Performance < 1.0
+   * and surfaces a subordination chip on the canvas. Must be > 0 and
+   * < operating cycle mean (otherwise the engine ignores it and falls
+   * back to the operating mean). Default undefined → legacy behaviour
+   * (Performance ≈ 1.0 for a deterministic station).
+   */
+  readonly nominalCycleTimeMs?: number;
 }
 
 /**
@@ -507,6 +518,14 @@ interface NormalizedTopology {
    * Validated as positive integer 1..10 at build.
    */
   capacities: number[];
+  /**
+   * Per-station OEM-rated nominal cycle time, ms (VROL-899). undefined when
+   * the user hasn't set one — Performance falls back to ideal cycle (= mean
+   * of operating distribution), matching legacy behaviour. When present,
+   * computeOee uses this as the Performance reference so subordinated
+   * stations report Performance < 1.0.
+   */
+  nominalCycleTimes: (number | undefined)[];
   /** Edges in input order; each carries source + target as node-array indices. */
   edges: { sourceIdx: number; targetIdx: number }[];
   /** For each node index: the indices of nodes it sends parts to. */
@@ -608,6 +627,21 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       }
       return cap;
     });
+    // VROL-899 — nominal cycle is OPTIONAL. When set but >= operating cycle
+    // mean, we silently drop it (a nominal slower than operating means the
+    // operator over-rated the machine, not throttled it — clamping rather
+    // than erroring keeps the engine forgiving in batch imports).
+    const nominalCycleTimes: (number | undefined)[] = nodes.map((node, idx) => {
+      const nominal = node.nominalCycleTimeMs;
+      if (nominal === undefined) return undefined;
+      if (!Number.isFinite(nominal) || nominal <= 0) {
+        throw new Error(
+          `topology: station "${node.id}" nominalCycleTimeMs must be > 0 (got ${String(nominal)})`,
+        );
+      }
+      const operatingMean = meanOf(nodes[idx]!.cycleTimeMs);
+      return nominal < operatingMean ? nominal : undefined;
+    });
     return {
       nodeIds: nodes.map((n) => n.id),
       cycleTimes: nodes.map((n) => n.cycleTimeMs),
@@ -619,6 +653,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       reworkTargets,
       reworkPassLimits,
       capacities,
+      nominalCycleTimes,
       edges: normalizedEdges,
       outgoing,
       incoming,
@@ -652,6 +687,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     reworkTargets: Array.from({ length: n }, () => undefined),
     reworkPassLimits: Array.from({ length: n }, () => undefined),
     capacities: Array.from({ length: n }, () => 1),
+    nominalCycleTimes: Array.from({ length: n }, () => undefined),
     edges,
     outgoing,
     incoming,
@@ -1383,7 +1419,20 @@ function* simulationStream(
     stationIds.map((id, i) => {
       const label = topology.labels[i];
       const tracker = stateTimeTrackers[i] as StateTimeTracker;
-      return label !== undefined ? { stationId: id, label, tracker } : { stationId: id, tracker };
+      // VROL-900 — per-station nominal/operating ratio, derived from the
+      // same nominalCycleTimes the topology validated against the operating
+      // mean. 1.0 means at nominal max (or no nominal set). < 1.0 means
+      // throttled. detectBottlenecks uses this for the composite bindingScore
+      // so balanced lines surface the at-nominal-max station as bottleneck.
+      const nominal = topology.nominalCycleTimes[i];
+      const operatingMean = meanOf(topology.cycleTimes[i] as Distribution);
+      const nominalSpeedRatio =
+        nominal && operatingMean > 0 ? Math.min(1, Math.max(0, nominal / operatingMean)) : 1;
+      const base =
+        label !== undefined
+          ? { stationId: id, label, tracker, nominalSpeedRatio }
+          : { stationId: id, tracker, nominalSpeedRatio };
+      return base;
     }),
   );
 
@@ -1412,10 +1461,14 @@ function* simulationStream(
 
   // Per-station OEE — A × P × Q against the station's own time-in-state breakdown.
   // Phase 0 chain has defectRate=0, so totalParts = goodParts = perStationCompleted.
+  // VROL-899 — nominalCycleTimeMs threaded through so Performance can be
+  // measured against the OEM-rated design max instead of the operating mean.
+  // When undefined for a station, computeOee falls back to ideal cycle.
   const perStationOee: OeeMetrics[] = executors.map((ex, i) =>
     computeOee({
       stateTimeTracker: stateTimeTrackers[i] as StateTimeTracker,
       idealCycleTimeMs: meanOf(topology.cycleTimes[i] as Distribution),
+      nominalCycleTimeMs: topology.nominalCycleTimes[i],
       goodParts: ex.completed,
       totalParts: ex.completed + ex.scrapped,
     }),

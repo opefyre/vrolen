@@ -11,6 +11,8 @@
  */
 
 import type { ChainResult } from "@/engine";
+import { computeBufferCoverage, type BufferCoverageInput } from "./buffer-coverage";
+import type { Distribution } from "@/engine/distribution";
 
 export type RecommendationSeverity = "high" | "medium" | "low";
 
@@ -21,9 +23,23 @@ export interface Recommendation {
   readonly body: string;
 }
 
+/**
+ * VROL-902 / VROL-903 — optional context for buffer-coverage + sweet-spot
+ * recommendations. Both checks require data the engine doesn't carry on the
+ * ChainResult (MTTR distribution and per-edge labels). Passed in by the
+ * caller — Recommendations card lookup site in the result panel.
+ */
+export interface RecommendationContext {
+  readonly mttrDistribution?: Distribution;
+  readonly bufferEdges?: ReadonlyArray<BufferCoverageInput>;
+}
+
 const PCT = (n: number): string => `${(n * 100).toFixed(0)}%`;
 
-export function deriveRecommendations(result: ChainResult): readonly Recommendation[] {
+export function deriveRecommendations(
+  result: ChainResult,
+  context: RecommendationContext = {},
+): readonly Recommendation[] {
   const out: Recommendation[] = [];
 
   const bottlenecks = [...result.bottlenecks].sort((a, b) => b.runningPct - a.runningPct);
@@ -94,6 +110,54 @@ export function deriveRecommendations(result: ChainResult): readonly Recommendat
       title: `Boost ${label} availability`,
       body: `${label} runs only ${PCT(worstAvail.m.availability)} of available time. Investigate breakdowns, planned maintenance windows, or starvation upstream.`,
     });
+  }
+
+  // VROL-902 — tightly-coupled line warning. Surfaces only when (a) MTTR is
+  // configured AND (b) at least one buffer can't absorb one mean breakdown.
+  // Silent for breakdown-free lines, so users don't see scary warnings on
+  // scenarios where they haven't modelled failures yet.
+  if (context.mttrDistribution && context.bufferEdges && context.bufferEdges.length > 0) {
+    const coverage = computeBufferCoverage({
+      throughputLambda: result.throughputLambda,
+      mttrDistribution: context.mttrDistribution,
+      edges: context.bufferEdges,
+    });
+    const worst = coverage
+      .filter((c) => c.tightlyCoupled)
+      .sort((a, b) => a.coverageRatio - b.coverageRatio)[0];
+    if (worst) {
+      out.push({
+        id: "tightly-coupled",
+        severity: worst.coverageRatio < 0.5 ? "high" : "medium",
+        title: `Grow buffer ${worst.label ?? worst.edgeId}`,
+        body: `Capacity ${worst.capacity} parts covers ${(worst.coverageRatio * 100).toFixed(0)}% of one mean breakdown. Line stalls every time this station goes Down. Suggest sizing to ${worst.recommendedCapacity} parts (1.5× absorption).`,
+      });
+    }
+  }
+
+  // VROL-903 — sweet-spot recommendation. A NON-bottleneck station running
+  // > 95% of nominal AND with non-zero defect rate OR breakdown count is
+  // leaving uptime on the table. The line is bottleneck-bound; running this
+  // station flat-out doesn't lift throughput but does shorten MTBF.
+  if (result.bottlenecks.length > 0) {
+    const bottleneck = result.bottlenecks[0];
+    const breakdowns = result.perStationBreakdowns ?? [];
+    for (const cand of result.bottlenecks) {
+      if (cand === bottleneck) continue;
+      if (cand.nominalSpeedRatio < 0.95) continue;
+      const idx = result.perStationLabels?.indexOf(cand.label ?? "") ?? -1;
+      const defectRate = idx >= 0 ? 1 - (result.perStationOee[idx]?.quality ?? 1) : 0;
+      const breakdownCount = idx >= 0 ? (breakdowns[idx] ?? 0) : 0;
+      if (defectRate <= 0 && breakdownCount <= 0) continue;
+      const label = cand.label ?? String(cand.stationId);
+      out.push({
+        id: `sweet-spot-${label}`,
+        severity: "low",
+        title: `Throttle ${label} to ~90% of nominal`,
+        body: `${label} is at ${(cand.nominalSpeedRatio * 100).toFixed(0)}% of nominal and the line is bottleneck-bound. Running flat-out raises breakdowns and quality losses you can't trade for throughput. The 85–95% sweet spot extends MTBF for free.`,
+      });
+      break;
+    }
   }
 
   // Cap at 4; pre-sorted by insertion order (already by impact).

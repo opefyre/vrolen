@@ -935,3 +935,139 @@ describe("audit VROL-897 — Availability ignores starvation + blocking", () => 
     expect(result.perStationRunningPct[1]).toBeGreaterThan(0.5);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// VROL-899 — Nominal cycle time + nominal-aware Performance.
+// VROL-900 — Composite bottleneck ranking via runningPct × nominalSpeedRatio.
+// ──────────────────────────────────────────────────────────────────────────
+describe("audit VROL-899/900 — nominalCycleTimeMs + composite ranking", () => {
+  it("station with nominalCycleTimeMs < operating mean reports Performance < 1 and nominalSpeedRatio = nominal / operating", () => {
+    // Nominal 100ms but operating distribution at 150ms (50% throttle).
+    // Single-station chain so the station runs at its operating cycle.
+    const result = runChain({
+      topology: {
+        nodes: [
+          {
+            id: "throttled",
+            label: "Throttled filler",
+            cycleTimeMs: constant(150),
+            nominalCycleTimeMs: 100,
+          },
+        ],
+        edges: [],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    const oee = result.perStationOee[0];
+    expect(oee).toBeDefined();
+    // Performance = nominal × goodParts / runTime. With ~400 parts and
+    // runTime ~60s, Performance ≈ 100 × 400 / 60000 ≈ 0.667.
+    expect(oee!.performance).toBeGreaterThan(0.6);
+    expect(oee!.performance).toBeLessThan(0.72);
+    // nominalSpeedRatio is a static ratio: 100 / 150 = 0.667.
+    expect(oee!.nominalSpeedRatio).toBeCloseTo(100 / 150, 6);
+  });
+
+  it("legacy line without nominalCycleTimeMs has nominalSpeedRatio = 1 and Performance ≈ 1", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100)],
+      stationLabels: ["A", "B"],
+      interStationBufferCapacity: 100,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    for (const oee of result.perStationOee) {
+      expect(oee.nominalSpeedRatio).toBe(1);
+      expect(oee.performance).toBeGreaterThan(0.98);
+    }
+  });
+
+  it("balanced line: the at-nominal-max station surfaces as bottleneck despite identical util", () => {
+    // 3-station line, every station at 100ms operating cycle (so all are
+    // equally fast and all spend the window mostly Running). Only the
+    // middle station is at its nominal max — the others are deliberately
+    // throttled below their rated 50ms / 50ms. Pre-VROL-900, all three
+    // tied on runningPct and the array order was arbitrary; post-VROL-900,
+    // bindingScore = runningPct × nominalSpeedRatio breaks the tie and
+    // surfaces the at-max station.
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "a", label: "A throttled", cycleTimeMs: constant(100), nominalCycleTimeMs: 50 },
+          { id: "b", label: "B at-max", cycleTimeMs: constant(100) },
+          { id: "c", label: "C throttled", cycleTimeMs: constant(100), nominalCycleTimeMs: 50 },
+        ],
+        edges: [
+          { source: "a", target: "b" },
+          { source: "b", target: "c" },
+        ],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    expect(result.bottlenecks[0]?.label).toBe("B at-max");
+    expect(result.bottlenecks[0]?.bindingScore).toBeGreaterThan(
+      result.bottlenecks[1]?.bindingScore ?? 0,
+    );
+    expect(result.bottlenecks[0]?.nominalSpeedRatio).toBe(1);
+    // The throttled stations carry ratio 0.5 (50 / 100).
+    const throttled = result.bottlenecks.filter((b) => b.label !== "B at-max");
+    for (const b of throttled) {
+      expect(b.nominalSpeedRatio).toBeCloseTo(0.5, 6);
+    }
+  });
+
+  it("unbalanced legacy line: bindingScore ranking matches legacy runningPct ranking (no behaviour change)", () => {
+    // A 3-station line with a slow middle station (Filler at 2s) and no
+    // nominal anywhere. The middle should be the bottleneck on BOTH the
+    // legacy runningPct sort AND the new bindingScore sort, since the
+    // ratio is 1.0 across the board → score = runningPct.
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(2_000), constant(50)],
+      stationLabels: ["Mixer", "Filler", "Capper"],
+      interStationBufferCapacity: 2,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    expect(result.bottlenecks[0]?.label).toBe("Filler");
+    // Score = runningPct in the legacy case.
+    for (const b of result.bottlenecks) {
+      expect(b.bindingScore).toBeCloseTo(b.runningPct, 6);
+      expect(b.nominalSpeedRatio).toBe(1);
+    }
+  });
+
+  it("nominalCycleTimeMs >= operating mean is silently dropped (over-rated machine, not throttled)", () => {
+    // Nominal 200ms but operating 100ms — operator over-rated the machine.
+    // Engine should drop the nominal (treat as if undefined) and report
+    // nominalSpeedRatio = 1, Performance ≈ 1.
+    const result = runChain({
+      topology: {
+        nodes: [
+          {
+            id: "overrated",
+            label: "Overrated",
+            cycleTimeMs: constant(100),
+            nominalCycleTimeMs: 200,
+          },
+        ],
+        edges: [],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    const oee = result.perStationOee[0];
+    expect(oee).toBeDefined();
+    expect(oee!.nominalSpeedRatio).toBe(1);
+    expect(oee!.performance).toBeGreaterThan(0.98);
+  });
+});
