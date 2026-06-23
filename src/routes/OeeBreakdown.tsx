@@ -37,16 +37,11 @@ function Segment({ label, pct, colorClass }: SegmentProps) {
 
 export function OeeBreakdown({ result }: OeeBreakdownProps) {
   if (result.perStationOee.length === 0) return null;
-  // Pull running-share per station from the bottlenecks array (sorted by
-  // runningPct desc). We need a stationId -> runningPct map so each OEE row
-  // can show its own utilisation. OEE on its own measures efficiency WHEN
-  // running and hides starvation / blocking; showing Utilisation next to
-  // it is what tells the user "this station is actually idle 60% of the
-  // time" — without it, an idle station can read as OEE 100% and look fine.
-  const stationIds = result.bottlenecks.map((b) => b.stationId);
-  const utilisationByStationId = new Map(
-    result.bottlenecks.map((b) => [b.stationId, b.runningPct] as const),
-  );
+  // VROL-897 — Both perStationLabels and perStationRunningPct are now emitted
+  // by runChain in topology order, aligned by index with perStationOee.
+  // The legacy fallback to result.bottlenecks[idx] (sorted DESC by runningPct)
+  // mis-aligned label + util to the bars; only kept as a defensive fallback
+  // for tests that hand-craft a partial ChainResult without the new fields.
   return (
     <div className="space-y-3" data-testid="oee-breakdown">
       {result.perStationOee.map((oee, idx) => {
@@ -55,13 +50,7 @@ export function OeeBreakdown({ result }: OeeBreakdownProps) {
           result.bottlenecks[idx]?.label ??
           `Station ${String(idx)}`;
         const total = Math.round(oee.oee * 100);
-        // Try to match by stationId via the chainNodeIds order; fall back
-        // to the bottleneck at the same idx.
-        const stationId = stationIds[idx];
-        const util =
-          (stationId !== undefined ? utilisationByStationId.get(stationId) : undefined) ??
-          result.bottlenecks[idx]?.runningPct ??
-          0;
+        const util = result.perStationRunningPct?.[idx] ?? result.bottlenecks[idx]?.runningPct ?? 0;
         const utilPct = Math.round(util * 100);
         const lowUtil = util < 0.7;
         return (

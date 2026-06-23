@@ -145,7 +145,7 @@ export function summarizeReplications(
     kpis: [
       buildKpi("Completed", completed, intFmt),
       buildKpi("Throughput", throughputPerHr, perHr),
-      buildKpi("Line OEE", oee, pct),
+      buildKpi("Line efficiency", oee, pct),
       buildKpi("Time-in-system", tisys, ms),
       buildKpi("Scrap rate", scrap, pct),
     ],

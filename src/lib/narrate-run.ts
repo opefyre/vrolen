@@ -97,7 +97,7 @@ function headroomSentence(result: ChainResult): string | undefined {
 function oeeBandSentence(result: ChainResult): string | undefined {
   const pct = Math.round(result.lineOee * 100);
   if (result.lineOee < LOW_OEE_BAND) {
-    return `Low utilization (${String(pct)}% line OEE) — look at the bottleneck.`;
+    return `Low utilization (${String(pct)}% line efficiency) — look at the bottleneck.`;
   }
   // "Well balanced" is a strong claim — only emit when EVERY station is
   // actually running a high % of the time. OEE alone hides starvation +

@@ -337,6 +337,8 @@ interface StationNodeData {
   changeoverMatrix?: Record<string, Record<string, Distribution>>;
   /** Cumulative-completed series injected by EditorPage when samples exist (VROL-614). */
   sparklineSeries?: number[];
+  /** Per-station time-weighted state mix injected by EditorPage after a run (VROL-893). */
+  stateMix?: ReadonlyArray<{ readonly state: string; readonly pct: number }>;
   /** Defects from THIS station get routed to this node id instead of scrapping (VROL-627). */
   reworkTargetNodeId?: string;
   [key: string]: unknown;
@@ -700,7 +702,41 @@ function StationNode({ data, selected, id }: NodeProps) {
           {hasParallel ? <CapacityChip capacity={capacity} /> : null}
         </div>
       ) : null}
-      {Array.isArray(d.sparklineSeries) && d.sparklineSeries.length > 1 ? (
+      {/* VROL-893 — per-station state-mix bar replaces the old cumulative-completed
+          sparkline. In steady state every station ships at the bottleneck rate,
+          so cumulative looked identical on every node and carried no per-station
+          signal. State mix differs per station and tells the user where the line
+          is breathing vs. choking.
+
+          VROL-894 — clicking the bar opens a per-station drilldown Sheet so
+          users can ask "what is THIS station doing?" without leaving the
+          canvas. The Inspector keeps owning editing; this is the analytics
+          entry point. */}
+      {Array.isArray(d.stateMix) && d.stateMix.length > 0 ? (
+        <button
+          type="button"
+          aria-label={`View report for ${typeof d.label === "string" ? d.label : "this station"}`}
+          className="hover:ring-foreground/30 focus-visible:ring-foreground/40 group mt-1.5 block w-full rounded-sm text-left hover:ring-2 focus-visible:ring-2 focus-visible:outline-none"
+          onClick={(e) => {
+            e.stopPropagation();
+            window.dispatchEvent(
+              new CustomEvent("vrolen:open-station-drilldown", {
+                detail: { nodeId: id },
+              }),
+            );
+          }}
+          onPointerDown={(e) => {
+            // Prevent xyflow from starting a node-drag when the user clicks the
+            // report button. Without this, the click fires AND the node moves.
+            e.stopPropagation();
+          }}
+        >
+          <StateMixBar breakdown={d.stateMix} />
+          <span className="text-muted-foreground group-hover:text-foreground mt-0.5 block text-[9px] tracking-wide uppercase">
+            View report →
+          </span>
+        </button>
+      ) : Array.isArray(d.sparklineSeries) && d.sparklineSeries.length > 1 ? (
         <div className="mt-1.5">
           <Sparkline series={d.sparklineSeries} />
         </div>
@@ -763,6 +799,8 @@ import { hasSeenWelcomeToast, markWelcomeToastSeen } from "@/lib/welcome-toast";
 import { OnboardingTour } from "./OnboardingTour";
 import { hasSeenOnboarding } from "./onboarding-state";
 import { Sparkline } from "./Sparkline";
+import { StateMixBar } from "@/components/canvas/state-mix-bar";
+import { StationDrilldown } from "@/components/editor/station-drilldown";
 
 // VROL-625 — lazy-load the result-panel cards + compare table + the charts
 // they own. Editor first paint no longer includes them; the user pays for
@@ -884,6 +922,11 @@ function EditorCanvas() {
   );
   const [result, setResult] = useState<ChainResult | null>(null);
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
+  // VROL-894 — per-station analytics drilldown. Opened by clicking the
+  // state-mix bar on any StationNode. Decoupled via a window CustomEvent so
+  // the StationNode renderer doesn't need a callback threaded through xyflow
+  // data (which would re-create the function on every keystroke).
+  const [stationDrilldownNodeId, setStationDrilldownNodeId] = useState<string | null>(null);
   // Cross-replication summary — populated only when settings.replications > 1.
   const [replicationSummary, setReplicationSummary] = useState<ReplicationSummary | null>(null);
   // Baseline = the multi-replication results from the PRIOR run. Lets the
@@ -1283,6 +1326,21 @@ function EditorCanvas() {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [anyConfirmOpen]);
+
+  // VROL-894 — listen for the per-station drilldown event dispatched when a
+  // user clicks a StationNode's state-mix bar. Live as a window listener so
+  // the renderer doesn't need a callback threaded through xyflow's data field.
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent<{ readonly nodeId?: unknown }>).detail;
+      const nodeId = typeof detail?.nodeId === "string" ? detail.nodeId : null;
+      if (nodeId) setStationDrilldownNodeId(nodeId);
+    };
+    window.addEventListener("vrolen:open-station-drilldown", onOpen);
+    return () => {
+      window.removeEventListener("vrolen:open-station-drilldown", onOpen);
+    };
+  }, []);
 
   const selectedNode = selectedNodeId ? (nodes.find((n) => n.id === selectedNodeId) ?? null) : null;
 
@@ -2882,6 +2940,28 @@ function EditorCanvas() {
           nextData = { ...baseData, sparklineSeries: series };
         }
       }
+      // VROL-893 — per-station state-mix sourced from result.bottlenecks (which
+      // carries a stationId → breakdown array). The state mix actually differs
+      // per station, unlike cumulative throughput which is identical in steady
+      // state.
+      if (result) {
+        const mix = result.bottlenecks.find((b) => b.stationId === n.id)?.breakdown;
+        if (mix && mix.length > 0) {
+          if (nextData === baseData) nextData = { ...baseData };
+          nextData = {
+            ...nextData,
+            stateMix: mix.map((seg) => ({ state: seg.state, pct: seg.pct })),
+          };
+        } else if ("stateMix" in nextData) {
+          const stripped = { ...nextData };
+          delete stripped.stateMix;
+          nextData = stripped;
+        }
+      } else if ("stateMix" in nextData) {
+        const stripped = { ...nextData };
+        delete stripped.stateMix;
+        nextData = stripped;
+      }
       // VROL-304 — validation severity (overlay applies regardless of result).
       const sev = sevMap.get(n.id);
       if (sev) {
@@ -2893,7 +2973,16 @@ function EditorCanvas() {
         nextData = stripped;
       }
       // VROL-692 — mark the bottleneck station so the renderer can show a pulse.
-      if (result && runMeta && stationIdx === result.bottleneckStationIdx) {
+      // VROL-895 — use the empirical bottleneck (highest observed running %) so
+      // the canvas badge agrees with the Hero card + State Pareto. The legacy
+      // result.bottleneckStationIdx is the THEORETICAL slowest-declared-cycle
+      // station, which disagrees with reality once capacity/setup/changeovers
+      // shift the binding constraint.
+      const empiricalBottleneckStationId =
+        result && result.bottlenecks.length > 0
+          ? [...result.bottlenecks].sort((a, b) => b.runningPct - a.runningPct)[0]?.stationId
+          : undefined;
+      if (result && runMeta && n.id === empiricalBottleneckStationId) {
         if (nextData === baseData) nextData = { ...baseData };
         nextData = { ...nextData, _isBottleneck: true };
       } else if ("_isBottleneck" in nextData) {
@@ -3423,7 +3512,7 @@ function EditorCanvas() {
               <CheckCircle2 className="h-3 w-3" />
               {/* VROL-705 — pill text shows throughput + OEE summary, not just the time. */}
               {Math.round(result.throughputLambda * 3_600_000).toLocaleString()}
-              /h · OEE {(result.lineOee * 100).toFixed(0)}%
+              /h · Eff {(result.lineOee * 100).toFixed(0)}%
               <span className="text-muted-foreground ml-1.5 hidden font-mono text-[10px] sm:inline">
                 {doneAt.toLocaleTimeString(undefined, {
                   hour: "2-digit",
@@ -3434,7 +3523,7 @@ function EditorCanvas() {
               <span className="sr-only">
                 Simulation complete. {result.completed.toLocaleString()} parts. Throughput{" "}
                 {Math.round(result.throughputLambda * 3_600_000).toLocaleString()} per hour. Line
-                OEE {(result.lineOee * 100).toFixed(0)} percent.
+                efficiency {(result.lineOee * 100).toFixed(0)} percent.
               </span>
             </>
           ) : (
@@ -3833,7 +3922,7 @@ function EditorCanvas() {
             const bnRunPct = head ? `${(head.runningPct * 100).toFixed(0)}%` : "—";
             const tiles: { label: string; value: string; hint?: string }[] = [
               { label: "Throughput", value: tput.toLocaleString(), hint: "parts / h" },
-              { label: "Line OEE", value: `${oeePct}%` },
+              { label: "Line efficiency", value: `${oeePct}%`, hint: "vs theoretical" },
               { label: "Completed", value: result.completed.toLocaleString(), hint: "parts" },
               { label: "Time-in-system", value: tisLabel, hint: "avg" },
               { label: "Bottleneck", value: bnLabel },
@@ -4535,7 +4624,7 @@ function EditorCanvas() {
                         min={0}
                         max={1}
                         step={0.01}
-                        helperText="Probability that a finished part is defective (0–1). Raises scrap rate; drops Line OEE × Quality. Each defect cascades to scrap or rework."
+                        helperText="Probability that a finished part is defective (0–1). Raises scrap rate; drops line efficiency × Quality. Each defect cascades to scrap or rework."
                         inputClassName="font-mono tabular-nums w-32"
                         onChange={(n) => {
                           updateSelectedNodeData({ defectRate: n });
@@ -5340,7 +5429,7 @@ function EditorCanvas() {
                         </span>
                         <span
                           className="text-muted-foreground font-mono tabular-nums"
-                          title={`${r.completed.toLocaleString()} completed · OEE ${(r.lineOee * 100).toFixed(0)}%${r.bottleneckLabel ? ` · bottleneck ${r.bottleneckLabel}` : ""}`}
+                          title={`${r.completed.toLocaleString()} completed · efficiency ${(r.lineOee * 100).toFixed(0)}%${r.bottleneckLabel ? ` · bottleneck ${r.bottleneckLabel}` : ""}`}
                         >
                           {tPerHr.toLocaleString()}/hr
                         </span>
@@ -5494,7 +5583,7 @@ function EditorCanvas() {
                           {history[0] ? (
                             <span
                               className="text-foreground/80 ml-2 font-mono tabular-nums"
-                              title={`Last run: ${history[0].completed.toLocaleString()} parts · OEE ${(history[0].lineOee * 100).toFixed(0)}%`}
+                              title={`Last run: ${history[0].completed.toLocaleString()} parts · efficiency ${(history[0].lineOee * 100).toFixed(0)}%`}
                             >
                               ·{" "}
                               {Math.round(history[0].throughputLambda * 3_600_000).toLocaleString()}
@@ -5704,7 +5793,7 @@ function EditorCanvas() {
                                 <span className="flex items-center gap-2">
                                   <span>
                                     {h.completed.toLocaleString()} parts ·{" "}
-                                    {(h.lineOee * 100).toFixed(1)}% OEE
+                                    {(h.lineOee * 100).toFixed(1)}% efficiency
                                   </span>
                                   {isConfirming ? (
                                     <span
@@ -7136,6 +7225,40 @@ function EditorCanvas() {
           </div>
         </SheetContent>
       </Sheet>
+      <StationDrilldown
+        open={stationDrilldownNodeId !== null}
+        onOpenChange={(o) => {
+          if (!o) setStationDrilldownNodeId(null);
+        }}
+        nodeId={stationDrilldownNodeId}
+        nodeLabel={(() => {
+          if (!stationDrilldownNodeId) return "";
+          const n = nodes.find((nd) => nd.id === stationDrilldownNodeId);
+          const raw = (n?.data as { label?: unknown })?.label;
+          return typeof raw === "string" ? raw : "";
+        })()}
+        nodeTypeLabel={(() => {
+          if (!stationDrilldownNodeId) return "";
+          const n = nodes.find((nd) => nd.id === stationDrilldownNodeId);
+          const t = (n?.data as { stationType?: unknown })?.stationType;
+          return typeof t === "string" ? t : "station";
+        })()}
+        result={result}
+        chainNodeIds={runMeta?.chainNodeIds ?? null}
+        edges={edges.map((e) => {
+          const src = nodes.find((nd) => nd.id === e.source);
+          const tgt = nodes.find((nd) => nd.id === e.target);
+          const srcLabel = (src?.data as { label?: unknown })?.label;
+          const tgtLabel = (tgt?.data as { label?: unknown })?.label;
+          return {
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            sourceLabel: typeof srcLabel === "string" ? srcLabel : undefined,
+            targetLabel: typeof tgtLabel === "string" ? tgtLabel : undefined,
+          };
+        })}
+      />
       <WizardShell
         open={wizardOpen}
         onClose={() => {

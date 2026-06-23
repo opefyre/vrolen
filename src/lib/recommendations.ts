@@ -76,7 +76,7 @@ export function deriveRecommendations(result: ChainResult): readonly Recommendat
       id: "quality-drag",
       severity: worstQuality.m.quality < 0.75 ? "high" : "medium",
       title: `Improve quality at ${label}`,
-      body: `${label} ships ${PCT(worstQuality.m.quality)} good parts. Each defect cascades to scrap or rework, dragging line OEE down.`,
+      body: `${label} ships ${PCT(worstQuality.m.quality)} good parts. Each defect cascades to scrap or rework, dragging line efficiency down.`,
     });
   }
 

@@ -53,7 +53,13 @@ describe("OEE — canonical formula", () => {
     expect(metrics.downTimeMs).toBe(1 * HOUR);
   });
 
-  it("treats zero loading time as 0 availability (avoids NaN)", () => {
+  it("treats zero loading time as 100% availability (textbook: machine was available but not needed)", () => {
+    // VROL-897 — a station that never went Running AND never went Down
+    // experienced zero unplanned downtime. By textbook semantics it's
+    // 100% available. The previous behavior (pinning availability to 0)
+    // mis-attributed external starvation/blocking to the station's own
+    // unavailability. Performance still drops to 0 (no good parts), so
+    // OEE remains 0 — but the breakdown chart now points at the right lever.
     const sm = new StationStateMachine(newStationId());
     const tracker = new StateTimeTracker(sm.state, 0);
     sm.onStateChange((e) => {
@@ -67,7 +73,7 @@ describe("OEE — canonical formula", () => {
       goodParts: 0,
       totalParts: 0,
     });
-    expect(m.availability).toBe(0);
+    expect(m.availability).toBe(1);
     expect(m.performance).toBe(0);
     expect(m.quality).toBe(1); // empty-set quality treated as perfect (matches industry convention)
     expect(m.oee).toBe(0);

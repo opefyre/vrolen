@@ -25,6 +25,8 @@ interface SensitivityCardProps {
   readonly errorMessage?: string;
   /** Click a tornado row → open the row drilldown sheet (preferred). */
   readonly onClickRow?: (row: SensitivityRow) => void;
+  /** VROL-896 — open the chart-level drilldown for the full tornado. */
+  readonly onViewDetails?: () => void;
 }
 
 export function SensitivityCard({
@@ -33,6 +35,7 @@ export function SensitivityCard({
   onRun,
   errorMessage,
   onClickRow,
+  onViewDetails,
 }: SensitivityCardProps) {
   const status = errorMessage
     ? ("error" as const)
@@ -67,18 +70,24 @@ export function SensitivityCard({
           cycle-time changes hurt or help throughput most.
         </p>
       ) : (
-        <SensitivityBody summary={summary} {...(onClickRow ? { onClickRow } : {})} />
+        <SensitivityBody
+          summary={summary}
+          {...(onClickRow ? { onClickRow } : {})}
+          {...(onViewDetails ? { onViewDetails } : {})}
+        />
       )}
     </AnalyticsCardShell>
   );
 }
 
-function SensitivityBody({
+export function SensitivityBody({
   summary,
   onClickRow,
+  onViewDetails,
 }: {
   readonly summary: SensitivitySummary;
   readonly onClickRow?: (row: SensitivityRow) => void;
+  readonly onViewDetails?: () => void;
 }) {
   if (summary.rows.length === 0) {
     return (
@@ -100,15 +109,27 @@ function SensitivityBody({
   const sortedRows = [...summary.rows].sort((a, b) => b.swingPerHour - a.swingPerHour);
   return (
     <div className="space-y-2">
-      <div className="text-muted-foreground flex items-center justify-between text-[11px]">
+      <div className="text-muted-foreground flex items-center justify-between gap-2 text-[11px]">
         <span>
           Baseline ={" "}
           <strong className="text-foreground font-mono tabular-nums">{fmt(base)} /h</strong>
         </span>
-        <span>
-          Perturbation ±{Math.round((1 - summary.lowMultiplier) * 100)}% · sweep took{" "}
-          {summary.elapsedMs.toFixed(0)} ms
-        </span>
+        <div className="flex items-center gap-2">
+          <span>
+            Perturbation ±{Math.round((1 - summary.lowMultiplier) * 100)}% · sweep took{" "}
+            {summary.elapsedMs.toFixed(0)} ms
+          </span>
+          {onViewDetails ? (
+            <button
+              type="button"
+              onClick={onViewDetails}
+              aria-label="View details"
+              className="text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+            >
+              View details
+            </button>
+          ) : null}
+        </div>
       </div>
       <div className="space-y-1.5">
         {sortedRows.map((row) => {

@@ -86,7 +86,7 @@ const OBJECTIVES: readonly ObjectiveSpec[] = [
   },
   {
     value: "oee-max",
-    label: "Maximize line OEE",
+    label: "Maximize line efficiency",
     direction: "max",
     extract: (c) => c.meanLineOee,
     format: fmtPct,

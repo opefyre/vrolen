@@ -19,6 +19,7 @@ import {
   PieChart,
   ShieldCheck,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useState } from "react";
 
 import type { ChainResult, TimeseriesSample } from "@/engine";
@@ -34,6 +35,7 @@ import { KpiDrilldown, SensitivityDrilldown } from "./DrilldownSheets";
 import { OeeOverTimeChart } from "./OeeOverTimeChart";
 import { ReworkOverTimeChart } from "./ReworkOverTimeChart";
 import { cycleStats } from "@/lib/cycle-stats";
+import { ChartDrilldown, ViewDetailsButton } from "@/components/results/ChartDrilldown";
 
 import { EmptyState } from "@/components/EmptyState";
 import { BufferSummary } from "./BufferSummary";
@@ -46,7 +48,7 @@ import { ThroughputChart } from "./ThroughputChart";
 import { CostCard } from "./CostCard";
 import { OptimizationCard } from "./OptimizationCard";
 import { ReplicationsCard } from "./ReplicationsCard";
-import { SensitivityCard } from "./SensitivityCard";
+import { SensitivityBody, SensitivityCard } from "./SensitivityCard";
 import { VerificationCard } from "./VerificationCard";
 import { WipCurveCard } from "./WipCurveCard";
 import { RepsCalculator } from "@/components/results/RepsCalculator";
@@ -148,6 +150,208 @@ function AnchorTitle({
   );
 }
 
+// VROL-896 — markdown builders for the chart drilldowns. Each chart's
+// underlying series is reduced to a sane number of rows (≤ 40) so the
+// pasted markdown stays scannable rather than dumping every sample point.
+// Kept inline here (not in a /lib helper) because they're tightly coupled
+// to ResultPanel's chart inputs.
+function downsampleByStride<T>(rows: readonly T[], maxRows: number): readonly T[] {
+  if (rows.length <= maxRows) return rows;
+  const stride = Math.ceil(rows.length / maxRows);
+  const out: T[] = [];
+  for (let i = 0; i < rows.length; i += stride) out.push(rows[i]!);
+  // Always include the last row so the user sees the final value.
+  const last = rows[rows.length - 1]!;
+  if (out[out.length - 1] !== last) out.push(last);
+  return out;
+}
+
+function fmtMs(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms.toFixed(0)}ms`;
+}
+
+function warmupWelchToMarkdown(
+  samples: readonly TimeseriesSample[],
+  recommendedMs: number | null,
+  currentMs: number,
+  horizonMs: number,
+): string {
+  const lines: string[] = [];
+  lines.push("### Warm-up · Welch sparkline");
+  lines.push("");
+  lines.push(`Recommended warm-up: ${recommendedMs !== null ? fmtMs(recommendedMs) : "—"}`);
+  lines.push(`Current warm-up: ${fmtMs(currentMs)}`);
+  lines.push(`Horizon: ${fmtMs(horizonMs)}`);
+  lines.push("");
+  lines.push("| t (ms) | Rate (parts/ms) |");
+  lines.push("| --- | --- |");
+  // Compute per-sample throughput rate (matches the visual).
+  const rates: { tMs: number; r: number }[] = [];
+  for (let i = 1; i < samples.length; i++) {
+    const cur = samples[i]!;
+    const prev = samples[i - 1]!;
+    const dt = cur.tMs - prev.tMs;
+    if (dt <= 0) continue;
+    rates.push({ tMs: cur.tMs, r: (cur.lineCompleted - prev.lineCompleted) / dt });
+  }
+  for (const r of downsampleByStride(rates, 30)) {
+    lines.push(`| ${r.tMs.toFixed(0)} | ${r.r.toFixed(6)} |`);
+  }
+  return lines.join("\n");
+}
+
+function throughputOverTimeToMarkdown(
+  samples: readonly TimeseriesSample[],
+  warmupMs: number,
+): string {
+  const lines: string[] = [];
+  lines.push("### Throughput over time");
+  lines.push("");
+  lines.push("| t (ms) | Cumulative completed |");
+  lines.push("| --- | --- |");
+  const usable = samples.filter((s) => s.tMs >= warmupMs);
+  for (const s of downsampleByStride(usable, 40)) {
+    lines.push(`| ${s.tMs.toFixed(0)} | ${s.lineCompleted.toLocaleString()} |`);
+  }
+  return lines.join("\n");
+}
+
+function oeeOverTimeToMarkdown(
+  samples: readonly TimeseriesSample[],
+  stationLabels: readonly string[],
+  bottleneckStationIdx: number,
+  warmupMs: number,
+): string {
+  const lines: string[] = [];
+  const label =
+    stationLabels[bottleneckStationIdx] ?? `Station ${String(bottleneckStationIdx + 1)}`;
+  lines.push(`### Bottleneck state over time · ${label}`);
+  lines.push("");
+  lines.push("| t (ms) | Running% | Starved% | Blocked% | Down% |");
+  lines.push("| --- | --- | --- | --- | --- |");
+  const usable = samples.filter((s) => s.tMs >= warmupMs);
+  const rows = downsampleByStride(usable, 30);
+  for (let i = 0; i < rows.length; i++) {
+    const cur = rows[i]!;
+    const prev = i > 0 ? rows[i - 1] : null;
+    const curMs = cur.perStationStateMs[bottleneckStationIdx] ?? {};
+    const prevMs = prev?.perStationStateMs[bottleneckStationIdx] ?? {};
+    const get = (st: string) => (curMs[st] ?? 0) - (prevMs[st] ?? 0);
+    const total = ["Running", "Starved", "BlockedOut", "Down", "Setup", "Maintenance", "Idle"]
+      .map(get)
+      .reduce((a, b) => a + b, 0);
+    const pct = (st: string) => (total > 0 ? ((get(st) / total) * 100).toFixed(1) : "0.0");
+    lines.push(
+      `| ${cur.tMs.toFixed(0)} | ${pct("Running")} | ${pct("Starved")} | ${pct("BlockedOut")} | ${pct("Down")} |`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function reworkOverTimeToMarkdown(
+  samples: readonly TimeseriesSample[],
+  stationLabels: readonly string[],
+  warmupMs: number,
+): string {
+  const lines: string[] = [];
+  lines.push("### Rework over time");
+  lines.push("");
+  const stationCount = stationLabels.length;
+  const header = ["t (ms)", ...stationLabels.map((l) => `${l} (rework)`)].join(" | ");
+  const sep = ["---", ...stationLabels.map(() => "---")].join(" | ");
+  lines.push(`| ${header} |`);
+  lines.push(`| ${sep} |`);
+  const usable = samples.filter((s) => s.tMs >= warmupMs);
+  for (const s of downsampleByStride(usable, 30)) {
+    const cells: string[] = [s.tMs.toFixed(0)];
+    for (let i = 0; i < stationCount; i++) {
+      cells.push(String(s.perStationRework[i] ?? 0));
+    }
+    lines.push(`| ${cells.join(" | ")} |`);
+  }
+  return lines.join("\n");
+}
+
+function perStationStateToMarkdown(bottlenecks: ChainResult["bottlenecks"]): string {
+  const lines: string[] = [];
+  lines.push("### Per-station state breakdown");
+  lines.push("");
+  lines.push("| Station | Running% | Starved% | Blocked% | Down% | Setup% | Maint% | Idle% |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
+  for (const b of bottlenecks) {
+    const get = (st: string) =>
+      ((b.breakdown.find((seg) => seg.state === st)?.pct ?? 0) * 100).toFixed(1);
+    lines.push(
+      `| ${b.label ?? String(b.stationId)} | ${get("Running")} | ${get("Starved")} | ${get("BlockedOut")} | ${get("Down")} | ${get("Setup")} | ${get("Maintenance")} | ${get("Idle")} |`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function sensitivityTornadoToMarkdown(
+  summary: import("@/lib/sensitivity-sweep").SensitivitySummary,
+): string {
+  const lines: string[] = [];
+  const fmt = (n: number) => Math.round(n).toLocaleString();
+  lines.push("### Sensitivity · tornado");
+  lines.push("");
+  lines.push(`Baseline: ${fmt(summary.baselinePerHour)} /h`);
+  lines.push(`Perturbation: ±${Math.round((1 - summary.lowMultiplier) * 100)}% on cycle time`);
+  lines.push("");
+  lines.push("| Station | Low (/h) | High (/h) | Swing (/h) | Swing % |");
+  lines.push("| --- | --- | --- | --- | --- |");
+  const sorted = [...summary.rows].sort((a, b) => b.swingPerHour - a.swingPerHour);
+  for (const row of sorted) {
+    lines.push(
+      `| ${row.stationLabel} | ${fmt(row.lowPerHour)} | ${fmt(row.highPerHour)} | ${fmt(row.swingPerHour)} | ${row.swingPct.toFixed(1)}% |`,
+    );
+  }
+  return lines.join("\n");
+}
+
+// VROL-896 — extracted body for the per-station state breakdown card so
+// the same markup can be re-rendered inside the chart drilldown sheet at
+// a larger width.
+function PerStationStateBreakdownBody({
+  bottlenecks,
+}: {
+  readonly bottlenecks: ChainResult["bottlenecks"];
+}) {
+  return (
+    <>
+      <div className="space-y-3">
+        {bottlenecks.map((b) => (
+          <div key={String(b.stationId)} className="space-y-1">
+            <div className="text-foreground/80 text-sm">{b.label ?? String(b.stationId)}</div>
+            <div className="bg-muted flex h-2 overflow-hidden rounded-full">
+              {b.breakdown
+                .filter((seg) => seg.pct > 0.001)
+                .map((seg) => (
+                  <div
+                    key={seg.state}
+                    title={`${seg.state}: ${(seg.pct * 100).toFixed(1)}%`}
+                    className={`h-full ${stateColor(seg.state)}`}
+                    style={{ width: `${String(seg.pct * 100)}%` }}
+                  />
+                ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="text-muted-foreground mt-3 flex flex-wrap gap-2 text-xs">
+        {["Running", "Setup", "Maintenance", "Down", "BlockedOut", "Starved", "Idle"].map(
+          (state) => (
+            <span key={state} className="flex items-center gap-1.5">
+              <span className={`h-2.5 w-2.5 rounded-sm ${stateColor(state)}`} />
+              {state === "BlockedOut" ? "Blocked" : state}
+            </span>
+          ),
+        )}
+      </div>
+    </>
+  );
+}
+
 function stateColor(state: string): string {
   switch (state) {
     case "Running":
@@ -213,11 +417,14 @@ function WarmupWelchSparkline({
   recommendedMs,
   currentMs,
   horizonMs,
+  headerAction,
 }: {
   readonly samples: readonly TimeseriesSample[];
   readonly recommendedMs: number | null;
   readonly currentMs: number;
   readonly horizonMs: number;
+  /** VROL-896 — slot for a small "View details" affordance. */
+  readonly headerAction?: ReactNode;
 }) {
   // Track the rendered SVG pixel size so the viewBox tracks 1:1 with the
   // panel — same pattern as ThroughputChart. Without this, hard-coded
@@ -271,18 +478,21 @@ function WarmupWelchSparkline({
   const curX = xAt(currentMs);
   return (
     <div className="border-border bg-card rounded-md border p-3">
-      <div className="text-muted-foreground mb-1 flex items-center justify-between text-[11px] tracking-wide uppercase">
+      <div className="text-muted-foreground mb-1 flex items-center justify-between gap-2 text-[11px] tracking-wide uppercase">
         <span>Warm-up · Welch's method</span>
-        <span className="font-mono text-[10px] normal-case">
-          recommended{" "}
-          {recommendedMs !== null
-            ? recommendedMs >= 1000
-              ? `${(recommendedMs / 1000).toFixed(1)}s`
-              : `${recommendedMs.toFixed(0)}ms`
-            : "—"}
-          {" · "}current{" "}
-          {currentMs >= 1000 ? `${(currentMs / 1000).toFixed(1)}s` : `${currentMs.toFixed(0)}ms`}
-        </span>
+        <div className="flex items-center gap-2 normal-case">
+          <span className="font-mono text-[10px]">
+            recommended{" "}
+            {recommendedMs !== null
+              ? recommendedMs >= 1000
+                ? `${(recommendedMs / 1000).toFixed(1)}s`
+                : `${recommendedMs.toFixed(0)}ms`
+              : "—"}
+            {" · "}current{" "}
+            {currentMs >= 1000 ? `${(currentMs / 1000).toFixed(1)}s` : `${currentMs.toFixed(0)}ms`}
+          </span>
+          {headerAction}
+        </div>
       </div>
       <svg
         ref={svgRef}
@@ -664,6 +874,17 @@ export function ResultPanel({
   const [sensitivityRow, setSensitivityRow] = useState<
     import("@/lib/sensitivity-sweep").SensitivityRow | null
   >(null);
+  // VROL-896 — chart drilldown. One id at a time; the bottom of the panel
+  // renders the matching <ChartDrilldown> body so we don't bloat the JSX
+  // tree with 6 separate Sheet instances.
+  type ChartDrilldownId =
+    | "warmup-welch"
+    | "throughput-over-time"
+    | "oee-over-time"
+    | "rework-over-time"
+    | "per-station-state"
+    | "sensitivity-tornado";
+  const [chartDrilldown, setChartDrilldown] = useState<ChartDrilldownId | null>(null);
 
   // VROL-720 — help-link anchor mapping. Routes to /help (same-tab) with a
   // hash so the matching definition scrolls into view.
@@ -671,24 +892,33 @@ export function ResultPanel({
     const map: Record<string, string> = {
       Completed: "/help",
       Throughput: "/help",
-      "Line OEE": "/help",
+      "Line efficiency": "/help",
       "Time-in-system": "/help",
     };
     return map[label] ?? null;
   };
   const KPI_TO_REP_LABEL: Record<string, string> = {
     Throughput: "Throughput",
-    "Line OEE": "Line OEE",
+    "Line efficiency": "Line efficiency",
     "Time-in-system": "Time-in-system",
     Completed: "Completed",
   };
   const replicationKpiFor = (label: string) =>
     replicationSummary?.kpis.find((k) => k.label === KPI_TO_REP_LABEL[label]) ?? null;
+  // VROL-898 — extra hover context for KPI tiles whose meaning is easy to
+  // misread. "Line efficiency" in particular is NOT the same as per-station
+  // OEE — without this hint, users average the station numbers in their head
+  // and complain that the line tile doesn't match.
+  const TILE_TOOLTIPS: Record<string, string> = {
+    "Line efficiency":
+      "Actual throughput as a fraction of the theoretical bottleneck rate. Different from per-station OEE — the station numbers don't roll up to this directly.",
+  };
   const tile = (label: string, value: string, hint?: string) => {
     const href = helpAnchor(label);
     const repKpi = replicationKpiFor(label);
     const clickable = repKpi !== null;
     const ariaLabel = clickable ? `${label} — open per-replication detail` : undefined;
+    const tooltip = TILE_TOOLTIPS[label];
     return (
       <button
         type="button"
@@ -697,6 +927,7 @@ export function ResultPanel({
         }}
         disabled={!clickable}
         aria-label={ariaLabel}
+        title={tooltip}
         className={`border-border bg-card relative w-full overflow-hidden rounded-md border p-3 text-left transition-colors ${clickable ? "hover:border-foreground/30 hover:bg-accent/40 cursor-pointer" : "cursor-default"}`}
       >
         {/* Backdrop sparklines were removed — they had no axis context
@@ -842,7 +1073,7 @@ export function ResultPanel({
       {cycleStrip}
       <div className="grid grid-cols-3 gap-3">
         {tile("Completed", result.completed.toLocaleString(), "during measurement window")}
-        {tile("Line OEE", `${fmt(result.lineOee * 100)}%`, "geometric mean")}
+        {tile("Line efficiency", `${fmt(result.lineOee * 100)}%`, "throughput vs theoretical")}
         {tile("Time-in-system", `${fmt(result.avgTimeInSystemW, 0)} ms`, "average W per part")}
       </div>
 
@@ -986,6 +1217,12 @@ export function ResultPanel({
               recommendedMs={detectWarmup(result.samples, horizonMs).recommendedMs}
               currentMs={warmupMs}
               horizonMs={horizonMs}
+              headerAction={
+                <ViewDetailsButton
+                  onClick={() => setChartDrilldown("warmup-welch")}
+                  label="View details"
+                />
+              }
             />
           ) : null}
           <VerificationCard
@@ -1021,6 +1258,7 @@ export function ResultPanel({
               running={sensitivityRunning === true}
               onRun={onRunSensitivity}
               onClickRow={(row) => setSensitivityRow(row)}
+              onViewDetails={() => setChartDrilldown("sensitivity-tornado")}
             />
           ) : null}
           {onRunWipCurve ? (
@@ -1132,10 +1370,14 @@ export function ResultPanel({
 
       {activeTab === "throughput" ? (
         <Card id="throughput">
-          <CardHeader>
+          <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
             <CardTitle className="font-heading text-base">
               <AnchorTitle anchorId="throughput">Throughput over time</AnchorTitle>
             </CardTitle>
+            <ViewDetailsButton
+              onClick={() => setChartDrilldown("throughput-over-time")}
+              label="View details"
+            />
           </CardHeader>
           <CardContent>
             <ThroughputChart samples={result.samples} horizonMs={horizonMs} warmupMs={warmupMs} />
@@ -1145,10 +1387,14 @@ export function ResultPanel({
 
       {activeTab === "oee" ? (
         <Card id="bottleneck-state">
-          <CardHeader>
+          <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
             <CardTitle className="font-heading text-base">
               <AnchorTitle anchorId="bottleneck-state">Bottleneck state over time</AnchorTitle>
             </CardTitle>
+            <ViewDetailsButton
+              onClick={() => setChartDrilldown("oee-over-time")}
+              label="View details"
+            />
           </CardHeader>
           <CardContent>
             <OeeOverTimeChart
@@ -1164,13 +1410,19 @@ export function ResultPanel({
 
       {activeTab === "quality" && showReworkChart ? (
         <Card id="rework-over-time">
-          <CardHeader>
-            <CardTitle className="font-heading text-base">
-              <AnchorTitle anchorId="rework-over-time">Rework over time</AnchorTitle>
-            </CardTitle>
-            <CardDescription>{`Cumulative rework across ${String(reworkActiveStationCount)} station${
-              reworkActiveStationCount === 1 ? "" : "s"
-            }.`}</CardDescription>
+          <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
+            <div className="space-y-1">
+              <CardTitle className="font-heading text-base">
+                <AnchorTitle anchorId="rework-over-time">Rework over time</AnchorTitle>
+              </CardTitle>
+              <CardDescription>{`Cumulative rework across ${String(reworkActiveStationCount)} station${
+                reworkActiveStationCount === 1 ? "" : "s"
+              }.`}</CardDescription>
+            </div>
+            <ViewDetailsButton
+              onClick={() => setChartDrilldown("rework-over-time")}
+              label="View details"
+            />
           </CardHeader>
           <CardContent>
             <ReworkOverTimeChart
@@ -1203,46 +1455,24 @@ export function ResultPanel({
 
       {activeTab === "states" ? (
         <Card id="per-station-state-breakdown">
-          <CardHeader>
-            <CardTitle className="font-heading text-base">
-              <AnchorTitle anchorId="per-station-state-breakdown">
-                Per-station state breakdown
-              </AnchorTitle>
-            </CardTitle>
-            <CardDescription>
-              Time-weighted % per station across the measurement window.
-            </CardDescription>
+          <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
+            <div className="space-y-1">
+              <CardTitle className="font-heading text-base">
+                <AnchorTitle anchorId="per-station-state-breakdown">
+                  Per-station state breakdown
+                </AnchorTitle>
+              </CardTitle>
+              <CardDescription>
+                Time-weighted % per station across the measurement window.
+              </CardDescription>
+            </div>
+            <ViewDetailsButton
+              onClick={() => setChartDrilldown("per-station-state")}
+              label="View details"
+            />
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {result.bottlenecks.map((b) => (
-                <div key={String(b.stationId)} className="space-y-1">
-                  <div className="text-foreground/80 text-sm">{b.label ?? String(b.stationId)}</div>
-                  <div className="bg-muted flex h-2 overflow-hidden rounded-full">
-                    {b.breakdown
-                      .filter((seg) => seg.pct > 0.001)
-                      .map((seg) => (
-                        <div
-                          key={seg.state}
-                          title={`${seg.state}: ${(seg.pct * 100).toFixed(1)}%`}
-                          className={`h-full ${stateColor(seg.state)}`}
-                          style={{ width: `${String(seg.pct * 100)}%` }}
-                        />
-                      ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="text-muted-foreground mt-3 flex flex-wrap gap-2 text-xs">
-              {["Running", "Setup", "Maintenance", "Down", "BlockedOut", "Starved", "Idle"].map(
-                (state) => (
-                  <span key={state} className="flex items-center gap-1.5">
-                    <span className={`h-2.5 w-2.5 rounded-sm ${stateColor(state)}`} />
-                    {state === "BlockedOut" ? "Blocked" : state}
-                  </span>
-                ),
-              )}
-            </div>
+            <PerStationStateBreakdownBody bottlenecks={result.bottlenecks} />
           </CardContent>
         </Card>
       ) : null}
@@ -1310,6 +1540,145 @@ export function ResultPanel({
             }
           : {})}
       />
+      {/* VROL-896 — chart drilldowns. Renders the chart at ~40rem so the
+          reader can actually read tick marks, station labels, and time
+          axes that get crushed in the result-panel-width view. */}
+      {(() => {
+        if (chartDrilldown === null) return null;
+        const close = () => setChartDrilldown(null);
+        if (chartDrilldown === "warmup-welch") {
+          const recommendedMs = detectWarmup(result.samples, horizonMs).recommendedMs;
+          return (
+            <ChartDrilldown
+              chartId="warmup-welch"
+              title="Warm-up · Welch's method"
+              description="Per-sample throughput rate with recommended and current warm-up markers."
+              markdownData={warmupWelchToMarkdown(
+                result.samples,
+                recommendedMs,
+                warmupMs,
+                horizonMs,
+              )}
+              open
+              onClose={close}
+            >
+              <WarmupWelchSparkline
+                samples={result.samples}
+                recommendedMs={recommendedMs}
+                currentMs={warmupMs}
+                horizonMs={horizonMs}
+              />
+            </ChartDrilldown>
+          );
+        }
+        if (chartDrilldown === "throughput-over-time") {
+          return (
+            <ChartDrilldown
+              chartId="throughput-over-time"
+              title="Throughput over time"
+              description="Cumulative completed parts across the measurement window."
+              markdownData={throughputOverTimeToMarkdown(result.samples, warmupMs)}
+              open
+              onClose={close}
+            >
+              <ThroughputChart samples={result.samples} horizonMs={horizonMs} warmupMs={warmupMs} />
+            </ChartDrilldown>
+          );
+        }
+        if (chartDrilldown === "oee-over-time") {
+          return (
+            <ChartDrilldown
+              chartId="oee-over-time"
+              title="Bottleneck state over time"
+              description="Per-interval state mix at the bottleneck station."
+              markdownData={oeeOverTimeToMarkdown(
+                result.samples,
+                runMeta.stationLabels,
+                result.bottleneckStationIdx,
+                warmupMs,
+              )}
+              open
+              onClose={close}
+            >
+              <OeeOverTimeChart
+                samples={result.samples}
+                stationLabels={runMeta.stationLabels}
+                bottleneckStationIdx={result.bottleneckStationIdx}
+                horizonMs={horizonMs}
+                warmupMs={warmupMs}
+              />
+            </ChartDrilldown>
+          );
+        }
+        if (chartDrilldown === "rework-over-time") {
+          return (
+            <ChartDrilldown
+              chartId="rework-over-time"
+              title="Rework over time"
+              description="Cumulative reworked parts per station."
+              markdownData={reworkOverTimeToMarkdown(
+                result.samples,
+                runMeta.stationLabels,
+                warmupMs,
+              )}
+              open
+              onClose={close}
+            >
+              <ReworkOverTimeChart
+                samples={result.samples}
+                stationLabels={runMeta.stationLabels}
+                horizonMs={horizonMs}
+                warmupMs={warmupMs}
+              />
+            </ChartDrilldown>
+          );
+        }
+        if (chartDrilldown === "per-station-state") {
+          return (
+            <ChartDrilldown
+              chartId="per-station-state"
+              title="Per-station state breakdown"
+              description="Time-weighted % per station across the measurement window."
+              markdownData={perStationStateToMarkdown(result.bottlenecks)}
+              open
+              onClose={close}
+            >
+              <PerStationStateBreakdownBody bottlenecks={result.bottlenecks} />
+            </ChartDrilldown>
+          );
+        }
+        if (chartDrilldown === "sensitivity-tornado") {
+          if (!sensitivitySummary) {
+            return (
+              <ChartDrilldown
+                chartId="sensitivity-tornado"
+                title="Sensitivity · tornado"
+                description="Run the sweep to populate this view."
+                open
+                onClose={close}
+              >
+                <p className="text-muted-foreground text-sm">No sweep summary available yet.</p>
+              </ChartDrilldown>
+            );
+          }
+          return (
+            <ChartDrilldown
+              chartId="sensitivity-tornado"
+              title="Sensitivity · tornado"
+              description="±20% cycle-time perturbation per station, ranked by throughput swing."
+              markdownData={sensitivityTornadoToMarkdown(sensitivitySummary)}
+              open
+              onClose={close}
+            >
+              <SensitivityBody
+                summary={sensitivitySummary}
+                onClickRow={(row) => setSensitivityRow(row)}
+              />
+            </ChartDrilldown>
+          );
+        }
+        return null;
+      })()}
     </div>
   );
 }
@@ -1368,7 +1737,7 @@ export function ComparisonTable({
       higherIsBetter: true,
     },
     {
-      label: "Line OEE",
+      label: "Line efficiency",
       a: aResult.lineOee,
       b: bResult.lineOee,
       fmt: (n) => `${fmt(n * 100)}%`,
@@ -1428,7 +1797,7 @@ export function ComparisonTable({
       higherIsBetter: true,
     },
     {
-      label: "Line OEE",
+      label: "Line efficiency",
       a: aResult.lineOee,
       b: bResult.lineOee,
       fmtVal: (n: number) => `${fmt(n * 100)}%`,

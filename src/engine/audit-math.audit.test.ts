@@ -838,3 +838,100 @@ describe("audit 24 — mass balance", () => {
     expect(delta).toBeLessThan(20);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// VROL-897 — Availability semantics: no breakdowns ⇒ A ≈ 100%, even when
+// the station spent the window heavily Blocked or Starved.
+// ──────────────────────────────────────────────────────────────────────────
+describe("audit VROL-897 — Availability ignores starvation + blocking", () => {
+  it("heavily-blocked Mixer with zero Down ⇒ Availability ≈ 100%, OEE drag is Performance", () => {
+    // Mixer (idx 0, fast 50ms) is upstream of an extremely slow Filler
+    // (idx 1, 2s cycle). Buffer capacity 2 means Mixer fills the buffer
+    // within a few cycles and then sits Blocked for the rest of the run.
+    // Zero breakdowns, zero setup, zero maintenance — so by textbook
+    // semantics Mixer's Availability is 100%; Performance is the lever
+    // that drops (small goodParts × idealCycle vs. window time).
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(2_000), constant(50), constant(50)],
+      stationLabels: ["Mixer", "Filler", "Capper", "Labeler"],
+      interStationBufferCapacity: 2,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // Sanity: Mixer really is heavily blocked (running pct should be low).
+    const mixerRunningPct = result.perStationRunningPct[0] ?? 0;
+    expect(mixerRunningPct).toBeLessThan(0.2);
+
+    const mixer = result.perStationOee[0];
+    expect(mixer).toBeDefined();
+    // (1) Availability must be ≈ 1.0 regardless of how much the station
+    // was Blocked (or Starved). Pre-fix, the legacy display rendered this
+    // as 0% via the wrong-index path; the engine math itself only fails
+    // when runTime AND downTime are both zero (covered by case 2 below).
+    expect(mixer!.availability).toBeGreaterThan(0.99);
+    expect(mixer!.availability).toBeLessThanOrEqual(1.0);
+    // (2) Performance is what drops — Mixer made very few good parts
+    // relative to the wall-clock window because the downstream was slow.
+    expect(mixer!.performance).toBeLessThan(1.0);
+    // (3) Quality is 100% (no defects configured).
+    expect(mixer!.quality).toBe(1);
+    // (4) OEE = A × P × Q; with A = Q = 1, OEE ≈ Performance.
+    expect(mixer!.oee).toBeCloseTo(mixer!.performance, 6);
+  });
+
+  it("station that NEVER runs (pure-Starved, zero Down) reports Availability = 100%", () => {
+    // A 2-station chain where the downstream is so slow that the
+    // SECOND station may never get a part within the horizon when buffer
+    // is small enough. Use an extreme cycle to force runTime ≈ 0 on the
+    // last station. Pre-VROL-897, this case pinned A = 0 because the
+    // computeOee guard returned 0 when loadingTime = 0; post-fix it
+    // returns 1 (textbook: a machine that never ran but also never
+    // broke down is fully available).
+    const result = runChain({
+      stationCycleTimes: [constant(60_000), constant(50)],
+      stationLabels: ["VerySlow", "Tail"],
+      interStationBufferCapacity: 1,
+      horizonMs: 1_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    const tail = result.perStationOee[1];
+    expect(tail).toBeDefined();
+    // Tail must be starved the whole window with zero Running and zero Down.
+    expect(tail!.runTimeMs).toBe(0);
+    expect(tail!.downTimeMs).toBe(0);
+    // Availability = 100% (machine was available, just not needed).
+    expect(tail!.availability).toBe(1);
+    // Performance is 0 (no good parts produced).
+    expect(tail!.performance).toBe(0);
+    // OEE = 0 — but the drag comes through Performance, not Availability.
+    expect(tail!.oee).toBe(0);
+  });
+
+  it("perStationLabels + perStationRunningPct are topology-ordered (not bottleneck-sorted)", () => {
+    // The display layer used to index `bottlenecks[idx].label` against
+    // `perStationOee[idx]`, but `bottlenecks` is sorted by runningPct DESC,
+    // so labels were swapped (Mixer's bars labeled "Filler" and vice versa).
+    // The engine now emits perStationLabels + perStationRunningPct in
+    // topology order so the display can pair them by index.
+    const result = runChain({
+      stationCycleTimes: [constant(50), constant(2_000), constant(50)],
+      stationLabels: ["Mixer", "Filler", "Capper"],
+      interStationBufferCapacity: 2,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // Topology order is preserved on perStationLabels.
+    expect(result.perStationLabels).toEqual(["Mixer", "Filler", "Capper"]);
+    // bottlenecks is sorted by runningPct DESC — Filler dominates because
+    // it's the slow station. If we relied on bottlenecks[idx].label, idx 0
+    // would resolve to "Filler", not "Mixer".
+    expect(result.bottlenecks[0]?.label).toBe("Filler");
+    // perStationRunningPct[0] is Mixer's running share (a small number
+    // because Mixer is blocked most of the window), not Filler's.
+    expect(result.perStationRunningPct[0]).toBeLessThan(0.5);
+    expect(result.perStationRunningPct[1]).toBeGreaterThan(0.5);
+  });
+});

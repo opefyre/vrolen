@@ -162,6 +162,26 @@ export interface ChainResult {
   /** W — average time-in-system (exit - enter) per exited part. */
   readonly avgTimeInSystemW: number;
   readonly perStationCompleted: readonly number[];
+  /**
+   * Per-station human labels, aligned by index with perStationOee /
+   * perStationCompleted (i.e., topology order). Undefined entries when the
+   * caller didn't supply a label for that station. Distinct from
+   * bottlenecks[i].label — `bottlenecks` is sorted by runningPct DESC, so
+   * indexing it positionally against perStationOee would mis-pair labels
+   * (VROL-897). Consumers that render per-station OEE in topology order
+   * MUST use this array, not bottlenecks[i].label.
+   */
+  readonly perStationLabels?: ReadonlyArray<string | undefined>;
+  /**
+   * Per-station share of the measurement window spent in Running (0–1),
+   * aligned by index with perStationOee (topology order). VROL-897 — the
+   * OEE breakdown UI shows a per-row "Utilization" chip alongside the A/P/Q
+   * bars; previously it indexed `bottlenecks[i].runningPct`, which is
+   * sorted-by-runningPct order, so the chip on row i described a different
+   * station than the bars on row i. Consumers MUST use this array, not
+   * bottlenecks[i].runningPct.
+   */
+  readonly perStationRunningPct: readonly number[];
   /** Bottleneck candidates ranked by time-in-Running descending. */
   readonly bottlenecks: readonly BottleneckCandidate[];
   /**
@@ -1427,6 +1447,11 @@ function* simulationStream(
     throughputLambda,
     avgTimeInSystemW,
     perStationCompleted: executors.map((e) => e.completed),
+    perStationLabels: topology.labels,
+    perStationRunningPct: stateTimeTrackers.map((t) => {
+      const total = t.totalTime();
+      return total > 0 ? t.timeInState("Running") / total : 0;
+    }),
     perStationCapacity: topology.capacities,
     bottlenecks,
     perStationOee,

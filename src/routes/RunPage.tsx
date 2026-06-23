@@ -719,7 +719,7 @@ export default function RunPage() {
                 OEE per station
               </CardTitle>
               <CardDescription>
-                Availability × Performance × Quality. Line OEE (geometric mean):{" "}
+                Availability × Performance × Quality. Line efficiency (throughput vs theoretical):{" "}
                 <span className="font-mono tabular-nums">
                   {formatNumber(result.lineOee * 100, 1)}%
                 </span>

@@ -3,10 +3,14 @@
  *
  * OEE = Availability × Performance × Quality.
  *
- * Definitions used here match the project spec (see VROL-138):
+ * Definitions used here match the project spec (see VROL-138, VROL-897):
  *   Availability = runTime / (runTime + downTime)
  *     where downTime counts ONLY unplanned downtime (breakdowns), NOT
- *     planned maintenance, not setup, not idle.
+ *     planned maintenance, not setup, not idle. Starvation and blocking
+ *     are also excluded — they're external constraints, not a station's
+ *     own unavailability. A station with zero breakdowns is 100% available
+ *     even if it spent the whole window starved or blocked (Performance
+ *     is the lever that drops in that case — see below).
  *   Performance = (idealCycleTime × goodPartCount) / runTime
  *     Caps at 1.0 — a faster-than-ideal run would imply the "ideal" was
  *     wrong; we clamp rather than report >100% Performance.
@@ -63,7 +67,14 @@ export function computeOee(inputs: OeeInputs): OeeMetrics {
   const downTimeMs = inputs.stateTimeTracker.timeInState("Down");
   const loadingTimeMs = runTimeMs + downTimeMs;
 
-  const availability = loadingTimeMs > 0 ? runTimeMs / loadingTimeMs : 0;
+  // VROL-897 — when loadingTime = 0 (zero Running AND zero Down), the station
+  // experienced no unplanned downtime, so Availability is 1.0 by textbook
+  // semantics. The previous "return 0" pinned a starvation-only / blocking-only
+  // station to Availability 0%, which conflated "didn't run" with "broke down."
+  // The Performance lever still drops to 0 (no goodParts), so OEE = 0 either
+  // way — but the breakdown panel now correctly attributes that 0% to
+  // Performance (i.e., external starvation/blocking) instead of Availability.
+  const availability = loadingTimeMs > 0 ? runTimeMs / loadingTimeMs : 1;
   const rawPerformance =
     runTimeMs > 0 ? (inputs.idealCycleTimeMs * inputs.goodParts) / runTimeMs : 0;
   const performance = Math.min(1, Math.max(0, rawPerformance));

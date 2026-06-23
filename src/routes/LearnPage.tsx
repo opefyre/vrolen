@@ -75,9 +75,9 @@ const KPI_TERMS: readonly Term[] = [
   },
   {
     icon: Award,
-    title: "Line OEE",
+    title: "Line efficiency",
     definition:
-      "Overall Equipment Effectiveness for the whole line. Actual throughput divided by the theoretical maximum, clamped to ≤ 100%.",
+      "Actual line throughput as a fraction of the theoretical bottleneck rate. Different from per-station OEE — the station numbers don't roll up to this directly. Clamped to ≤ 100%.",
     formula: "actual throughput / theoretical max",
     learnMore: "https://en.wikipedia.org/wiki/Overall_equipment_effectiveness",
   },
