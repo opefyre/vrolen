@@ -2960,8 +2960,23 @@ function EditorCanvas() {
       // carries a stationId → breakdown array). The state mix actually differs
       // per station, unlike cumulative throughput which is identical in steady
       // state.
+      // VROL-907 — when playback is active, prefer playbackSnapshot.perStation[i]
+      // .stateMix so the bar reflects the state mix UP TO the playhead instead
+      // of the whole-run mix. Falls back to result.bottlenecks at horizon-end
+      // / when no samples / when paused.
       if (result) {
-        const mix = result.bottlenecks.find((b) => b.stationId === n.id)?.breakdown;
+        let mix: ReadonlyArray<{ state: string; pct: number }> | undefined;
+        if (
+          playbackSnapshot &&
+          stationIdx !== undefined &&
+          stationIdx < playbackSnapshot.perStation.length
+        ) {
+          const live = playbackSnapshot.perStation[stationIdx]?.stateMix;
+          if (live && live.length > 0) mix = live;
+        }
+        if (!mix) {
+          mix = result.bottlenecks.find((b) => b.stationId === n.id)?.breakdown;
+        }
         if (mix && mix.length > 0) {
           if (nextData === baseData) nextData = { ...baseData };
           nextData = {
@@ -3942,21 +3957,32 @@ function EditorCanvas() {
           className="border-border bg-card/70 supports-[backdrop-filter]:bg-card/55 sticky top-[3.25rem] z-10 -mx-6 grid grid-cols-3 gap-2 border-b px-3 py-2 backdrop-blur sm:grid-cols-6 sm:gap-3 sm:px-6"
         >
           {(() => {
-            const tput = Math.round(result.throughputLambda * 3_600_000);
-            const oeePct = (result.lineOee * 100).toFixed(0);
-            const tisMs = result.avgTimeInSystemW;
+            // VROL-906 — when playback is active and the snapshot has KPI
+            // data, render the playhead values so the strip counts UP as
+            // the scrubber moves. Falls back to result.* aggregates the
+            // rest of the time (paused / no playback / no samples).
+            const usePlayback = playbackSnapshot && playbackSnapshot.kpi !== undefined;
+            const kpi = usePlayback ? playbackSnapshot.kpi : null;
+            const tput = Math.round(
+              kpi ? kpi.throughputPerHr : result.throughputLambda * 3_600_000,
+            );
+            const oeePct = ((kpi ? kpi.lineEfficiencyPct : result.lineOee) * 100).toFixed(0);
+            const completedVal = kpi ? Math.round(kpi.completed) : result.completed;
+            const tisMs = kpi ? kpi.avgTimeInSystemMs : result.avgTimeInSystemW;
             const tisLabel =
               tisMs >= 1000 ? `${(tisMs / 1000).toFixed(1)}s` : `${Math.round(tisMs)}ms`;
-            const sortedBottlenecks = [...result.bottlenecks].sort(
-              (a, b) => b.runningPct - a.runningPct,
-            );
-            const head = sortedBottlenecks[0];
-            const bnLabel = head?.label ?? "—";
-            const bnRunPct = head ? `${(head.runningPct * 100).toFixed(0)}%` : "—";
+            const bnLabel = kpi
+              ? (kpi.bottleneckLabel ?? "—")
+              : (result.bottlenecks[0]?.label ?? "—");
+            const bnRunPct = kpi
+              ? `${(kpi.bottleneckRunPct * 100).toFixed(0)}%`
+              : result.bottlenecks[0]
+                ? `${(result.bottlenecks[0].runningPct * 100).toFixed(0)}%`
+                : "—";
             const tiles: { label: string; value: string; hint?: string }[] = [
               { label: "Throughput", value: tput.toLocaleString(), hint: "parts / h" },
               { label: "Line efficiency", value: `${oeePct}%`, hint: "vs theoretical" },
-              { label: "Completed", value: result.completed.toLocaleString(), hint: "parts" },
+              { label: "Completed", value: completedVal.toLocaleString(), hint: "parts" },
               { label: "Time-in-system", value: tisLabel, hint: "avg" },
               { label: "Bottleneck", value: bnLabel },
               { label: "Util on b/n", value: bnRunPct, hint: "running %" },
@@ -3969,7 +3995,9 @@ function EditorCanvas() {
                 <span className="text-muted-foreground truncate text-[9px] font-medium tracking-wide uppercase">
                   {t.label}
                 </span>
-                <span className="text-foreground truncate font-mono text-sm font-semibold tabular-nums sm:text-base">
+                {/* VROL-906 — short CSS transition on the value swap so the
+                    count-up at 200× feels smooth instead of stutter-jumpy. */}
+                <span className="text-foreground truncate font-mono text-sm font-semibold tabular-nums transition-[color,opacity] duration-100 sm:text-base">
                   {t.value}
                 </span>
                 {t.hint ? (
