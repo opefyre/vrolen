@@ -213,6 +213,7 @@ import {
 import {
   BreaksEditor,
   MaintenanceWindowsEditor,
+  ChangeoverMatrixEditor,
   PerProductCyclesEditor,
   SetupTimeEditor,
   SkillsField,
@@ -818,6 +819,7 @@ import { Sparkline } from "./Sparkline";
 import { StateMixBar } from "@/components/canvas/state-mix-bar";
 import { StationDrilldown } from "@/components/editor/station-drilldown";
 import { SyncStatusPill } from "@/components/editor/sync-status-pill";
+import { QualityGradesEditor } from "@/components/editor/quality-grades-editor";
 
 // VROL-625 — lazy-load the result-panel cards + compare table + the charts
 // they own. Editor first paint no longer includes them; the user pays for
@@ -4879,6 +4881,27 @@ function EditorCanvas() {
                           updateSelectedNodeData({ capacity: v === 1 ? undefined : v });
                         }}
                       />
+                      {/* VROL-913 — Inspector control for VROL-870 multi-output.
+                          One cycle still pushes ONE part to downstream (the
+                          batch handle); the engine counts N units per cycle.
+                          Models PCB depanelizers, multi-cavity moulds, etc. */}
+                      <NumberField
+                        id="inspector-units-per-cycle"
+                        label="Units per cycle"
+                        value={Number(
+                          (selectedNode.data as { unitsPerCycle?: unknown }).unitsPerCycle ?? 1,
+                        )}
+                        min={1}
+                        max={1000}
+                        step={1}
+                        helperText="Units produced per completed cycle (default 1). > 1 models multi-output stations like depanelizers or multi-cavity moulds."
+                        onChange={(n) => {
+                          const v = Math.max(1, Math.min(1000, Math.floor(n)));
+                          updateSelectedNodeData({
+                            unitsPerCycle: v === 1 ? undefined : v,
+                          });
+                        }}
+                      />
                       <SetupTimeEditor
                         value={
                           (selectedNode.data as { setupDistribution?: Distribution })
@@ -5123,6 +5146,26 @@ function EditorCanvas() {
                           }}
                         />
                       ) : null}
+                      {/* VROL-879 — per-station changeover matrix editor. Only
+                          surfaces when 2+ products are configured (the matrix
+                          is dimensionally meaningless with one product). */}
+                      {settings.products.enabled && settings.products.list.length > 1 ? (
+                        <ChangeoverMatrixEditor
+                          products={settings.products.list}
+                          value={
+                            (
+                              selectedNode.data as {
+                                changeoverMatrix?: Record<string, Record<string, Distribution>>;
+                              }
+                            ).changeoverMatrix ?? {}
+                          }
+                          onChange={(next) => {
+                            updateSelectedNodeData({
+                              changeoverMatrix: Object.keys(next).length > 0 ? next : undefined,
+                            });
+                          }}
+                        />
+                      ) : null}
                       {/* VROL-293 — Recipe editor section. Visible when materials
                           are enabled. The recipe applies to the station that's
                           selected when Run fires. */}
@@ -5228,6 +5271,85 @@ function EditorCanvas() {
                           the next Run.
                         </p>
                       </div>
+                      {/* VROL-913 — sustainability inputs (energy/water/CO₂e
+                          per completed cycle). Drives the line-level kWh / L /
+                          kg tiles in the result panel (VROL-885). All zero by
+                          default; tiles stay hidden when nothing is set. */}
+                      <div className="flex flex-col gap-1.5">
+                        <div className="text-muted-foreground text-xs font-medium">
+                          Sustainability inputs
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <NumberField
+                            id="inspector-energy-per-cycle"
+                            label="Energy (J / cycle)"
+                            value={Number(
+                              (selectedNode.data as { energyPerCycleJ?: unknown })
+                                .energyPerCycleJ ?? 0,
+                            )}
+                            min={0}
+                            step={1}
+                            onChange={(n) => {
+                              updateSelectedNodeData({
+                                energyPerCycleJ: n > 0 ? n : undefined,
+                              });
+                            }}
+                          />
+                          <NumberField
+                            id="inspector-water-per-cycle"
+                            label="Water (L / cycle)"
+                            value={Number(
+                              (selectedNode.data as { waterPerCycleL?: unknown }).waterPerCycleL ??
+                                0,
+                            )}
+                            min={0}
+                            step={0.01}
+                            onChange={(n) => {
+                              updateSelectedNodeData({
+                                waterPerCycleL: n > 0 ? n : undefined,
+                              });
+                            }}
+                          />
+                          <NumberField
+                            id="inspector-co2e-per-cycle"
+                            label="CO₂e (g / cycle)"
+                            value={Number(
+                              (selectedNode.data as { co2ePerCycleG?: unknown }).co2ePerCycleG ?? 0,
+                            )}
+                            min={0}
+                            step={0.1}
+                            onChange={(n) => {
+                              updateSelectedNodeData({
+                                co2ePerCycleG: n > 0 ? n : undefined,
+                              });
+                            }}
+                          />
+                        </div>
+                        <p className="text-muted-foreground text-[11px]">
+                          Drives line-level kWh / L / kg tiles in the result panel. The engine
+                          multiplies these by completed cycles ÷ units-per-cycle.
+                        </p>
+                      </div>
+                      {/* VROL-913 — quality grades editor. List of {grade, pct}
+                          rows; the engine normalises the vector so user typos
+                          that don't sum to 1.0 still produce valid splits. */}
+                      <QualityGradesEditor
+                        value={
+                          ((
+                            selectedNode.data as {
+                              qualityGrades?: ReadonlyArray<{ grade: string; pct: number }>;
+                            }
+                          ).qualityGrades ?? []) as ReadonlyArray<{
+                            grade: string;
+                            pct: number;
+                          }>
+                        }
+                        onChange={(next) => {
+                          updateSelectedNodeData({
+                            qualityGrades: next.length > 0 ? next : undefined,
+                          });
+                        }}
+                      />
                     </CardContent>
                   </TabsContent>
                 </Tabs>

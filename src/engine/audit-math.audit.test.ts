@@ -1120,6 +1120,41 @@ describe("audit VROL-899/900 — nominalCycleTimeMs + composite ranking", () => 
     expect(result.totalCO2eG).toBeGreaterThan(250);
   });
 
+  it("VROL-886 — batch + lot IDs propagate from source to sink and appear in per-batch counts", () => {
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "src", label: "Mix", cycleTimeMs: constant(100) },
+          { id: "snk", label: "Pack", cycleTimeMs: constant(100) },
+        ],
+        edges: [{ source: "src", target: "snk" }],
+      },
+      interStationBufferCapacity: 50,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+      source: {
+        interArrivalMs: constant(100),
+        batchSize: 5,
+        batchTagging: {
+          enabled: true,
+          batchIdPrefix: "BAT",
+          lotIdPrefix: "LOT",
+          batchesPerLot: 2,
+        },
+      },
+    });
+    expect(result.perBatchCompleted).toBeDefined();
+    expect(result.perBatchCompleted?.size ?? 0).toBeGreaterThan(0);
+    // At least one batch ID is BAT-NNNN.
+    const firstKey = result.perBatchCompleted ? [...result.perBatchCompleted.keys()][0] : "";
+    expect(firstKey).toMatch(/^BAT-\d+/);
+    // Lots are grouping multiple batches.
+    expect(result.perLotCompleted).toBeDefined();
+    expect(result.perLotCompleted?.size ?? 0).toBeGreaterThan(0);
+    expect([...(result.perLotCompleted?.keys() ?? [])][0]).toMatch(/^LOT-\d+/);
+  });
+
   it("VROL-882 — qualityGrades distribute completed counts proportionally", () => {
     const result = runChain({
       topology: {

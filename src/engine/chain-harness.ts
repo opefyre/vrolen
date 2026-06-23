@@ -85,6 +85,16 @@ interface TrackedPart {
   /** Optional product identifier (VROL-594). Undefined for single-product runs. */
   readonly productId?: string;
   /**
+   * VROL-886 — batch / lot identifier propagated with the part through the
+   * whole chain. Pharma + food teams need lot traceability for regulatory
+   * narrative. Minted at source-emit time; undefined for legacy runs without
+   * batch config. Lot is the wider container; batch is one production run
+   * within a lot — keeping both lets the spec map onto whichever convention
+   * the user prefers.
+   */
+  readonly batchId?: string;
+  readonly lotId?: string;
+  /**
    * Number of times this part has been re-routed via rework (VROL-626).
    * Mutable: the rework router increments it before pushing into the target
    * buffer. Compared against MAX_REWORK_PASSES to bound infinite loops.
@@ -261,6 +271,14 @@ export interface ChainResult {
   readonly perStationGradeCounts: ReadonlyArray<Readonly<Record<string, number>>>;
   /** VROL-882 — line totals per grade (sum across stations of grade counts). */
   readonly lineGradeCounts: Readonly<Record<string, number>>;
+  /**
+   * VROL-886 — per-batch + per-lot completion counts when batch tagging is
+   * configured on the source. Undefined when no batch tagging — legacy
+   * scenarios remain unchanged.
+   */
+  readonly perBatchCompleted?: ReadonlyMap<string, number>;
+  readonly perBatchScrapped?: ReadonlyMap<string, number>;
+  readonly perLotCompleted?: ReadonlyMap<string, number>;
   /**
    * Labor utilization — total worker-busy ms across the run, normalized by
    * (worker count × elapsed ms). Undefined when no workers config provided.
@@ -535,6 +553,18 @@ export interface ChainSourceConfig {
   readonly interArrivalMs: Distribution;
   /** Parts pushed per arrival event. Default 1. Must be a positive integer when set. */
   readonly batchSize?: number;
+  /**
+   * VROL-886 — batch + lot tagging. When set, each source-emit creates a new
+   * batchId (prefix + monotonic counter). batchesPerLot, when also set,
+   * groups N consecutive batches under the same lotId; otherwise lotId
+   * defaults to the batchId. Undefined → no batch tagging, the legacy path.
+   */
+  readonly batchTagging?: {
+    readonly enabled: boolean;
+    readonly batchIdPrefix?: string;
+    readonly lotIdPrefix?: string;
+    readonly batchesPerLot?: number;
+  };
 }
 
 /**
@@ -1102,13 +1132,33 @@ function* simulationStream(
     // result.throughputLambda overcount by the sink's scrap rate. Skipping
     // defectives here aligns result.completed with perStationCompleted[sinkIdx]
     // (the engine's correctly-filtered station-level good-count).
-    if (event.defective) return;
+    // VROL-886 — also tally per-batch good/scrap so the result panel can
+    // surface per-batch yield. Scrap goes to perBatchScrapped; only goods
+    // hit perBatchCompleted (which feeds throughput).
+    if (event.defective) {
+      if (perBatchScrapped && event.part.batchId) {
+        perBatchScrapped.set(
+          event.part.batchId,
+          (perBatchScrapped.get(event.part.batchId) ?? 0) + 1,
+        );
+      }
+      return;
+    }
     exits.push({ part: event.part, exitTimeMs: event.timeMs });
     if (perProductCompleted && event.part.productId !== undefined) {
       perProductCompleted.set(
         event.part.productId,
         (perProductCompleted.get(event.part.productId) ?? 0) + 1,
       );
+    }
+    if (perBatchCompleted && event.part.batchId) {
+      perBatchCompleted.set(
+        event.part.batchId,
+        (perBatchCompleted.get(event.part.batchId) ?? 0) + 1,
+      );
+    }
+    if (perLotCompleted && event.part.lotId) {
+      perLotCompleted.set(event.part.lotId, (perLotCompleted.get(event.part.lotId) ?? 0) + 1);
     }
   });
 
@@ -1159,16 +1209,49 @@ function* simulationStream(
   // scheduled "source-arrival" events instead — refillOne is unused in that
   // mode and the on-completion-refill below is skipped.
   let nextPartId = 0;
+  // VROL-886 — batch + lot counter. Both increment lazily — batchSize parts
+  // belong to the same batch, batchesPerLot batches belong to the same lot.
+  // When no batch tagging is configured these stay 0 and the IDs aren't
+  // emitted, so legacy runs are unaffected.
+  const batchTagging =
+    opts.source?.batchTagging?.enabled === true ? opts.source.batchTagging : null;
+  const batchPrefix = batchTagging?.batchIdPrefix ?? "BATCH";
+  const lotPrefix = batchTagging?.lotIdPrefix ?? "LOT";
+  const batchSizePerBatch = Math.max(1, opts.source?.batchSize ?? 1);
+  const batchesPerLot = Math.max(1, batchTagging?.batchesPerLot ?? 1);
+  let batchCounter = 0;
+  let lotCounter = 0;
+  let partsInCurrentBatch = 0;
+  // Track per-batch + per-lot counts on the result.
+  const perBatchCompleted = batchTagging ? new Map<string, number>() : undefined;
+  const perBatchScrapped = batchTagging ? new Map<string, number>() : undefined;
+  const perLotCompleted = batchTagging ? new Map<string, number>() : undefined;
+  const nextBatchIds = (): { batchId: string; lotId: string } => {
+    // Advance counters when the batch fills up. lotCounter advances when
+    // `batchesPerLot` batches have been minted.
+    if (partsInCurrentBatch >= batchSizePerBatch) {
+      batchCounter += 1;
+      partsInCurrentBatch = 0;
+      if (batchCounter % batchesPerLot === 0) lotCounter += 1;
+    }
+    partsInCurrentBatch += 1;
+    return {
+      batchId: `${batchPrefix}-${String(batchCounter).padStart(4, "0")}`,
+      lotId: `${lotPrefix}-${String(lotCounter).padStart(4, "0")}`,
+    };
+  };
   const pushPart = (timeMs: number): void => {
     // VROL-158 — once the production plan is exhausted, stop pushing parts.
     // Source station will starve naturally; chain drains via remaining WIP.
     if (planExhausted()) return;
     const productId = pickProduct();
     if (plan && plan.length > 0 && productId === undefined) return;
+    const tagging = batchTagging ? nextBatchIds() : null;
     inputBuffer.push({
       id: nextPartId++,
       enteredSystemAtMs: timeMs,
       ...(productId !== undefined ? { productId } : {}),
+      ...(tagging ? { batchId: tagging.batchId, lotId: tagging.lotId } : {}),
     });
   };
   const refillOne = (timeMs: number): void => {
@@ -1691,5 +1774,8 @@ function* simulationStream(
       : {}),
     ...(laborUtilization !== undefined ? { laborUtilization } : {}),
     ...(perProductCompleted ? { perProductCompleted } : {}),
+    ...(perBatchCompleted ? { perBatchCompleted } : {}),
+    ...(perBatchScrapped ? { perBatchScrapped } : {}),
+    ...(perLotCompleted ? { perLotCompleted } : {}),
   };
 }

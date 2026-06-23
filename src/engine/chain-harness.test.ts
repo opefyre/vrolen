@@ -1780,3 +1780,86 @@ describe("runChain — timeseries sampler (VROL-612)", () => {
     expect(last.perStationRework[1]).toBeGreaterThan(0);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// VROL-878 — break-end wakeup reliability.
+// Pins the three acceptance criteria for "break-end propagates reliably":
+//   1. station resumes on next tick after break ends
+//   2. multiple workers on break — when one returns, stations they cover resume
+//   3. a station with no skill match does NOT falsely resume
+// ────────────────────────────────────────────────────────────────────────
+describe("runChain — break-end wakeup (VROL-878)", () => {
+  it("station idle on worker break resumes the instant the break ends", () => {
+    const result = runChain({
+      stationCycleTimes: [constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xbe11),
+      workers: {
+        workers: [
+          {
+            ...worker("w1", ["any"], 60_000),
+            breaks: [{ startMs: 10_000, endMs: 30_000 }],
+          },
+        ],
+        requireDefault: ["any"],
+      },
+    });
+    // Pre-break: ~100 parts (10_000ms / 100ms). Post-break: ~300 parts
+    // (30_000ms / 100ms). If break-end didn't propagate, completed would
+    // be capped near ~100 because the station never resumes.
+    expect(result.completed).toBeGreaterThan(300);
+  });
+
+  it("multi-worker breaks — one returning worker wakes the stations it covers", () => {
+    // Two stations covering different skills, two workers each holding one
+    // skill. Worker A breaks then returns; Station A must resume. Worker B
+    // (no break) keeps Station B running throughout.
+    const result = runChain({
+      stationCycleTimes: [constant(100), constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xbe22),
+      workers: {
+        workers: [
+          {
+            ...worker("wa", ["skill-a"], 60_000),
+            breaks: [{ startMs: 10_000, endMs: 25_000 }],
+          },
+          { ...worker("wb", ["skill-b"], 60_000) },
+        ],
+        perStationSkills: [["skill-a"], ["skill-b"]],
+      },
+    });
+    // Station A: ~10s pre-break + ~35s post-break = ~450 parts
+    // Station B: 60s continuous = ~600 parts
+    expect(result.perStationCompleted[0] ?? 0).toBeGreaterThan(200);
+    expect(result.perStationCompleted[1] ?? 0).toBeGreaterThan(400);
+  });
+
+  it("station with no skill match does NOT falsely resume on break-end", () => {
+    // Worker has skill-a; station needs skill-c. Worker takes a break and
+    // returns — station should stay starved the whole window. We use the
+    // labor-util signal: with no skill match the workerPool never assigns,
+    // so completed stays 0 (the station never runs).
+    const result = runChain({
+      stationCycleTimes: [constant(100)],
+      interStationBufferCapacity: 5,
+      horizonMs: 60_000,
+      warmupMs: 0,
+      prng: new SeededPrng(0xbe33),
+      workers: {
+        workers: [
+          {
+            ...worker("wa", ["skill-a"], 60_000),
+            breaks: [{ startMs: 10_000, endMs: 30_000 }],
+          },
+        ],
+        perStationSkills: [["skill-c"]],
+      },
+    });
+    expect(result.perStationCompleted[0] ?? 0).toBe(0);
+  });
+});

@@ -1,4 +1,5 @@
 export { BreaksEditor } from "./BreaksEditor";
+export { ChangeoverMatrixEditor } from "./ChangeoverMatrixEditor";
 export { MaintenanceWindowsEditor } from "./MaintenanceWindowsEditor";
 export { PerProductCyclesEditor } from "./PerProductCyclesEditor";
 export { SetupTimeEditor } from "./SetupTimeEditor";
