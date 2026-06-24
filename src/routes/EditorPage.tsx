@@ -4254,8 +4254,13 @@ function EditorCanvas() {
               toast.success("Auto-layout applied");
             }}
             title="Arrange nodes left-to-right by depth"
+            aria-label="Auto-layout — arrange nodes left-to-right by depth"
           >
-            Auto-layout
+            {/* VROL-999 — collapse label below sm; icon-only at narrow widths. */}
+            <span className="hidden sm:inline">Auto-layout</span>
+            <span className="sm:hidden" aria-hidden>
+              ⇄
+            </span>
           </Button>
           <Button
             variant="ghost"
@@ -4276,9 +4281,11 @@ function EditorCanvas() {
             }}
             className="gap-2"
             title="Build a scenario with the guided wizard"
+            aria-label="Wizard — build a scenario with the guided wizard"
           >
             <Wand2 className="h-4 w-4" />
-            Wizard
+            {/* VROL-999 — collapse label below sm. */}
+            <span className="hidden sm:inline">Wizard</span>
           </Button>
           <Button
             variant="ghost"
@@ -4288,9 +4295,12 @@ function EditorCanvas() {
             }}
             className="gap-2"
             data-tour="run-settings"
+            aria-label="Run settings"
+            title="Run settings"
           >
             <Settings2 className="h-4 w-4" />
-            Run settings
+            {/* VROL-999 — collapse label below sm. */}
+            <span className="hidden sm:inline">Run settings</span>
           </Button>
           <Button
             variant="ghost"
@@ -4301,9 +4311,12 @@ function EditorCanvas() {
             }}
             className="gap-2"
             data-tour="scenarios"
+            aria-label="Scenarios"
+            title="Scenarios"
           >
             <FolderOpen className="h-4 w-4" />
-            Scenarios
+            {/* VROL-999 — collapse label below sm. */}
+            <span className="hidden sm:inline">Scenarios</span>
           </Button>
           <div ref={moreRef} className="relative">
             <Button
