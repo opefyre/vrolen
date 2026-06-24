@@ -110,6 +110,17 @@ exports[`preset regression (VROL-472) > preset "pharma-packaging" KPI summary ma
 }
 `;
 
+exports[`preset regression (VROL-472) > preset "shampoo-line" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 140,
+  "bottleneckLabel": "Family label",
+  "bottleneckReason": "idle",
+  "completed": 2300,
+  "lineOee": 1,
+  "throughputPartsPerHour": 72000,
+}
+`;
+
 exports[`preset regression (VROL-472) > preset "source-rate" KPI summary matches snapshot 1`] = `
 {
   "avgTimeInSystemMs": 0,

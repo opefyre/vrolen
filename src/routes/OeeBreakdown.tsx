@@ -6,9 +6,12 @@
  */
 
 import type { ChainResult } from "@/engine";
+import type { ReplicationSummary } from "@/lib/replications";
 
 interface OeeBreakdownProps {
   readonly result: ChainResult;
+  /** VROL-936 — when set, per-station rows show ± 95% CI half-widths. */
+  readonly replicationSummary?: ReplicationSummary | null;
 }
 
 interface SegmentProps {
@@ -83,7 +86,7 @@ function formatConstraint(key: ConstraintKey, value: number): string {
 
 const CONSTRAINT_KEYS: ConstraintKey[] = ["tempScrap", "toolBlockedMs", "bomStarved", "skuRouted"];
 
-export function OeeBreakdown({ result }: OeeBreakdownProps) {
+export function OeeBreakdown({ result, replicationSummary }: OeeBreakdownProps) {
   if (result.perStationOee.length === 0) return null;
 
   // VROL-925 — Sprint 91 constraint rows. Hidden when every station has
@@ -91,6 +94,9 @@ export function OeeBreakdown({ result }: OeeBreakdownProps) {
   const visibleConstraints = CONSTRAINT_KEYS.filter((k) =>
     result.perStationOee.some((_, idx) => getConstraint(result, idx, k) > 0),
   );
+
+  // VROL-936 — per-station replication CI lookup.
+  const ciByIdx = new Map((replicationSummary?.perStation ?? []).map((p) => [p.idx, p]));
   // VROL-897 — Both perStationLabels and perStationRunningPct are now emitted
   // by runChain in topology order, aligned by index with perStationOee.
   // The legacy fallback to result.bottlenecks[idx] (sorted DESC by runningPct)
@@ -107,6 +113,11 @@ export function OeeBreakdown({ result }: OeeBreakdownProps) {
         const util = result.perStationRunningPct?.[idx] ?? result.bottlenecks[idx]?.runningPct ?? 0;
         const utilPct = Math.round(util * 100);
         const lowUtil = util < 0.7;
+        const ci = ciByIdx.get(idx);
+        const ciSuffix = (halfWidth: number): string => {
+          if (!ci || halfWidth <= 0) return "";
+          return ` ±${(halfWidth * 100).toFixed(1)}`;
+        };
         return (
           <div
             key={`${label}-${String(idx)}`}
@@ -122,7 +133,7 @@ export function OeeBreakdown({ result }: OeeBreakdownProps) {
                   Util {utilPct}%
                 </span>
                 <span title="Availability × Performance × Quality. Measures losses while the station is allowed to run — does NOT include starvation / blocking.">
-                  OEE {total}%
+                  OEE {total}%{ciSuffix(ci?.halfWidth95Oee ?? 0)}
                 </span>
               </div>
             </div>
@@ -135,9 +146,21 @@ export function OeeBreakdown({ result }: OeeBreakdownProps) {
               </p>
             ) : null}
             <div className="flex gap-3">
-              <Segment label="Availability" pct={oee.availability} colorClass="bg-sim-running" />
-              <Segment label="Performance" pct={oee.performance} colorClass="bg-sim-setup" />
-              <Segment label="Quality" pct={oee.quality} colorClass="bg-sim-maintenance" />
+              <Segment
+                label={`Availability${ciSuffix(ci?.halfWidth95Availability ?? 0)}`}
+                pct={oee.availability}
+                colorClass="bg-sim-running"
+              />
+              <Segment
+                label={`Performance${ciSuffix(ci?.halfWidth95Performance ?? 0)}`}
+                pct={oee.performance}
+                colorClass="bg-sim-setup"
+              />
+              <Segment
+                label={`Quality${ciSuffix(ci?.halfWidth95Quality ?? 0)}`}
+                pct={oee.quality}
+                colorClass="bg-sim-maintenance"
+              />
             </div>
             {visibleConstraints.length > 0 && (
               <div

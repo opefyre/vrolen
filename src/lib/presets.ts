@@ -505,6 +505,77 @@ const ASSEMBLY_CELL: Preset = {
   settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 120_000 },
 };
 
+// VROL-937 — Unilever-style shampoo line exercising the Sprint 90-92
+// engine breadth: BOM feeders on the fill station (needs 2 caps per
+// bottle), shared autoclave tool pool, per-SKU label routing for two
+// shampoo variants. Reproduces the "all stations 100 % running but only
+// one at nominal" case discussed in VROL-899/900.
+const SHAMPOO_LINE: Preset = {
+  id: "shampoo-line",
+  title: "Shampoo line",
+  blurb:
+    "Unilever-style FMCG line: mix → fill (BOM: 2 caps/cycle) → cap → label (split by SKU) → pack → palletise. Autoclave tool pool shared between mix + cap (capacity 1) creates serialised contention.",
+  highlight: "BOM + tool pool + per-SKU",
+  graph: {
+    nodes: [
+      station("src", "Bulk in", "input", 40, 200, { cycleDistribution: constant(60) }),
+      station("cap-feeder", "Cap feeder", "machine", 200, 80, {
+        cycleDistribution: constant(40),
+      }),
+      station("mix", "Mix tank", "machine", 200, 320, {
+        cycleDistribution: constant(80),
+        requiredToolPool: "autoclave",
+      }),
+      station("fill", "Filler", "machine", 380, 200, {
+        cycleDistribution: constant(70),
+        bomFeeders: [{ feederStationId: "cap-feeder", qtyPerCycle: 2 }],
+      }),
+      station("cap", "Capper", "machine", 540, 200, {
+        cycleDistribution: constant(60),
+        requiredToolPool: "autoclave",
+      }),
+      station("label-family", "Family label", "machine", 700, 120, {
+        cycleDistribution: constant(50),
+      }),
+      station("label-kids", "Kids label", "machine", 700, 280, {
+        cycleDistribution: constant(70),
+      }),
+      station("pack", "Packer", "machine", 880, 200, {
+        cycleDistribution: constant(45),
+        perSkuRouting: {
+          "family-shampoo": "label-family",
+          "kids-shampoo": "label-kids",
+        },
+      }),
+      station("pallet", "Palletise", "output", 1050, 200, { cycleDistribution: constant(40) }),
+    ],
+    edges: [
+      edge("e1", "src", "cap-feeder"),
+      edge("e2", "src", "mix"),
+      edge("e3", "mix", "fill"),
+      edge("e4", "cap-feeder", "fill"),
+      edge("e5", "fill", "cap"),
+      edge("e6", "cap", "pack"),
+      edge("e7", "label-family", "pallet"),
+      edge("e8", "label-kids", "pallet"),
+      edge("e9", "pack", "pallet"),
+    ],
+  },
+  settings: {
+    ...DEFAULT_RUN_SETTINGS,
+    horizonMs: 120_000,
+    samplerIntervalMs: 1_000,
+    toolPools: [{ name: "autoclave", capacity: 1 }],
+    products: {
+      enabled: true,
+      list: [
+        { id: "family-shampoo", name: "Family Shampoo", weight: 60 },
+        { id: "kids-shampoo", name: "Kids Shampoo", weight: 40 },
+      ],
+    },
+  },
+};
+
 export const PRESETS: readonly Preset[] = [
   BOTTLING_LINE,
   MULTI_PRODUCT_CHANGEOVER,
@@ -519,6 +590,7 @@ export const PRESETS: readonly Preset[] = [
   ELECTRONICS,
   BEVERAGE_CANNING,
   ASSEMBLY_CELL,
+  SHAMPOO_LINE,
 ];
 
 export function getPreset(id: string): Preset | undefined {

@@ -41,6 +41,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { BufferSummary } from "./BufferSummary";
 import { FinalStateCard } from "./FinalStateCard";
 import { OeeBreakdown } from "./OeeBreakdown";
+import { ConstraintHistoryChart } from "@/components/results/constraint-history-chart";
 import { QualityLosses } from "./QualityLosses";
 import { RecommendationsCard } from "./RecommendationsCard";
 import { StatePareto } from "./StatePareto";
@@ -1440,8 +1441,9 @@ export function ResultPanel({
               Availability × Performance × Quality per station. The slim factor is the lever.
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <OeeBreakdown result={result} />
+          <CardContent className="space-y-3">
+            <OeeBreakdown result={result} replicationSummary={replicationSummary} />
+            <ConstraintHistoryChart result={result} />
           </CardContent>
         </Card>
       ) : null}

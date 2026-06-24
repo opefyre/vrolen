@@ -88,6 +88,7 @@ export function validateScenario(
   checkResourceFeasibility(nodes, settings, issues);
   checkScheduleSanity(settings, issues);
   checkRecipeCoverage(settings, issues);
+  checkConstraintsSanity(nodes, settings, issues);
   const errors = issues.filter((i) => i.severity === "error");
   const warnings = issues.filter((i) => i.severity === "warning");
   return { errors, warnings };
@@ -463,6 +464,121 @@ function checkScheduleSanity(settings: RunSettings, out: ValidationIssue[]): voi
       }
     }
   });
+}
+
+// ─── 7. Sprint 90/91 constraint sanity (VROL-934) ───────────────────────────
+function checkConstraintsSanity(
+  nodes: readonly Node[],
+  settings: RunSettings,
+  out: ValidationIssue[],
+): void {
+  const productIds = new Set((settings.products?.list ?? []).map((p) => p.id));
+  const stationNodeIds = new Set(
+    nodes.filter((n) => n.type !== "sticky" && n.type !== "frame").map((n) => n.id),
+  );
+  const poolByName = new Map<string, number>(
+    (settings.toolPools ?? []).map((p) => [p.name, p.capacity] as const),
+  );
+  // Per-pool consumer count for oversubscription check.
+  const poolDemand = new Map<string, number>();
+
+  nodes.forEach((n, i) => {
+    const data = n.data as
+      | {
+          bomFeeders?: ReadonlyArray<{ feederStationId?: string; qtyPerCycle?: number }>;
+          requiredToolPool?: string;
+          perSkuRouting?: Record<string, string>;
+        }
+      | undefined;
+    if (!data) return;
+
+    // BOM qty > 10 is a likely typo.
+    if (Array.isArray(data.bomFeeders)) {
+      data.bomFeeders.forEach((f, fi) => {
+        if (typeof f.qtyPerCycle === "number" && f.qtyPerCycle > 10) {
+          out.push({
+            code: "BOM_QTY_SUSPICIOUS",
+            severity: "warning",
+            category: "topology",
+            message: `Station "${n.id}" BOM feeder ${String(fi)} requires ${String(f.qtyPerCycle)} parts/cycle — unusually high`,
+            fix: "Double-check the per-cycle quantity. Real assemblies rarely need > 10 components from one feeder per cycle.",
+            nodeId: n.id,
+            path: `nodes[${String(i)}].data.bomFeeders[${String(fi)}].qtyPerCycle`,
+          });
+        }
+        if (typeof f.feederStationId === "string" && !stationNodeIds.has(f.feederStationId)) {
+          out.push({
+            code: "BOM_FEEDER_NOT_IN_GRAPH",
+            severity: "warning",
+            category: "topology",
+            message: `Station "${n.id}" BOM feeder references "${f.feederStationId}" which is not in the graph`,
+            fix: "Add the feeder station to the graph or remove the BOM entry.",
+            nodeId: n.id,
+            path: `nodes[${String(i)}].data.bomFeeders[${String(fi)}].feederStationId`,
+          });
+        }
+      });
+    }
+
+    // Tool-pool oversubscription accounting + undeclared pool check.
+    if (typeof data.requiredToolPool === "string" && data.requiredToolPool.length > 0) {
+      const pool = data.requiredToolPool;
+      poolDemand.set(pool, (poolDemand.get(pool) ?? 0) + 1);
+      if (!poolByName.has(pool)) {
+        out.push({
+          code: "TOOL_POOL_UNDECLARED",
+          severity: "warning",
+          category: "topology",
+          message: `Station "${n.id}" requires tool pool "${pool}" but no such pool is declared in run settings`,
+          fix: `Declare the pool in run settings → Tool pools (or fix the station's requiredToolPool field).`,
+          nodeId: n.id,
+          path: `nodes[${String(i)}].data.requiredToolPool`,
+        });
+      }
+    }
+
+    // perSkuRouting destination + product sanity.
+    if (data.perSkuRouting && typeof data.perSkuRouting === "object") {
+      for (const [sku, dest] of Object.entries(data.perSkuRouting)) {
+        if (productIds.size > 0 && !productIds.has(sku)) {
+          out.push({
+            code: "ROUTING_PRODUCT_NOT_IN_LIST",
+            severity: "warning",
+            category: "topology",
+            message: `Station "${n.id}" routes SKU "${sku}" but it's not in settings.products.list`,
+            fix: `Add the SKU to Products or remove the routing entry.`,
+            nodeId: n.id,
+            path: `nodes[${String(i)}].data.perSkuRouting`,
+          });
+        }
+        if (dest !== "skip" && typeof dest === "string" && !stationNodeIds.has(dest)) {
+          out.push({
+            code: "ROUTING_DEST_NOT_IN_GRAPH",
+            severity: "warning",
+            category: "topology",
+            message: `Station "${n.id}" routes "${sku}" to "${dest}" which is not in the graph`,
+            fix: `Add the destination station to the graph, change the destination, or use "skip".`,
+            nodeId: n.id,
+            path: `nodes[${String(i)}].data.perSkuRouting`,
+          });
+        }
+      }
+    }
+  });
+
+  // Tool-pool oversubscription: demand >> capacity.
+  for (const [pool, demand] of poolDemand) {
+    const cap = poolByName.get(pool);
+    if (typeof cap === "number" && demand > cap * 2) {
+      out.push({
+        code: "TOOL_POOL_OVERSUBSCRIBED",
+        severity: "warning",
+        category: "topology",
+        message: `Tool pool "${pool}" has ${String(demand)} consumers but capacity ${String(cap)} — heavily oversubscribed`,
+        fix: `Raise the pool capacity or reduce the number of stations that share it.`,
+      });
+    }
+  }
 }
 
 // ─── 6. Recipe + material coverage ──────────────────────────────────────────

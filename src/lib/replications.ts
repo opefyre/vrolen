@@ -31,6 +31,22 @@ export interface ReplicationKpi {
   readonly format: (n: number) => string;
 }
 
+export interface PerStationCi {
+  readonly idx: number;
+  readonly label: string;
+  /** Mean OEE (0..1) across replications. */
+  readonly meanOee: number;
+  /** 95 % half-width on OEE (same scale as meanOee). */
+  readonly halfWidth95Oee: number;
+  /** Component means for the breakdown UI. */
+  readonly meanAvailability: number;
+  readonly meanPerformance: number;
+  readonly meanQuality: number;
+  readonly halfWidth95Availability: number;
+  readonly halfWidth95Performance: number;
+  readonly halfWidth95Quality: number;
+}
+
 export interface ReplicationSummary {
   /** How many replications were averaged. */
   readonly n: number;
@@ -40,6 +56,12 @@ export interface ReplicationSummary {
    */
   readonly seeds: readonly number[];
   readonly kpis: readonly ReplicationKpi[];
+  /**
+   * VROL-936 — per-station OEE means + CIs across replications. Aligned
+   * with result.perStationOee by index of the first replication. Empty
+   * when n < 2 or perStationOee shape differs across replications.
+   */
+  readonly perStation: readonly PerStationCi[];
 }
 
 // Two-sided 95 % t-critical values, by degrees of freedom.
@@ -139,6 +161,42 @@ export function summarizeReplications(
   const perHr = (x: number) => `${Math.round(x).toLocaleString()} /h`;
   const seedList: readonly number[] =
     seeds && seeds.length === n ? [...seeds] : Array.from({ length: n }, (_, i) => i);
+
+  // VROL-936 — per-station OEE means + CIs. Aligned by index against the
+  // first replication's perStationOee. Bail to [] when any replication has
+  // a different per-station-count (shouldn't happen with the same scenario,
+  // defensive against drift).
+  const perStation: PerStationCi[] = [];
+  if (n > 0 && results[0]) {
+    const m = results[0].perStationOee.length;
+    const shapesAlign = results.every((r) => r.perStationOee.length === m);
+    if (shapesAlign && m > 0) {
+      const labels = results[0].perStationLabels ?? [];
+      for (let s = 0; s < m; s++) {
+        const oeeVals = results.map((r) => r.perStationOee[s]?.oee ?? 0);
+        const aVals = results.map((r) => r.perStationOee[s]?.availability ?? 0);
+        const pVals = results.map((r) => r.perStationOee[s]?.performance ?? 0);
+        const qVals = results.map((r) => r.perStationOee[s]?.quality ?? 0);
+        const halfFor = (vs: readonly number[]) => {
+          const sd = stddev(vs);
+          const t = tCritical(vs.length - 1);
+          return vs.length > 0 ? (t * sd) / Math.sqrt(vs.length) : 0;
+        };
+        perStation.push({
+          idx: s,
+          label: labels[s] ?? `Station ${String(s)}`,
+          meanOee: mean(oeeVals),
+          halfWidth95Oee: halfFor(oeeVals),
+          meanAvailability: mean(aVals),
+          meanPerformance: mean(pVals),
+          meanQuality: mean(qVals),
+          halfWidth95Availability: halfFor(aVals),
+          halfWidth95Performance: halfFor(pVals),
+          halfWidth95Quality: halfFor(qVals),
+        });
+      }
+    }
+  }
   return {
     n,
     seeds: seedList,
@@ -149,6 +207,7 @@ export function summarizeReplications(
       buildKpi("Time-in-system", tisys, ms),
       buildKpi("Scrap rate", scrap, pct),
     ],
+    perStation,
   };
 }
 
