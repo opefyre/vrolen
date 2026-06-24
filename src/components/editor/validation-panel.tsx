@@ -68,14 +68,39 @@ export function ValidationPanel({
           onFix={onIssueFix}
         />
       ) : null}
-      {warnings.length > 0 ? (
-        <Section
-          title={`${String(warnings.length)} warning${warnings.length === 1 ? "" : "s"}`}
-          issues={warnings}
-          onClick={onIssueFocus}
-          onFix={onIssueFix}
-        />
-      ) : null}
+      {warnings.length > 0
+        ? (() => {
+            // VROL-961 — split Sprint 90/91 constraint warnings out into
+            // their own section so users can scan BOM / tool-pool / SKU
+            // issues without wading through unrelated topology hits.
+            const isConstraint = (i: ValidationIssue) =>
+              i.code.startsWith("BOM_") ||
+              i.code.startsWith("TOOL_POOL_") ||
+              i.code.startsWith("ROUTING_");
+            const constraints = warnings.filter(isConstraint);
+            const rest = warnings.filter((i) => !isConstraint(i));
+            return (
+              <>
+                {rest.length > 0 ? (
+                  <Section
+                    title={`${String(rest.length)} warning${rest.length === 1 ? "" : "s"}`}
+                    issues={rest}
+                    onClick={onIssueFocus}
+                    onFix={onIssueFix}
+                  />
+                ) : null}
+                {constraints.length > 0 ? (
+                  <Section
+                    title={`${String(constraints.length)} constraint warning${constraints.length === 1 ? "" : "s"}`}
+                    issues={constraints}
+                    onClick={onIssueFocus}
+                    onFix={onIssueFix}
+                  />
+                ) : null}
+              </>
+            );
+          })()
+        : null}
     </div>
   );
 }

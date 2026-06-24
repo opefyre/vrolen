@@ -10,6 +10,8 @@ import { listRuns, type RunHistoryEntry } from "@/lib/run-history";
 
 interface Props {
   readonly scenarioName: string | null;
+  /** VROL-960 — when set, each cell becomes a button that fires this with the entry. */
+  readonly onCompare?: (entry: RunHistoryEntry) => void;
 }
 
 function pct(v: number): string {
@@ -27,7 +29,7 @@ function tone(curr: number, prev: number, higherIsBetter: boolean): string {
   return good ? "text-sim-running-foreground" : "text-sim-down-foreground";
 }
 
-export function RunHistoryStrip({ scenarioName }: Props) {
+export function RunHistoryStrip({ scenarioName, onCompare }: Props) {
   if (!scenarioName) return null;
   const runs: readonly RunHistoryEntry[] = listRuns(scenarioName);
   if (runs.length < 2) return null;
@@ -43,11 +45,31 @@ export function RunHistoryStrip({ scenarioName }: Props) {
       </div>
       {ordered.map((entry, i) => {
         const prev = i > 0 ? ordered[i - 1] : null;
+        const isLast = i === ordered.length - 1;
+        const Wrapper = onCompare && !isLast ? "button" : "div";
+        const cellProps =
+          onCompare && !isLast
+            ? {
+                type: "button" as const,
+                onClick: () => {
+                  onCompare(entry);
+                },
+                className:
+                  "border-border bg-background hover:bg-accent/40 min-w-[7rem] shrink-0 rounded-md border p-1.5 text-left transition-colors",
+              }
+            : {
+                className:
+                  "border-border bg-background min-w-[7rem] shrink-0 rounded-md border p-1.5",
+              };
         return (
-          <div
+          <Wrapper
             key={`${String(entry.runAtMs)}-${String(i)}`}
-            className="border-border bg-background min-w-[7rem] shrink-0 rounded-md border p-1.5"
-            title={new Date(entry.runAtMs).toLocaleString()}
+            {...cellProps}
+            title={
+              onCompare && !isLast
+                ? `${new Date(entry.runAtMs).toLocaleString()} — click to compare against current`
+                : new Date(entry.runAtMs).toLocaleString()
+            }
           >
             <div className="text-muted-foreground text-[10px]">#{String(i + 1)}</div>
             <div className="font-mono text-xs tabular-nums">{fmtPerHr(entry.throughputLambda)}</div>
@@ -61,7 +83,7 @@ export function RunHistoryStrip({ scenarioName }: Props) {
                 bn: {entry.bottleneckLabel}
               </div>
             ) : null}
-          </div>
+          </Wrapper>
         );
       })}
     </div>

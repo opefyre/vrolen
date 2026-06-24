@@ -72,6 +72,12 @@ const STEPS: readonly TourStep[] = [
     body: "Snapshot the current config as a scenario, then run a variation. The compare view stacks two scenarios side-by-side so you can quantify the lift before committing to a change on the real line.",
     placement: "bottom",
   },
+  {
+    target: "[data-testid='action-card']",
+    title: "Read the action card",
+    body: "After every run, an Action card up top tells you the single next thing to try — speed up the bottleneck, grow a buffer, fix a tool-pool contention, or look at reliability. Click Apply to mutate the scenario and re-run.",
+    placement: "bottom",
+  },
 ];
 
 interface OnboardingTourProps {

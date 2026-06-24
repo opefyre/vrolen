@@ -93,6 +93,7 @@ import { CapacityChip } from "@/components/canvas/capacity-chip";
 import { DistributionField } from "@/components/ui/distribution-field";
 import { DistributionPdf } from "@/components/editor/distribution-pdf";
 import { RunHistoryStrip } from "@/components/results/run-history-strip";
+import { GoalModeCard } from "@/components/results/goal-mode-card";
 import { DurationInput } from "@/components/ui/duration-input";
 import { Input } from "@/components/ui/input";
 import { NumberField } from "@/components/ui/number-field";
@@ -831,6 +832,7 @@ import { StickyNoteNode } from "@/components/canvas/sticky-note-node";
 import { summarizeReplications, type ReplicationSummary } from "@/lib/replications";
 import { summarizeCosts } from "@/lib/cost-economics";
 import { runSensitivitySweep, type SensitivitySummary } from "@/lib/sensitivity-sweep";
+import { findCycleMultiplierForTarget, type GoalResult } from "@/lib/goal-mode";
 import { runWipCurve, type WipCurveSummary } from "@/lib/wip-curve";
 import {
   runOptimizationSearch,
@@ -993,6 +995,9 @@ function EditorCanvas() {
   const [baselineSummary, setBaselineSummary] = useState<ReplicationSummary | null>(null);
   // Sensitivity sweep — fires on demand from the Results panel.
   const [sensitivitySummary, setSensitivitySummary] = useState<SensitivitySummary | null>(null);
+  // VROL-958 — goal mode state + running flag.
+  const [goalResult, setGoalResult] = useState<GoalResult | null>(null);
+  const [goalRunning, setGoalRunning] = useState<boolean>(false);
   const [sensitivityRunning, setSensitivityRunning] = useState<boolean>(false);
   // Throughput-vs-WIP scan — fires on demand from the Results panel.
   const [wipCurveSummary, setWipCurveSummary] = useState<WipCurveSummary | null>(null);
@@ -2231,6 +2236,130 @@ function EditorCanvas() {
   }, [applyAndRunTick, isRunning]);
 
   // Sensitivity sweep — fires 2N engine runs perturbing each station's
+  // VROL-960 — compare a past run-history entry against the current canvas.
+  // Replays the entry's payload (graph + settings) and pipes the result
+  // through the same setComparison path that the saved-scenario compare uses.
+  const handleCompareWithHistoryEntry = useCallback(
+    (entry: import("@/lib/run-history").RunHistoryEntry): void => {
+      if (!entry.payload) {
+        toast.error("This run-history entry is missing its payload — can't replay.");
+        return;
+      }
+      const aOutcome = runScenario(
+        entry.payload.graph.nodes,
+        entry.payload.graph.edges,
+        entry.payload.settings,
+        null,
+      );
+      if (!("result" in aOutcome)) {
+        toast.error("Couldn't replay the past run", {
+          description:
+            aOutcome.kind === "translation"
+              ? aOutcome.message
+              : aOutcome.kind === "engine"
+                ? aOutcome.message
+                : aOutcome.kind,
+        });
+        return;
+      }
+      const bOutcome = runScenario(nodes, edges, settings, selectedNodeId);
+      if (!("result" in bOutcome)) {
+        toast.error("Couldn't run the current canvas", {
+          description:
+            bOutcome.kind === "translation"
+              ? bOutcome.message
+              : bOutcome.kind === "engine"
+                ? bOutcome.message
+                : bOutcome.kind,
+        });
+        return;
+      }
+      const horizonMs = settings.horizonMs;
+      const warmupMs = Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2));
+      const aName = `Past run · ${new Date(entry.runAtMs).toLocaleTimeString()}`;
+      setComparison({
+        aName,
+        aResult: aOutcome.result,
+        aStationLabels: aOutcome.runMeta.stationLabels,
+        bName: "Current canvas",
+        bResult: bOutcome.result,
+        bStationLabels: bOutcome.runMeta.stationLabels,
+        horizonMs,
+        warmupMs,
+      });
+      toast.success(`Comparing ${aName} vs current.`);
+    },
+    [nodes, edges, settings, selectedNodeId],
+  );
+
+  // VROL-958 — goal mode search + apply.
+  const handleRunGoal = useCallback(
+    (targetPerHour: number): void => {
+      const translation = graphToChainOptions(nodes, edges);
+      if (translation.error) {
+        toast.error("Can't goal-seek", { description: translation.error });
+        return;
+      }
+      setGoalRunning(true);
+      setTimeout(() => {
+        try {
+          const horizonMs = settings.horizonMs;
+          const warmupMs = Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2));
+          const buildBaseOptions = () =>
+            ({
+              ...(translation.topology
+                ? { topology: translation.topology }
+                : {
+                    stationCycleTimes: [...translation.cycleDistributions],
+                    stationLabels: [...translation.stationLabels],
+                  }),
+              interStationBufferCapacity: settings.interStationBufferCapacity,
+            }) as ChainOptions;
+          const r = findCycleMultiplierForTarget({
+            targetPerHour,
+            horizonMs,
+            warmupMs,
+            seed: settings.seed,
+            buildBaseOptions,
+            stationCycleDistributions: translation.cycleDistributions,
+          });
+          setGoalResult(r);
+          toast.success(
+            r.capped
+              ? `Target ${String(targetPerHour)} unreachable (max ${String(Math.round(r.achievedPerHour))}/h).`
+              : `Hit ${String(Math.round(r.achievedPerHour))}/h at scale ${r.multiplier.toFixed(2)}x.`,
+          );
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          toast.error("Goal search failed", { description: message });
+        } finally {
+          setGoalRunning(false);
+        }
+      }, 0);
+    },
+    [nodes, edges, settings],
+  );
+  const handleApplyGoalMultiplier = useCallback(
+    (multiplier: number): void => {
+      setNodes((ns) =>
+        ns.map((n) => {
+          const d = n.data as { cycleDistribution?: unknown };
+          if (!isDistribution(d.cycleDistribution)) return n;
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              cycleDistribution: scaleDistribution(d.cycleDistribution, multiplier),
+            },
+          };
+        }),
+      );
+      setApplyAndRunTick((x) => x + 1);
+      toast.success(`Scaled every station's cycle by ${multiplier.toFixed(2)}x. Re-running…`);
+    },
+    [setNodes],
+  );
+
   // cycle time ±20%. Defers to a setTimeout so the UI updates the
   // 'Sweeping…' label before the loop blocks the thread.
   const handleSensitivitySweep = useCallback((): void => {
@@ -5713,8 +5842,19 @@ function EditorCanvas() {
         <>
           {/* VROL-949 — run-history strip above the result panel. Hidden when
             no scenario is active or fewer than 2 runs are recorded. */}
-          <div className="mb-3">
-            <RunHistoryStrip scenarioName={activeScenarioName ?? null} />
+          <div className="mb-3 space-y-3">
+            <RunHistoryStrip
+              scenarioName={activeScenarioName ?? null}
+              onCompare={handleCompareWithHistoryEntry}
+            />
+            {/* VROL-958 — goal mode card. */}
+            <GoalModeCard
+              baselinePerHour={result.throughputLambda * 3_600_000}
+              running={goalRunning}
+              onRun={handleRunGoal}
+              onApply={handleApplyGoalMultiplier}
+              result={goalResult}
+            />
           </div>
           <Suspense
             fallback={
