@@ -59,11 +59,34 @@ export interface GraphToChainResult {
    * Index matches chainNodeIds / cycleDistributions.
    */
   readonly maintenanceWindows: ReadonlyArray<readonly NodeMaintenanceWindow[]>;
+  /**
+   * VROL-1003 — Per-topology-edge conveyor delay in ms. An entry > 0
+   * means the source of that edge is a Transport node and parts
+   * crossing the edge take residenceTimeMs = lengthM/speedMps*1000 to
+   * arrive at the downstream station. Defaults to 0 for every edge
+   * (no delay). In linear mode the array is aligned to the implicit
+   * i → i+1 edges; in DAG mode it's aligned to topology.edges.
+   */
+  readonly bufferDelayMs: readonly number[];
   /** Set when the graph can't be turned into a chain at all. */
   readonly error: string | null;
 }
 
 const DEFAULT_CYCLE_MS = 100;
+
+/**
+ * VROL-1003 — Residence time (ms) for Transport stations, computed
+ * from data.lengthM / data.speedMps. Returns 0 when the node is not
+ * a Transport or either field is missing / zero / negative.
+ */
+function transportResidenceMs(node: Node): number {
+  const d = node.data as { stationType?: string; lengthM?: number; speedMps?: number };
+  if (d.stationType !== "transport") return 0;
+  const lengthM = typeof d.lengthM === "number" && d.lengthM > 0 ? d.lengthM : 0;
+  const speedMps = typeof d.speedMps === "number" && d.speedMps > 0 ? d.speedMps : 0;
+  if (lengthM <= 0 || speedMps <= 0) return 0;
+  return (lengthM / speedMps) * 1000;
+}
 
 function isDistribution(v: unknown): v is Distribution {
   if (!v || typeof v !== "object") return false;
@@ -382,6 +405,7 @@ export function graphToChainOptions(
     skippedNodeIds: [],
     topology: null,
     maintenanceWindows: [],
+    bufferDelayMs: [],
     error: null,
   };
   // Decorative nodes (sticky notes, section frames) never participate
@@ -510,6 +534,11 @@ export function graphToChainOptions(
       const maintenanceWindows = topoOrder.map((id) => maintenanceWindowsOf(nodeById.get(id)!));
 
       const stationKeys = topoOrder.map((id) => stationKeyOf(nodeById.get(id)!));
+      // VROL-1003 — Transport node residence routes to the OUTGOING edge.
+      const bufferDelayMs = topoEdges.map((e) => {
+        const sourceNode = nodeById.get(e.source);
+        return sourceNode ? transportResidenceMs(sourceNode) : 0;
+      });
 
       return {
         chainNodeIds: topoOrder,
@@ -520,6 +549,7 @@ export function graphToChainOptions(
         skippedNodeIds,
         topology: { nodes: topoNodes, edges: topoEdges },
         maintenanceWindows,
+        bufferDelayMs,
         error: null,
       };
     }
@@ -566,6 +596,15 @@ export function graphToChainOptions(
   const skippedNodeIds = nodes.filter((n) => !chainSet.has(n.id)).map((n) => n.id);
   const maintenanceWindows = bestChain.map((id) => maintenanceWindowsOf(nodeById.get(id)!));
   const stationKeys = bestChain.map((id) => stationKeyOf(nodeById.get(id)!));
+  // VROL-1003 — for each edge, if the source is a Transport node, the
+  // edge carries the Transport's residence time. The Transport node
+  // keeps its (typically tiny) cycle distribution; parts traverse the
+  // node nearly instantly and then sit on the delayed edge for the
+  // residence before the downstream sees them.
+  const bufferDelayMs = fallbackTopoEdges.map((e) => {
+    const sourceNode = nodeById.get(e.source);
+    return sourceNode ? transportResidenceMs(sourceNode) : 0;
+  });
 
   return {
     chainNodeIds: bestChain,
@@ -576,6 +615,7 @@ export function graphToChainOptions(
     skippedNodeIds,
     topology: { nodes: fallbackTopoNodes, edges: fallbackTopoEdges },
     maintenanceWindows,
+    bufferDelayMs,
     error: null,
   };
 }

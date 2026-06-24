@@ -161,6 +161,10 @@ export function runScenario(
             stationCycleTimes: [...translation.cycleDistributions],
             stationLabels: [...translation.stationLabels],
           }),
+      // VROL-1003 — per-edge conveyor delay from Transport nodes.
+      ...(translation.bufferDelayMs && translation.bufferDelayMs.some((ms) => ms > 0)
+        ? { bufferDelayMs: [...translation.bufferDelayMs] }
+        : {}),
       interStationBufferCapacity: settings.interStationBufferCapacity,
       horizonMs: settings.horizonMs,
       warmupMs: Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2)),

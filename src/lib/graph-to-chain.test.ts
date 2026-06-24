@@ -303,4 +303,35 @@ describe("graphToChainOptions", () => {
     const bTopo = r.topology?.nodes.find((n) => n.id === "b");
     expect(bTopo?.defectRate).toBe(0.05);
   });
+
+  it("VROL-1003 — Transport stations populate bufferDelayMs on their outgoing edge", () => {
+    const nodes: Node[] = [
+      node("source", { cycleMs: 100 }),
+      // Transport: 10m at 2 m/s → residence = 5000 ms.
+      {
+        id: "conv",
+        position: { x: 0, y: 0 },
+        data: { label: "conv", stationType: "transport", lengthM: 10, speedMps: 2 },
+      },
+      node("sink", { cycleMs: 100 }),
+    ];
+    const edges = [edge("source", "conv"), edge("conv", "sink")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.bufferDelayMs).toHaveLength(2);
+    expect(r.bufferDelayMs[0]).toBe(0);
+    expect(r.bufferDelayMs[1]).toBe(5_000);
+  });
+
+  it("VROL-1003 — Transport without lengthM/speedMps yields 0 delay", () => {
+    const nodes: Node[] = [
+      node("a", { cycleMs: 100 }),
+      { id: "b", position: { x: 0, y: 0 }, data: { label: "b", stationType: "transport" } },
+      node("c", { cycleMs: 100 }),
+    ];
+    const edges = [edge("a", "b"), edge("b", "c")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.bufferDelayMs).toEqual([0, 0]);
+  });
 });

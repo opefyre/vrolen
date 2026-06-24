@@ -5381,6 +5381,95 @@ function EditorCanvas() {
                           🧪 Fit from real data…
                         </button>
                       </div>
+                      {/* VROL-1003 — Transport station inputs: lengthM +
+                          speedMps. Residence time is derived and routed
+                          to ChainOptions.bufferDelayMs[] by graph-to-chain. */}
+                      {(selectedNode.data as { stationType?: string }).stationType ===
+                      "transport" ? (
+                        <div className="border-border bg-card/40 space-y-2 rounded-md border p-2">
+                          <div className="text-foreground text-xs font-medium">
+                            Conveyor geometry
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="flex flex-col gap-1">
+                              <label
+                                htmlFor="inspector-transport-length"
+                                className="text-muted-foreground text-[11px]"
+                              >
+                                Length (m)
+                              </label>
+                              <Input
+                                id="inspector-transport-length"
+                                type="number"
+                                inputMode="decimal"
+                                min={0}
+                                step={0.1}
+                                value={String(
+                                  (selectedNode.data as { lengthM?: number }).lengthM ?? "",
+                                )}
+                                onChange={(e) => {
+                                  const v = Number(e.target.value);
+                                  updateSelectedNodeData({
+                                    lengthM: Number.isFinite(v) && v > 0 ? v : undefined,
+                                  });
+                                }}
+                              />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label
+                                htmlFor="inspector-transport-speed"
+                                className="text-muted-foreground text-[11px]"
+                              >
+                                Speed (m/s)
+                              </label>
+                              <Input
+                                id="inspector-transport-speed"
+                                type="number"
+                                inputMode="decimal"
+                                min={0}
+                                step={0.1}
+                                value={String(
+                                  (selectedNode.data as { speedMps?: number }).speedMps ?? "",
+                                )}
+                                onChange={(e) => {
+                                  const v = Number(e.target.value);
+                                  updateSelectedNodeData({
+                                    speedMps: Number.isFinite(v) && v > 0 ? v : undefined,
+                                  });
+                                }}
+                              />
+                            </div>
+                          </div>
+                          {(() => {
+                            const d = selectedNode.data as {
+                              lengthM?: number;
+                              speedMps?: number;
+                            };
+                            const len = typeof d.lengthM === "number" ? d.lengthM : 0;
+                            const sp = typeof d.speedMps === "number" ? d.speedMps : 0;
+                            if (len <= 0 || sp <= 0)
+                              return (
+                                <p className="text-muted-foreground text-[11px]">
+                                  Set both length and speed to derive residence time.
+                                </p>
+                              );
+                            const residenceMs = (len / sp) * 1000;
+                            return (
+                              <p className="text-muted-foreground text-[11px]">
+                                Residence ≈{" "}
+                                <strong className="text-foreground font-mono tabular-nums">
+                                  {residenceMs.toLocaleString(undefined, {
+                                    maximumFractionDigits: 0,
+                                  })}{" "}
+                                  ms
+                                </strong>{" "}
+                                ({(residenceMs / 1000).toFixed(1)} s). Routed to the outgoing edge
+                                as a conveyor delay.
+                              </p>
+                            );
+                          })()}
+                        </div>
+                      ) : null}
                       {/* VROL-744 — show this station's cycle vs line median when a run exists. */}
                       {result && runMeta
                         ? (() => {

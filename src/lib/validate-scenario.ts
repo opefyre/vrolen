@@ -488,9 +488,32 @@ function checkConstraintsSanity(
           bomFeeders?: ReadonlyArray<{ feederStationId?: string; qtyPerCycle?: number }>;
           requiredToolPool?: string;
           perSkuRouting?: Record<string, string>;
+          stationType?: string;
+          lengthM?: number;
+          speedMps?: number;
         }
       | undefined;
     if (!data) return;
+
+    // VROL-1003 — Transport stations need both lengthM and speedMps
+    // for the conveyor delay to apply. Surface a soft warning when
+    // either is missing or zero so the user isn't surprised that
+    // their conveyor behaves like a zero-delay edge.
+    if (data.stationType === "transport") {
+      const lenOk = typeof data.lengthM === "number" && data.lengthM > 0;
+      const spOk = typeof data.speedMps === "number" && data.speedMps > 0;
+      if (!lenOk || !spOk) {
+        out.push({
+          code: "TRANSPORT_GEOMETRY_MISSING",
+          severity: "warning",
+          category: "topology",
+          message: `Transport "${n.id}" is missing ${!lenOk ? "length (m)" : ""}${!lenOk && !spOk ? " and " : ""}${!spOk ? "speed (m/s)" : ""}`,
+          fix: "Open the inspector → Conveyor geometry and set both length and speed. Without them the conveyor adds 0 ms delay.",
+          nodeId: n.id,
+          path: `nodes[${String(i)}].data.${!lenOk ? "lengthM" : "speedMps"}`,
+        });
+      }
+    }
 
     // BOM qty > 10 is a likely typo.
     if (Array.isArray(data.bomFeeders)) {
