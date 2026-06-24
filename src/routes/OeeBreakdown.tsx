@@ -7,6 +7,7 @@
 
 import type { ChainResult } from "@/engine";
 import type { ReplicationSummary } from "@/lib/replications";
+import { narrateOee } from "@/lib/narrate-oee";
 
 interface OeeBreakdownProps {
   readonly result: ChainResult;
@@ -97,6 +98,9 @@ export function OeeBreakdown({ result, replicationSummary }: OeeBreakdownProps) 
 
   // VROL-936 — per-station replication CI lookup.
   const ciByIdx = new Map((replicationSummary?.perStation ?? []).map((p) => [p.idx, p]));
+
+  // VROL-952 — plain-language summary derived from the run.
+  const narration = narrateOee(result);
   // VROL-897 — Both perStationLabels and perStationRunningPct are now emitted
   // by runChain in topology order, aligned by index with perStationOee.
   // The legacy fallback to result.bottlenecks[idx] (sorted DESC by runningPct)
@@ -104,6 +108,16 @@ export function OeeBreakdown({ result, replicationSummary }: OeeBreakdownProps) 
   // for tests that hand-craft a partial ChainResult without the new fields.
   return (
     <div className="space-y-3" data-testid="oee-breakdown">
+      {narration.length > 0 ? (
+        <div
+          className="border-border bg-card/50 text-foreground/90 space-y-1 rounded-md border p-3 text-xs leading-relaxed"
+          data-testid="oee-narration"
+        >
+          {narration.map((n) => (
+            <p key={n.key}>{n.text}</p>
+          ))}
+        </div>
+      ) : null}
       {result.perStationOee.map((oee, idx) => {
         const label =
           result.perStationLabels?.[idx] ??

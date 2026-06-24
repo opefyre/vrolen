@@ -42,6 +42,7 @@ import { BufferSummary } from "./BufferSummary";
 import { FinalStateCard } from "./FinalStateCard";
 import { OeeBreakdown } from "./OeeBreakdown";
 import { ConstraintHistoryChart } from "@/components/results/constraint-history-chart";
+import { ActionCard } from "@/components/results/action-card";
 import { QualityLosses } from "./QualityLosses";
 import { RecommendationsCard } from "./RecommendationsCard";
 import { StatePareto } from "./StatePareto";
@@ -1442,6 +1443,7 @@ export function ResultPanel({
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
+            <ActionCard result={result} />
             <OeeBreakdown result={result} replicationSummary={replicationSummary} />
             <ConstraintHistoryChart result={result} />
           </CardContent>

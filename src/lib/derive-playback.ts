@@ -82,6 +82,12 @@ export interface PlaybackSnapshot {
   readonly kpi: PlaybackKpi;
   /** VROL-905 — per-station state mix + running pct + completed at the playhead. */
   readonly perStation: readonly PlaybackPerStation[];
+  /**
+   * VROL-950 — index of the station with the largest running-share over
+   * the current sampler interval (empirical binding constraint at the
+   * playhead). -1 when no samples or no station ran in the interval.
+   */
+  readonly bindingStationIdx: number;
 }
 
 const STATE_KEYS: readonly StationState[] = [
@@ -168,6 +174,7 @@ function emptySnapshot(result: ChainResult, tMs: number): PlaybackSnapshot {
       bottleneckRunPct: bottlenecks[0]?.runningPct ?? 0,
     },
     perStation: [],
+    bindingStationIdx: -1,
   };
 }
 
@@ -325,5 +332,9 @@ export function derivePlayback(result: ChainResult, tMs: number): PlaybackSnapsh
       bottleneckRunPct,
     },
     perStation,
+    // VROL-950 — live binding-station = argmax(runningPct) over the
+    // current interval. bestBnIdx is already that index. -1 falls
+    // through when no station ran in this window.
+    bindingStationIdx: bestBnRunPct > 0 ? bestBnIdx : -1,
   };
 }

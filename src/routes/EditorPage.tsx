@@ -91,6 +91,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { CapacityChip } from "@/components/canvas/capacity-chip";
 import { DistributionField } from "@/components/ui/distribution-field";
+import { DistributionPdf } from "@/components/editor/distribution-pdf";
+import { RunHistoryStrip } from "@/components/results/run-history-strip";
 import { DurationInput } from "@/components/ui/duration-input";
 import { Input } from "@/components/ui/input";
 import { NumberField } from "@/components/ui/number-field";
@@ -546,6 +548,18 @@ function StationNode({ data, selected, id }: NodeProps) {
           title="This station capped the line in the last run."
         >
           Bottleneck
+        </span>
+      ) : null}
+      {/* VROL-950 — live binding-constraint pulse during playback. Distinct
+          colour from the post-run Bottleneck badge so users can tell
+          "binding right now" from "binding overall". */}
+      {(d as { _isLiveBottleneck?: boolean })._isLiveBottleneck && !isBottleneck ? (
+        <span
+          className="bg-sim-running text-sim-running-foreground absolute -top-2 -left-2 z-10 animate-pulse rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase shadow-sm ring-2 ring-white"
+          aria-label="Live binding station"
+          title="Currently the binding constraint at this point in playback."
+        >
+          Binding
         </span>
       ) : null}
       {/* VROL-901 — subordination chip. A non-bottleneck station running
@@ -3168,10 +3182,14 @@ function EditorCanvas() {
         nextData = {
           ...nextData,
           _playbackState: playbackSnapshot.perStationState[stationIdx],
+          // VROL-950 — flag the live binding constraint so StationNode
+          // can paint a pulse badge that tracks playback.
+          _isLiveBottleneck: playbackSnapshot.bindingStationIdx === stationIdx,
         };
       } else if ("_playbackState" in nextData) {
         const stripped = { ...nextData };
         delete stripped._playbackState;
+        if ("_isLiveBottleneck" in stripped) delete stripped._isLiveBottleneck;
         nextData = stripped;
       }
       if (nextData === baseData) return n;
@@ -4922,6 +4940,19 @@ function EditorCanvas() {
                           updateSelectedNodeData({ cycleDistribution: d });
                         }}
                       />
+                      {/* VROL-951 — distribution shape preview. */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground text-[11px]">Shape</span>
+                        <DistributionPdf
+                          distribution={
+                            ((selectedNode.data as { cycleDistribution?: Distribution })
+                              .cycleDistribution ??
+                              constant(
+                                Number((selectedNode.data as { cycleMs?: unknown }).cycleMs ?? 100),
+                              )) as Distribution
+                          }
+                        />
+                      </div>
                       <div className="-mt-1.5">
                         <button
                           type="button"
@@ -5599,107 +5630,114 @@ function EditorCanvas() {
       </div>
 
       {result && runMeta ? (
-        <Suspense
-          fallback={
-            <div className="space-y-3" aria-label="Loading results">
-              {/* VROL-725 — richer skeleton mirroring the actual result layout. */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {[0, 1, 2, 3].map((i) => (
-                  <div
-                    key={i}
-                    className="border-border bg-muted/40 h-20 animate-pulse rounded-md border p-3"
-                  />
-                ))}
+        <>
+          {/* VROL-949 — run-history strip above the result panel. Hidden when
+            no scenario is active or fewer than 2 runs are recorded. */}
+          <div className="mb-3">
+            <RunHistoryStrip scenarioName={activeScenarioName ?? null} />
+          </div>
+          <Suspense
+            fallback={
+              <div className="space-y-3" aria-label="Loading results">
+                {/* VROL-725 — richer skeleton mirroring the actual result layout. */}
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {[0, 1, 2, 3].map((i) => (
+                    <div
+                      key={i}
+                      className="border-border bg-muted/40 h-20 animate-pulse rounded-md border p-3"
+                    />
+                  ))}
+                </div>
+                <div className="border-border bg-muted/30 h-24 animate-pulse rounded-md border" />
+                <div className="border-border bg-muted/30 h-40 animate-pulse rounded-md border" />
               </div>
-              <div className="border-border bg-muted/30 h-24 animate-pulse rounded-md border" />
-              <div className="border-border bg-muted/30 h-40 animate-pulse rounded-md border" />
-            </div>
-          }
-        >
-          <ResultPanel
-            result={result}
-            runMeta={runMeta}
-            horizonMs={settings.horizonMs}
-            warmupMs={Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2))}
-            // VROL-690 — pan + zoom canvas to a station by chain-order index.
-            onFocusStation={(stationIdx) => {
-              if (!runMeta) return;
-              const nodeId = runMeta.chainNodeIds[stationIdx];
-              if (!nodeId) return;
-              const node = nodes.find((n) => n.id === nodeId);
-              if (!node) return;
-              flow.setCenter(node.position.x + 75, node.position.y + 40, {
-                zoom: 1.2,
-                duration: 400,
-              });
-              setSelectedNodeId(nodeId);
-            }}
-            onApplyWarmup={(ms) => {
-              setSettings((s) => ({ ...s, warmupMs: ms }));
-              setTimeout(() => {
-                if (!isRunning) handleRun();
-              }, 0);
-            }}
-            replicationSummary={replicationSummary}
-            replicationBaseline={baselineSummary}
-            sensitivitySummary={sensitivitySummary}
-            sensitivityRunning={sensitivityRunning}
-            onRunSensitivity={handleSensitivitySweep}
-            wipCurveSummary={wipCurveSummary}
-            wipCurveRunning={wipCurveRunning}
-            onRunWipCurve={handleWipCurveScan}
-            onApplyWipCapacity={(capacity) => {
-              setSettings((s) => ({ ...s, interStationBufferCapacity: capacity }));
-              setTimeout(() => {
-                if (!isRunning) handleRun();
-              }, 0);
-            }}
-            optimizationSummary={optimizationSummary}
-            optimizationRunning={optimizationRunning}
-            onRunOptimization={handleOptimizationSearch}
-            onApplyOptimization={handleApplyOptimization}
-            costSummary={
-              runMeta
-                ? summarizeCosts(
-                    result,
-                    settings.horizonMs,
-                    runMeta.chainNodeIds,
-                    runMeta.stationLabels,
-                    nodes,
-                  )
-                : null
             }
-            // VROL-902 — pass MTTR + per-edge buffer capacities so the
-            // Recommendations card can surface tightly-coupled warnings.
-            // settings.breakdowns is only meaningful when .enabled is true;
-            // wrap mttrMs in a constant distribution to match the engine.
-            {...(settings.breakdowns.enabled
-              ? {
-                  mttrDistribution: constant(Math.max(1, settings.breakdowns.mttrMs)),
-                }
-              : {})}
-            bufferEdges={edges.map((e) => {
-              const src = nodes.find((n) => n.id === e.source);
-              const tgt = nodes.find((n) => n.id === e.target);
-              const srcLabel = (src?.data as { label?: unknown } | undefined)?.label;
-              const tgtLabel = (tgt?.data as { label?: unknown } | undefined)?.label;
-              const label =
-                typeof srcLabel === "string" && typeof tgtLabel === "string"
-                  ? `${srcLabel} → ${tgtLabel}`
-                  : undefined;
-              return {
-                edgeId: e.id,
-                capacity: settings.interStationBufferCapacity,
-                ...(label !== undefined ? { label } : {}),
-              };
-            })}
-            // VROL-908 — when playback is active, each chart slices its
-            // samples to [0..playheadIdx] so the curves fill in left-to-right
-            // as the scrubber advances. Null when paused / no playback.
-            playheadIdx={playbackSnapshot?.sampleIdxAtT ?? null}
-            onApplyRecommendation={handleApplyRecommendation}
-          />
-        </Suspense>
+          >
+            <ResultPanel
+              result={result}
+              runMeta={runMeta}
+              horizonMs={settings.horizonMs}
+              warmupMs={Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2))}
+              // VROL-690 — pan + zoom canvas to a station by chain-order index.
+              onFocusStation={(stationIdx) => {
+                if (!runMeta) return;
+                const nodeId = runMeta.chainNodeIds[stationIdx];
+                if (!nodeId) return;
+                const node = nodes.find((n) => n.id === nodeId);
+                if (!node) return;
+                flow.setCenter(node.position.x + 75, node.position.y + 40, {
+                  zoom: 1.2,
+                  duration: 400,
+                });
+                setSelectedNodeId(nodeId);
+              }}
+              onApplyWarmup={(ms) => {
+                setSettings((s) => ({ ...s, warmupMs: ms }));
+                setTimeout(() => {
+                  if (!isRunning) handleRun();
+                }, 0);
+              }}
+              replicationSummary={replicationSummary}
+              replicationBaseline={baselineSummary}
+              sensitivitySummary={sensitivitySummary}
+              sensitivityRunning={sensitivityRunning}
+              onRunSensitivity={handleSensitivitySweep}
+              wipCurveSummary={wipCurveSummary}
+              wipCurveRunning={wipCurveRunning}
+              onRunWipCurve={handleWipCurveScan}
+              onApplyWipCapacity={(capacity) => {
+                setSettings((s) => ({ ...s, interStationBufferCapacity: capacity }));
+                setTimeout(() => {
+                  if (!isRunning) handleRun();
+                }, 0);
+              }}
+              optimizationSummary={optimizationSummary}
+              optimizationRunning={optimizationRunning}
+              onRunOptimization={handleOptimizationSearch}
+              onApplyOptimization={handleApplyOptimization}
+              costSummary={
+                runMeta
+                  ? summarizeCosts(
+                      result,
+                      settings.horizonMs,
+                      runMeta.chainNodeIds,
+                      runMeta.stationLabels,
+                      nodes,
+                    )
+                  : null
+              }
+              // VROL-902 — pass MTTR + per-edge buffer capacities so the
+              // Recommendations card can surface tightly-coupled warnings.
+              // settings.breakdowns is only meaningful when .enabled is true;
+              // wrap mttrMs in a constant distribution to match the engine.
+              {...(settings.breakdowns.enabled
+                ? {
+                    mttrDistribution: constant(Math.max(1, settings.breakdowns.mttrMs)),
+                  }
+                : {})}
+              bufferEdges={edges.map((e) => {
+                const src = nodes.find((n) => n.id === e.source);
+                const tgt = nodes.find((n) => n.id === e.target);
+                const srcLabel = (src?.data as { label?: unknown } | undefined)?.label;
+                const tgtLabel = (tgt?.data as { label?: unknown } | undefined)?.label;
+                const label =
+                  typeof srcLabel === "string" && typeof tgtLabel === "string"
+                    ? `${srcLabel} → ${tgtLabel}`
+                    : undefined;
+                return {
+                  edgeId: e.id,
+                  capacity: settings.interStationBufferCapacity,
+                  ...(label !== undefined ? { label } : {}),
+                };
+              })}
+              // VROL-908 — when playback is active, each chart slices its
+              // samples to [0..playheadIdx] so the curves fill in left-to-right
+              // as the scrubber advances. Null when paused / no playback.
+              playheadIdx={playbackSnapshot?.sampleIdxAtT ?? null}
+              onApplyRecommendation={handleApplyRecommendation}
+            />
+          </Suspense>
+        </>
       ) : null}
 
       <Sheet
