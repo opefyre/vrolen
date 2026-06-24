@@ -4758,6 +4758,18 @@ function EditorCanvas() {
                 lockedNodeCount: nodes.filter(
                   (n) => (n.data as { _locked?: boolean })._locked === true,
                 ).length,
+                // VROL-963 — Sprint 90/91 constraint signals.
+                totalBomStarved: result
+                  ? (result.perStationBomStarved ?? []).reduce((s, v) => s + v, 0)
+                  : 0,
+                toolBlockedFraction:
+                  result && result.elapsedMs > 0
+                    ? (result.perStationToolBlockedMs ?? []).reduce((s, v) => s + v, 0) /
+                      result.elapsedMs
+                    : 0,
+                totalSkuRouted: result
+                  ? (result.perStationSkuRouted ?? []).reduce((s, v) => s + v, 0)
+                  : 0,
               },
               { runNow: handleRun },
             )}

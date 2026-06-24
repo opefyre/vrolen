@@ -8,6 +8,7 @@
 import type { ChainResult } from "@/engine";
 import type { ReplicationSummary } from "@/lib/replications";
 import { narrateOee } from "@/lib/narrate-oee";
+import { GlossaryTerm } from "@/components/ui/glossary-term";
 
 interface OeeBreakdownProps {
   readonly result: ChainResult;
@@ -19,14 +20,16 @@ interface SegmentProps {
   readonly label: string;
   readonly pct: number;
   readonly colorClass: string;
+  /** VROL-964 — wrap the label in a glossary tooltip when set. */
+  readonly term?: string;
 }
 
-function Segment({ label, pct, colorClass }: SegmentProps) {
+function Segment({ label, pct, colorClass, term }: SegmentProps) {
   const display = Math.round(pct * 100);
   return (
     <div className="flex-1 space-y-1">
       <div className="text-muted-foreground flex items-center justify-between text-[10px]">
-        <span>{label}</span>
+        <span>{term ? <GlossaryTerm term={term}>{label}</GlossaryTerm> : label}</span>
         <span className="font-mono tabular-nums">{display}%</span>
       </div>
       <div className="bg-muted h-2 overflow-hidden rounded-full">
@@ -164,16 +167,19 @@ export function OeeBreakdown({ result, replicationSummary }: OeeBreakdownProps) 
                 label={`Availability${ciSuffix(ci?.halfWidth95Availability ?? 0)}`}
                 pct={oee.availability}
                 colorClass="bg-sim-running"
+                term="availability"
               />
               <Segment
                 label={`Performance${ciSuffix(ci?.halfWidth95Performance ?? 0)}`}
                 pct={oee.performance}
                 colorClass="bg-sim-setup"
+                term="performance"
               />
               <Segment
                 label={`Quality${ciSuffix(ci?.halfWidth95Quality ?? 0)}`}
                 pct={oee.quality}
                 colorClass="bg-sim-maintenance"
+                term="quality"
               />
             </div>
             {visibleConstraints.length > 0 && (

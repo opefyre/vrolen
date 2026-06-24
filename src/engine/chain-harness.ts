@@ -326,16 +326,20 @@ export interface ChainResult {
    */
   readonly perStationToolBlockedMs: readonly number[];
   /**
-   * VROL-872 — per-station BOM-starvation counter. Increments when the
-   * station has bomFeeders configured and at least one feeder is empty
-   * at the moment of cycle-start. Field shipped; full multi-feeder atomic
-   * pull is a follow-up.
+   * VROL-872 / VROL-920 / VROL-926 — per-station BOM-starvation counter.
+   * Increments every cycle attempt where the station has bomFeeders
+   * configured and at least one feeder edge holds fewer than
+   * qtyPerCycle + 1 units (reserving one for primary upstream.pull).
+   * Sprint 92 ships atomic consume with the +1 reservation so successful
+   * cycles deterministically consume `qty` from each feeder.
    */
   readonly perStationBomStarved: readonly number[];
   /**
-   * VROL-881 — per-station SKU-routed count. Increments per part whose
-   * productId matches a perSkuRouting entry. Field shipped; full per-SKU
-   * dispatch is a follow-up.
+   * VROL-881 / VROL-921 / VROL-927 — per-station SKU-routed count.
+   * Increments per part whose productId matches a perSkuRouting entry.
+   * Sprint 91 wires downstreamFor; Sprint 92 adds soft-fallback via
+   * pushReworkTo when the named destination has no direct edge from
+   * this station. 'skip' routes parts to the sink.
    */
   readonly perStationSkuRouted: readonly number[];
   /**
