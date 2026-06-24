@@ -311,3 +311,51 @@
     animation: none !important;
   }
 }
+
+/* VROL-985 — print-to-PDF. Hide nav / canvas / scenarios chrome; show
+ * only the print-scope wrapper with its result-panel children. Browser
+ * paging handles A4 page breaks. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-scope,
+  .print-scope * {
+    visibility: visible;
+  }
+  .print-scope {
+    position: absolute;
+    inset: 0;
+    background: white !important;
+    color: black !important;
+    padding: 0 !important;
+  }
+  .print-hidden,
+  [data-print-hidden="true"] {
+    display: none !important;
+  }
+  .print-scope > *,
+  .print-scope section,
+  .print-scope [data-testid="action-card"],
+  .print-scope [data-testid="oee-narration"],
+  .print-scope [data-testid="oee-breakdown"],
+  .print-scope [data-testid="six-loss-row"],
+  .print-scope [data-testid="station-gantt"],
+  .print-scope [data-testid="constraint-history"] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .print-cover {
+    page-break-after: always;
+    break-after: page;
+  }
+  .print-scope svg {
+    color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+}

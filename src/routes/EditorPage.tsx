@@ -68,6 +68,7 @@ import {
   Settings2,
   StickyNote,
   Tag,
+  FileDown,
   Trash2,
   Truck,
   Wand2,
@@ -1143,6 +1144,7 @@ function EditorCanvas() {
     breakdowns: boolean;
     source: boolean;
     toolPools: boolean;
+    shiftCalendar: boolean;
   }>({
     materials: false,
     products: false,
@@ -1150,6 +1152,7 @@ function EditorCanvas() {
     breakdowns: false,
     source: false,
     toolPools: false,
+    shiftCalendar: false,
   });
   const toggleDrawerSection = useCallback((key: keyof typeof drawerSections) => {
     setDrawerSections((s) => ({ ...s, [key]: !s[key] }));
@@ -5851,10 +5854,50 @@ function EditorCanvas() {
       </div>
 
       {result && runMeta ? (
-        <>
+        <div className="print-scope">
+          {/* VROL-985 — print cover sheet. Only rendered when printing
+              (display: none on screen via Tailwind, shown via print:block). */}
+          <div className="print-cover hidden print:block">
+            <h1 className="font-heading mb-2 text-2xl font-semibold">
+              {activeScenarioName ?? "Current canvas"}
+            </h1>
+            <p className="text-muted-foreground text-sm">
+              Vrolen simulation brief · {new Date().toLocaleString()}
+            </p>
+            <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+              <dt>Seed</dt>
+              <dd className="font-mono tabular-nums">{settings.seed}</dd>
+              <dt>Horizon</dt>
+              <dd className="font-mono tabular-nums">{(settings.horizonMs / 1000).toFixed(0)}s</dd>
+              <dt>Completed</dt>
+              <dd className="font-mono tabular-nums">{result.completed.toLocaleString()}</dd>
+              <dt>Throughput</dt>
+              <dd className="font-mono tabular-nums">
+                {Math.round(result.throughputLambda * 3_600_000).toLocaleString()}/h
+              </dd>
+              <dt>Line OEE</dt>
+              <dd className="font-mono tabular-nums">{(result.lineOee * 100).toFixed(1)}%</dd>
+              <dt>Bottleneck</dt>
+              <dd className="font-mono">{result.bottlenecks[0]?.label ?? "—"}</dd>
+            </dl>
+          </div>
+          {/* VROL-985 — Print button. Hidden during print itself. */}
+          <div className="print-hidden mb-2 flex justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                window.print();
+              }}
+              aria-label="Print or save as PDF"
+            >
+              <FileDown className="mr-1.5 h-3.5 w-3.5" />
+              Print / PDF
+            </Button>
+          </div>
           {/* VROL-949 — run-history strip above the result panel. Hidden when
             no scenario is active or fewer than 2 runs are recorded. */}
-          <div className="mb-3 space-y-3">
+          <div className="print-hidden mb-3 space-y-3">
             <RunHistoryStrip
               scenarioName={activeScenarioName ?? null}
               onCompare={handleCompareWithHistoryEntry}
@@ -5970,7 +6013,7 @@ function EditorCanvas() {
               onApplyActionCard={handleApplyActionCard}
             />
           </Suspense>
-        </>
+        </div>
       ) : null}
 
       <Sheet
@@ -8182,6 +8225,193 @@ function EditorCanvas() {
                   + Add pool
                 </Button>
               </div>
+            </Accordion>
+
+            {/* VROL-987 — shift calendar editor. Engine plumbing landed in
+                Sprint 102; this surfaces the controls. */}
+            <Accordion
+              title="Shift calendar"
+              icon={<Hourglass className="h-4 w-4" />}
+              status={
+                <AccordionStatus tone={settings.shiftCalendar?.enabled ? "on" : "off"}>
+                  {settings.shiftCalendar?.enabled
+                    ? `${String(Math.round((settings.shiftCalendar.operatingMs ?? 0) / 3_600_000))}h operating`
+                    : "Off"}
+                </AccordionStatus>
+              }
+              expanded={drawerSections.shiftCalendar ?? false}
+              onToggle={() => {
+                toggleDrawerSection("shiftCalendar");
+              }}
+            >
+              <p className="text-muted-foreground text-xs">
+                Models the operating window. Outside-shift time folds into per-station maintenance
+                so TEEP's loading-fraction reflects calendar reality (a 24h horizon with 16h
+                operating caps TEEP at ~67 % regardless of OEE).
+              </p>
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={settings.shiftCalendar?.enabled ?? false}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    setSettings((s) => ({
+                      ...s,
+                      shiftCalendar: {
+                        enabled,
+                        operatingMs:
+                          s.shiftCalendar?.operatingMs ?? Math.floor(s.horizonMs * 0.667),
+                        breaks: s.shiftCalendar?.breaks ?? [],
+                      },
+                    }));
+                  }}
+                  className="accent-sim-running h-4 w-4"
+                />
+                Enable shift calendar
+              </label>
+              {settings.shiftCalendar?.enabled ? (
+                <>
+                  <DurationInput
+                    id="rs-shift-operating"
+                    label="Operating window"
+                    valueMs={settings.shiftCalendar.operatingMs}
+                    min={1000}
+                    defaultUnit="min"
+                    onChangeMs={(ms) => {
+                      setSettings((s) => ({
+                        ...s,
+                        shiftCalendar: {
+                          enabled: true,
+                          operatingMs: Math.floor(ms),
+                          breaks: s.shiftCalendar?.breaks ?? [],
+                        },
+                      }));
+                    }}
+                  />
+                  <div className="text-muted-foreground text-xs">
+                    Mid-shift breaks (lunch, changeover slot):
+                  </div>
+                  {(settings.shiftCalendar.breaks ?? []).map((br, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={br.label}
+                        placeholder="Break"
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setSettings((s) => ({
+                            ...s,
+                            shiftCalendar: {
+                              ...(s.shiftCalendar ?? {
+                                enabled: true,
+                                operatingMs: 0,
+                                breaks: [],
+                              }),
+                              enabled: true,
+                              breaks: (s.shiftCalendar?.breaks ?? []).map((b, j) =>
+                                j === idx ? { ...b, label: v } : b,
+                              ),
+                            },
+                          }));
+                        }}
+                        className="border-input bg-background flex-1 rounded-md border px-2 py-1.5 text-sm"
+                      />
+                      <input
+                        type="number"
+                        value={Math.round(br.atMs / 60_000)}
+                        min={0}
+                        onChange={(e) => {
+                          const v = Math.max(0, Math.floor(Number(e.target.value) || 0)) * 60_000;
+                          setSettings((s) => ({
+                            ...s,
+                            shiftCalendar: {
+                              ...(s.shiftCalendar ?? {
+                                enabled: true,
+                                operatingMs: 0,
+                                breaks: [],
+                              }),
+                              enabled: true,
+                              breaks: (s.shiftCalendar?.breaks ?? []).map((b, j) =>
+                                j === idx ? { ...b, atMs: v } : b,
+                              ),
+                            },
+                          }));
+                        }}
+                        className="border-input bg-background w-20 rounded-md border px-2 py-1.5 text-sm"
+                        title="Minutes from horizon start"
+                      />
+                      <input
+                        type="number"
+                        value={Math.round(br.durationMs / 60_000)}
+                        min={0}
+                        onChange={(e) => {
+                          const v = Math.max(0, Math.floor(Number(e.target.value) || 0)) * 60_000;
+                          setSettings((s) => ({
+                            ...s,
+                            shiftCalendar: {
+                              ...(s.shiftCalendar ?? {
+                                enabled: true,
+                                operatingMs: 0,
+                                breaks: [],
+                              }),
+                              enabled: true,
+                              breaks: (s.shiftCalendar?.breaks ?? []).map((b, j) =>
+                                j === idx ? { ...b, durationMs: v } : b,
+                              ),
+                            },
+                          }));
+                        }}
+                        className="border-input bg-background w-20 rounded-md border px-2 py-1.5 text-sm"
+                        title="Duration minutes"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSettings((s) => ({
+                            ...s,
+                            shiftCalendar: {
+                              ...(s.shiftCalendar ?? {
+                                enabled: true,
+                                operatingMs: 0,
+                                breaks: [],
+                              }),
+                              enabled: true,
+                              breaks: (s.shiftCalendar?.breaks ?? []).filter((_, j) => j !== idx),
+                            },
+                          }));
+                        }}
+                        aria-label="Remove break"
+                      >
+                        ×
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setSettings((s) => ({
+                        ...s,
+                        shiftCalendar: {
+                          ...(s.shiftCalendar ?? {
+                            enabled: true,
+                            operatingMs: 0,
+                            breaks: [],
+                          }),
+                          enabled: true,
+                          breaks: [
+                            ...(s.shiftCalendar?.breaks ?? []),
+                            { atMs: 0, durationMs: 600_000, label: "Break" },
+                          ],
+                        },
+                      }));
+                    }}
+                  >
+                    + Add break
+                  </Button>
+                </>
+              ) : null}
             </Accordion>
 
             <div className="flex justify-between gap-2">
