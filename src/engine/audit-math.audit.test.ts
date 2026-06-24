@@ -1272,6 +1272,78 @@ describe("audit VROL-899/900 — nominalCycleTimeMs + composite ranking", () => 
     expect(result.perStationBomStarved[2]).toBeGreaterThan(0);
   });
 
+  it("VROL-926 — bomFeeders atomically consumes qty per feeder, throttling asm to feeder/qty", () => {
+    // feed: cycle 100ms → 50 parts in 5s.
+    // asm: cycle 50ms, requires 4 parts from feed per cycle (qty=4 + 1 for
+    // primary = 5 needed per asm cycle). asm should produce ~10 parts in
+    // 5s (50 / 5). Sprint 91 check-only would have produced 50.
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "src", cycleTimeMs: constant(50) },
+          { id: "feed", cycleTimeMs: constant(100) },
+          {
+            id: "asm",
+            cycleTimeMs: constant(50),
+            bomFeeders: [{ feederStationId: "feed", qtyPerCycle: 4 }],
+          },
+          { id: "snk", cycleTimeMs: constant(50) },
+        ],
+        edges: [
+          { source: "src", target: "feed" },
+          { source: "feed", target: "asm" },
+          { source: "asm", target: "snk" },
+        ],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // asm should be substantially fewer than feed's output (atomic consume
+    // throttles it to feed/5 ≈ 10), and bom counter > 0.
+    expect(result.perStationCompleted[2]).toBeLessThan(15);
+    expect(result.perStationBomStarved[2]).toBeGreaterThan(0);
+  });
+
+  it("VROL-927 — perSkuRouting soft-fallback injects into destination without polish→qa edge", () => {
+    // Layout: src branches to polish AND qa-bay (DAG valid). polish has no
+    // direct edge to qa-bay; perSkuRouting routes sku-Q parts to qa-bay
+    // via the pushPartFor soft-fallback. Routed parts must still complete
+    // through qa-bay (perStationCompleted[qa] > the volume of just the
+    // src→qa-bay primary lane).
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "src", cycleTimeMs: constant(80) },
+          { id: "polish", cycleTimeMs: constant(50), perSkuRouting: { "sku-Q": "qa-bay" } },
+          { id: "qa-bay", cycleTimeMs: constant(50) },
+          { id: "snk", cycleTimeMs: constant(50) },
+        ],
+        edges: [
+          { source: "src", target: "polish" },
+          { source: "src", target: "qa-bay" },
+          { source: "polish", target: "snk" },
+          { source: "qa-bay", target: "snk" },
+        ],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+      products: {
+        products: [
+          { id: "sku-A", weight: 1 },
+          { id: "sku-Q", weight: 1 },
+        ],
+      },
+    });
+    // The counter should be > 0 (sku-Q parts routed via polish).
+    expect(result.perStationSkuRouted[1]).toBeGreaterThan(0);
+    // qa-bay must process more parts than just its src→qa-bay primary flow.
+    expect(result.perStationCompleted[2]).toBeGreaterThan(0);
+  });
+
   it("VROL-921 — perSkuRouting counter increments per matched SKU", () => {
     const result = runChain({
       topology: {

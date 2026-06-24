@@ -1589,34 +1589,34 @@ function* simulationStream(
         bomFeedersResolved.push({ buf, qty: f.qtyPerCycle });
       }
     }
-    // Sprint 91 semantic: CHECK-ONLY. The gate verifies that every feeder
-    // edge has at least qtyPerCycle units available; if not, the station
-    // Starves with reason "starved-bom" and the counter increments. We do
-    // NOT atomically consume from the feeder edge here — that's a deeper
-    // change (the cycle's primary upstream.pull() also pulls from the same
-    // edge in the common case, so a separate consume here would leak
-    // inventory when upstream is short after the BOM pull). Full atomic
-    // pull with dedicated feeder buffers is deferred to a follow-up
-    // ticket; the check-only counter still exposes BOM starvation as a
-    // first-class signal in the result.
+    // VROL-926 — atomic consume with primary-upstream reservation.
+    // bomFeeder edges are always part of this station's incoming edges
+    // (otherwise the resolve step skipped them), so the cycle's primary
+    // upstream.pull() may pull from one of them. To guarantee the cycle
+    // still has a primary part after BOM consume, we require size >=
+    // qtyPerCycle + 1 per feeder edge and consume qtyPerCycle, leaving 1
+    // for upstream.pull. Side-effect: under multi-input topologies the +1
+    // reservation may be conservative, but it never leaks inventory.
     const bomGate: ((timeMs: number) => boolean) | undefined =
       bomFeedersResolved.length > 0
         ? () => {
             for (const f of bomFeedersResolved) {
-              if (f.buf.size < f.qty) {
+              if (f.buf.size < f.qty + 1) {
                 perStationBomStarvedCounts[i] = (perStationBomStarvedCounts[i] ?? 0) + 1;
                 return false;
               }
+            }
+            for (const f of bomFeedersResolved) {
+              for (let k = 0; k < f.qty; k++) f.buf.pull();
             }
             return true;
           }
         : undefined;
 
-    // VROL-921 — downstreamFor closure. For perSkuRouting[productId]:
-    //   "skip"     → route directly to sinkBuffer
-    //   "<id>"     → route to the edge from this station to that destination
-    //                station (falls back to the default downstream if no
-    //                such edge exists).
+    // VROL-921 / VROL-927 — per-SKU dispatch.
+    //   downstreamForFn: route via an existing buffer (edge or sinkBuffer).
+    //   pushPartForFn (VROL-927): route via direct input-push (pushReworkTo)
+    //     when the destination has no direct edge from THIS station.
     const skuRoutingForThis = topology.perSkuRouting[i];
     const downstreamForFn: ((part: TrackedPart) => Buffer<TrackedPart> | undefined) | undefined =
       skuRoutingForThis
@@ -1630,6 +1630,19 @@ function* simulationStream(
             const eIdx = outgoingEdgeIdx[i]!.find((e) => topology.edges[e]?.targetIdx === destIdx);
             if (eIdx === undefined) return undefined;
             return edgeBuffers[eIdx] as Buffer<TrackedPart>;
+          }
+        : undefined;
+    const pushPartForFn: ((part: TrackedPart) => boolean | undefined) | undefined =
+      skuRoutingForThis
+        ? (part: TrackedPart): boolean | undefined => {
+            if (part.productId === undefined) return undefined;
+            const dest = skuRoutingForThis[part.productId];
+            if (dest === undefined || dest === "skip") return undefined;
+            const destIdx = stationIdToIdx.get(dest);
+            if (destIdx === undefined) return undefined;
+            const eIdx = outgoingEdgeIdx[i]!.find((e) => topology.edges[e]?.targetIdx === destIdx);
+            if (eIdx !== undefined) return undefined; // downstreamForFn handles edge case
+            return pushReworkTo(destIdx, part);
           }
         : undefined;
 
@@ -1674,6 +1687,7 @@ function* simulationStream(
       ...(toolAcquire ? { toolAcquire } : {}),
       ...(toolRelease ? { toolRelease } : {}),
       ...(downstreamForFn ? { downstreamFor: downstreamForFn } : {}),
+      ...(pushPartForFn ? { pushPartFor: pushPartForFn } : {}),
     };
     const ex = new CycleExecutor<TrackedPart>(
       cfg,

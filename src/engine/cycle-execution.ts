@@ -130,6 +130,14 @@ export interface CycleConfig<P> {
    */
   readonly downstreamFor?: (part: P) => Buffer<P> | undefined;
   /**
+   * VROL-927 — alternate per-part downstream push. When set, called for a
+   * part instead of downstream.push when the part has a custom routing
+   * destination that isn't a topology-edge buffer (e.g. perSkuRouting to a
+   * station without a direct edge). Returns true if the push succeeded.
+   * Takes precedence over downstreamFor for the same part — checked first.
+   */
+  readonly pushPartFor?: (part: P) => boolean | undefined;
+  /**
    * Optional rework router (VROL-626). Called on a defect roll BEFORE the
    * scrap counter increments. Return true if the part was successfully
    * re-routed (the executor counts it under `reworked` and skips the scrap
@@ -442,8 +450,14 @@ export class CycleExecutor<P> {
       return;
     }
 
-    const target = this.config.downstreamFor?.(part) ?? this.config.downstream;
-    const pushed = target.push(part);
+    // VROL-927 — pushPartFor takes precedence (router-style push, e.g. into
+    // a station's input buffer when no direct topology edge exists). Falls
+    // through to downstreamFor (per-SKU buffer override) then default.
+    const customPush = this.config.pushPartFor?.(part);
+    const pushed =
+      customPush !== undefined
+        ? customPush
+        : (this.config.downstreamFor?.(part) ?? this.config.downstream).push(part);
     if (pushed) {
       // VROL-870 — multi-output station: one cycle ⇒ N units produced.
       this.completed_ += this.config.unitsPerCycle ?? 1;
@@ -509,10 +523,22 @@ export class CycleExecutor<P> {
   onDownstreamCleared(timeMs: number): void {
     while (this.pendingPush.length > 0) {
       const part = this.pendingPush[0] as P;
-      const target = this.config.downstreamFor?.(part) ?? this.config.downstream;
-      if (target.isFull) break;
+      // VROL-927 — try pushPartFor first; if it returns a definitive
+      // false (push failed), stop draining (the router itself decided
+      // backpressure). If undefined, fall back to downstreamFor / default.
+      const custom = this.config.pushPartFor?.(part);
+      let pushed: boolean;
+      if (custom !== undefined) {
+        if (custom === false) break;
+        pushed = true;
+      } else {
+        const target = this.config.downstreamFor?.(part) ?? this.config.downstream;
+        if (target.isFull) break;
+        target.push(part);
+        pushed = true;
+      }
+      if (!pushed) break;
       this.pendingPush.shift();
-      target.push(part);
       // VROL-870 — same N-units-per-cycle accounting applies on the
       // pending-push drain path.
       this.completed_ += this.config.unitsPerCycle ?? 1;

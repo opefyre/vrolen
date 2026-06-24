@@ -156,6 +156,7 @@ import {
   type ValidationIssue,
 } from "@/lib/validate-scenario";
 import { BulkInspector } from "@/components/editor/bulk-inspector";
+import { ConstraintsEditor } from "@/components/editor/constraints-editor";
 import { CustomParamsField } from "@/components/editor/custom-params-field";
 import type { CustomParam } from "@/lib/custom-params";
 import { FieldErrorIndicator } from "@/components/editor/field-error-indicator";
@@ -1103,12 +1104,14 @@ function EditorCanvas() {
     workers: boolean;
     breakdowns: boolean;
     source: boolean;
+    toolPools: boolean;
   }>({
     materials: false,
     products: false,
     workers: false,
     breakdowns: false,
     source: false,
+    toolPools: false,
   });
   const toggleDrawerSection = useCallback((key: keyof typeof drawerSections) => {
     setDrawerSections((s) => ({ ...s, [key]: !s[key] }));
@@ -5188,105 +5191,16 @@ function EditorCanvas() {
                           }}
                         />
                       ) : null}
-                      {/* VROL-923/924 — Sprint 91 constraint editors:
-                          requiredToolPool + bomFeeders + perSkuRouting. UI is
-                          intentionally minimal (plain inputs / JSON-shaped
-                          textareas); richer widgets land in a follow-up. */}
-                      <div className="border-border space-y-2 rounded-md border border-dashed p-3">
-                        <div className="text-foreground text-xs font-medium">
-                          Shared constraints
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label
-                            htmlFor="inspector-tool-pool"
-                            className="text-muted-foreground text-xs font-medium"
-                          >
-                            Required tool pool
-                          </label>
-                          <input
-                            id="inspector-tool-pool"
-                            type="text"
-                            value={
-                              (selectedNode.data as { requiredToolPool?: string })
-                                .requiredToolPool ?? ""
-                            }
-                            onChange={(e) => {
-                              const v = e.target.value.trim();
-                              updateSelectedNodeData({
-                                requiredToolPool: v.length > 0 ? v : undefined,
-                              });
-                            }}
-                            placeholder="e.g. chambers"
-                            className="border-input bg-background rounded-md border px-2 py-1.5 text-sm"
-                          />
-                          <p className="text-muted-foreground text-[11px]">
-                            Station holds one unit of this pool per cycle. Define pools in scenario
-                            settings (toolPools).
-                          </p>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label
-                            htmlFor="inspector-bom-feeders"
-                            className="text-muted-foreground text-xs font-medium"
-                          >
-                            BOM feeders (JSON)
-                          </label>
-                          <textarea
-                            id="inspector-bom-feeders"
-                            value={JSON.stringify(
-                              (selectedNode.data as { bomFeeders?: unknown }).bomFeeders ?? [],
-                            )}
-                            onChange={(e) => {
-                              try {
-                                const parsed = JSON.parse(e.target.value) as unknown;
-                                updateSelectedNodeData({
-                                  bomFeeders:
-                                    Array.isArray(parsed) && parsed.length > 0 ? parsed : undefined,
-                                });
-                              } catch {
-                                /* keep current value while user edits */
-                              }
-                            }}
-                            placeholder='[{"feederStationId":"feed-A","qtyPerCycle":2}]'
-                            rows={2}
-                            className="border-input bg-background rounded-md border px-2 py-1.5 font-mono text-[11px]"
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label
-                            htmlFor="inspector-sku-routing"
-                            className="text-muted-foreground text-xs font-medium"
-                          >
-                            Per-SKU routing (JSON)
-                          </label>
-                          <textarea
-                            id="inspector-sku-routing"
-                            value={JSON.stringify(
-                              (selectedNode.data as { perSkuRouting?: unknown }).perSkuRouting ??
-                                {},
-                            )}
-                            onChange={(e) => {
-                              try {
-                                const parsed = JSON.parse(e.target.value) as unknown;
-                                updateSelectedNodeData({
-                                  perSkuRouting:
-                                    parsed &&
-                                    typeof parsed === "object" &&
-                                    !Array.isArray(parsed) &&
-                                    Object.keys(parsed as object).length > 0
-                                      ? parsed
-                                      : undefined,
-                                });
-                              } catch {
-                                /* keep current value while user edits */
-                              }
-                            }}
-                            placeholder='{"sku-A":"qa-bay","sku-B":"skip"}'
-                            rows={2}
-                            className="border-input bg-background rounded-md border px-2 py-1.5 font-mono text-[11px]"
-                          />
-                        </div>
-                      </div>
+                      <ConstraintsEditor
+                        node={selectedNode}
+                        otherNodes={nodes.filter(
+                          (n) =>
+                            n.id !== selectedNode.id && n.type !== "sticky" && n.type !== "frame",
+                        )}
+                        toolPools={settings.toolPools ?? []}
+                        productList={settings.products.list}
+                        updateData={updateSelectedNodeData}
+                      />
                       {/* VROL-286 — customParams editor. Lives in Schedule
                           because most custom params are time-related. */}
                       <CustomParamsField
@@ -7778,6 +7692,93 @@ function EditorCanvas() {
                   </p>
                 </>
               ) : null}
+            </Accordion>
+
+            {/* VROL-930 — scenario-level shared tool pools editor. Stations
+                opt-in via inspector.requiredToolPool; pools shared across
+                stations serialize through capacity. */}
+            <Accordion
+              title="Tool pools"
+              icon={<Zap className="h-4 w-4" />}
+              status={
+                <AccordionStatus tone={(settings.toolPools?.length ?? 0) > 0 ? "on" : "off"}>
+                  {(settings.toolPools?.length ?? 0) > 0
+                    ? `${String(settings.toolPools?.length ?? 0)} pool${(settings.toolPools?.length ?? 0) === 1 ? "" : "s"}`
+                    : "None"}
+                </AccordionStatus>
+              }
+              expanded={drawerSections.toolPools ?? false}
+              onToggle={() => {
+                toggleDrawerSection("toolPools");
+              }}
+            >
+              <p className="text-muted-foreground text-xs">
+                Named tool resources that stations declare via{" "}
+                <span className="font-mono">requiredToolPool</span> in the inspector. Stations
+                sharing a pool serialise through its capacity; wait time accrues to{" "}
+                <span className="font-mono">perStationToolBlockedMs</span> in results.
+              </p>
+              <div className="space-y-2">
+                {(settings.toolPools ?? []).map((pool, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={pool.name}
+                      placeholder="Pool name (e.g. chambers)"
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSettings((s) => ({
+                          ...s,
+                          toolPools: (s.toolPools ?? []).map((p, j) =>
+                            j === idx ? { ...p, name: v } : p,
+                          ),
+                        }));
+                      }}
+                      className="border-input bg-background flex-1 rounded-md border px-2 py-1.5 text-sm"
+                    />
+                    <input
+                      type="number"
+                      value={pool.capacity}
+                      min={1}
+                      onChange={(e) => {
+                        const v = Math.max(1, Math.floor(Number(e.target.value) || 1));
+                        setSettings((s) => ({
+                          ...s,
+                          toolPools: (s.toolPools ?? []).map((p, j) =>
+                            j === idx ? { ...p, capacity: v } : p,
+                          ),
+                        }));
+                      }}
+                      className="border-input bg-background w-20 rounded-md border px-2 py-1.5 text-sm"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setSettings((s) => ({
+                          ...s,
+                          toolPools: (s.toolPools ?? []).filter((_, j) => j !== idx),
+                        }));
+                      }}
+                      aria-label="Remove pool"
+                    >
+                      ×
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSettings((s) => ({
+                      ...s,
+                      toolPools: [...(s.toolPools ?? []), { name: "", capacity: 1 }],
+                    }));
+                  }}
+                >
+                  + Add pool
+                </Button>
+              </div>
             </Accordion>
 
             <div className="flex justify-between gap-2">

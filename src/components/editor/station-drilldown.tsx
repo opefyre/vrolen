@@ -416,6 +416,54 @@ export function StationDrilldown({
               </section>
             )}
 
+            {(() => {
+              // VROL-931 — Constraints section: surface the Sprint 90/91
+              // counters for the selected station. Hidden when all are zero.
+              if (!haveData) return null;
+              const tempScrap = result.perStationTempScrap?.[stationIdx] ?? 0;
+              const toolBlocked = result.perStationToolBlockedMs?.[stationIdx] ?? 0;
+              const bomStarved = result.perStationBomStarved?.[stationIdx] ?? 0;
+              const skuRouted = result.perStationSkuRouted?.[stationIdx] ?? 0;
+              if (tempScrap === 0 && toolBlocked === 0 && bomStarved === 0 && skuRouted === 0) {
+                return null;
+              }
+              return (
+                <section className="space-y-1.5" data-testid="drilldown-constraints">
+                  <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+                    Constraints
+                  </div>
+                  <div className="text-foreground/80 grid grid-cols-2 gap-2 text-xs">
+                    {tempScrap > 0 && (
+                      <div>
+                        <div className="text-muted-foreground text-[10px]">Temp-spec scrap</div>
+                        <div className="font-mono tabular-nums">{tempScrap.toLocaleString()}</div>
+                      </div>
+                    )}
+                    {toolBlocked > 0 && (
+                      <div>
+                        <div className="text-muted-foreground text-[10px]">Tool-pool wait</div>
+                        <div className="font-mono tabular-nums">
+                          {(toolBlocked / 1000).toFixed(1)}s
+                        </div>
+                      </div>
+                    )}
+                    {bomStarved > 0 && (
+                      <div>
+                        <div className="text-muted-foreground text-[10px]">BOM-starved</div>
+                        <div className="font-mono tabular-nums">{bomStarved.toLocaleString()}</div>
+                      </div>
+                    )}
+                    {skuRouted > 0 && (
+                      <div>
+                        <div className="text-muted-foreground text-[10px]">SKU-routed</div>
+                        <div className="font-mono tabular-nums">{skuRouted.toLocaleString()}</div>
+                      </div>
+                    )}
+                  </div>
+                </section>
+              );
+            })()}
+
             {recommendation ? (
               <section className="space-y-1.5">
                 <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
