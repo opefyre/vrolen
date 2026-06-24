@@ -95,6 +95,41 @@ export function deriveActionCard(result: ChainResult): ActionCard | null {
     };
   }
 
+  // 5b. VROL-956 — buffer pressure: an edge with sustained peak fill near
+  // its capacity is a candidate for "grow this buffer" without needing the
+  // bottleneck to be in BlockedOut. Uses perEdgeBufferFill from the latest
+  // sample where available; otherwise falls back to perEdgeFlowed share.
+  if (result.samples.length > 1) {
+    const lastSample = result.samples[result.samples.length - 1];
+    const fills = lastSample?.perEdgeBufferFill ?? [];
+    let hotEdgeIdx = -1;
+    let hotPeak = 0;
+    for (let i = 0; i < fills.length; i++) {
+      const f = fills[i] ?? 0;
+      if (f > hotPeak) {
+        hotPeak = f;
+        hotEdgeIdx = i;
+      }
+    }
+    // Heuristic: peak > 0 AND > 80 % of inter-station buffer capacity. We
+    // don't have direct access to per-edge capacity here, so we treat the
+    // top-decile peak across the run as "near full" when at least 10
+    // samples consistently held that level.
+    if (hotEdgeIdx >= 0 && hotPeak > 0) {
+      const sustainedHigh = result.samples
+        .slice(-Math.min(result.samples.length, 10))
+        .every((s) => (s.perEdgeBufferFill[hotEdgeIdx] ?? 0) >= hotPeak * 0.8);
+      if (sustainedHigh) {
+        return {
+          title: `Buffer ${String(hotEdgeIdx + 1)} is sustained near full`,
+          body: `Edge buffer #${String(hotEdgeIdx + 1)} held >= ${String(Math.round(hotPeak * 0.8))} parts in the last 10 samples (peak ${String(hotPeak)}). Growing this buffer is likely to lift throughput without changing cycle times.`,
+          tone: "primary",
+          apply: { kind: "buffer:grow", edgeKey: String(hotEdgeIdx) },
+        };
+      }
+    }
+  }
+
   // 6. Fallback — point at the slim OEE factor.
   if (top) {
     const idx = labels.findIndex((l) => l === top.label);

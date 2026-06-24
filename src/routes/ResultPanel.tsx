@@ -124,6 +124,10 @@ interface ResultPanelProps {
     rec: import("@/lib/recommendations").Recommendation,
     payload: import("@/lib/recommendations").RecommendationApply,
   ) => void;
+  /** VROL-953 — handler for the ActionCard Apply button. */
+  readonly onApplyActionCard?: (
+    payload: import("@/lib/derive-action-card").ActionApplyPayload,
+  ) => void;
 }
 
 /**
@@ -895,6 +899,7 @@ export function ResultPanel({
   bufferEdges,
   playheadIdx,
   onApplyRecommendation,
+  onApplyActionCard,
 }: ResultPanelProps) {
   type TabId = "overview" | "throughput" | "oee" | "states" | "quality" | "buffers" | "stations";
   const [activeTab, setActiveTab] = useState<TabId>("overview");
@@ -1443,7 +1448,10 @@ export function ResultPanel({
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <ActionCard result={result} />
+            <ActionCard
+              result={result}
+              {...(onApplyActionCard ? { onApply: onApplyActionCard } : {})}
+            />
             <OeeBreakdown result={result} replicationSummary={replicationSummary} />
             <ConstraintHistoryChart result={result} />
           </CardContent>

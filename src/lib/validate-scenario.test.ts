@@ -282,6 +282,79 @@ describe("validateScenario (VROL-86)", () => {
     expect(err?.fixAction).toEqual({ kind: "delete-edge", edgeId: "e1" });
   });
 
+  // ─── Sprint 90/91 constraint warnings (VROL-934 / VROL-957) ───────────────
+  it("BOM qty > 10 is flagged as suspicious", () => {
+    const r = validateScenario(
+      [node("a"), node("b", { bomFeeders: [{ feederStationId: "a", qtyPerCycle: 25 }] })],
+      [edge("e", "a", "b")],
+      settings(),
+    );
+    const w = r.warnings.find((x) => x.code === "BOM_QTY_SUSPICIOUS");
+    expect(w).toBeDefined();
+    expect(w?.nodeId).toBe("b");
+  });
+
+  it("BOM feeder pointing at a station not in the graph is a warning", () => {
+    const r = validateScenario(
+      [node("a"), node("b", { bomFeeders: [{ feederStationId: "ghost", qtyPerCycle: 2 }] })],
+      [edge("e", "a", "b")],
+      settings(),
+    );
+    expect(r.warnings.find((x) => x.code === "BOM_FEEDER_NOT_IN_GRAPH")).toBeDefined();
+  });
+
+  it("requiredToolPool not declared in RunSettings.toolPools is a warning", () => {
+    const r = validateScenario(
+      [node("a", { requiredToolPool: "chambers" }), node("b")],
+      [edge("e", "a", "b")],
+      settings(),
+    );
+    const w = r.warnings.find((x) => x.code === "TOOL_POOL_UNDECLARED");
+    expect(w).toBeDefined();
+    expect(w?.nodeId).toBe("a");
+  });
+
+  it("tool pool oversubscribed (demand > 2x capacity) is a warning", () => {
+    const r = validateScenario(
+      [
+        node("a", { requiredToolPool: "p" }),
+        node("b", { requiredToolPool: "p" }),
+        node("c", { requiredToolPool: "p" }),
+      ],
+      [edge("e1", "a", "b"), edge("e2", "b", "c")],
+      settings({ toolPools: [{ name: "p", capacity: 1 }] }),
+    );
+    expect(r.warnings.find((x) => x.code === "TOOL_POOL_OVERSUBSCRIBED")).toBeDefined();
+  });
+
+  it("perSkuRouting SKU not in products.list is a warning", () => {
+    const r = validateScenario(
+      [node("a", { perSkuRouting: { "sku-X": "b" } }), node("b")],
+      [edge("e", "a", "b")],
+      settings({
+        products: {
+          enabled: true,
+          list: [{ id: "sku-A", name: "A", weight: 1 }],
+        },
+      }),
+    );
+    expect(r.warnings.find((x) => x.code === "ROUTING_PRODUCT_NOT_IN_LIST")).toBeDefined();
+  });
+
+  it("perSkuRouting destination not in graph is a warning", () => {
+    const r = validateScenario(
+      [node("a", { perSkuRouting: { "sku-A": "ghost" } }), node("b")],
+      [edge("e", "a", "b")],
+      settings({
+        products: {
+          enabled: true,
+          list: [{ id: "sku-A", name: "A", weight: 1 }],
+        },
+      }),
+    );
+    expect(r.warnings.find((x) => x.code === "ROUTING_DEST_NOT_IN_GRAPH")).toBeDefined();
+  });
+
   // ─── Result shape sanity ───────────────────────────────────────────────────
   it("returns empty errors + empty warnings for a clean linear scenario", () => {
     const r = validateScenario(

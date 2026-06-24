@@ -132,7 +132,8 @@ import {
   suggestedFilenameStem,
 } from "@/lib/export-run";
 // VROL-683 — line + station summary CSV (separate from per-station-only export-run).
-import { resultToCsv as resultToSummaryCsv } from "@/lib/result-to-csv";
+import { resultToCsv as resultToSummaryCsv, constraintHistoryToCsv } from "@/lib/result-to-csv";
+import { computeConstraintHistory } from "@/lib/constraint-history";
 import { graphToChainOptions } from "@/lib/graph-to-chain";
 import {
   addRun as addRunToHistory,
@@ -2480,6 +2481,60 @@ function EditorCanvas() {
     [setNodes],
   );
 
+  // VROL-953 — apply handler for the Sprint 96 action card. Same pattern
+  // as handleApplyRecommendation but with the action-card payload shape.
+  const handleApplyActionCard = useCallback(
+    (payload: import("@/lib/derive-action-card").ActionApplyPayload): void => {
+      const patchStation = (
+        label: string,
+        fn: (data: Record<string, unknown>) => Record<string, unknown>,
+      ) => {
+        setNodes((ns) =>
+          ns.map((n) => {
+            const data = n.data as { label?: unknown };
+            if (data?.label !== label) return n;
+            return { ...n, data: fn(n.data as Record<string, unknown>) };
+          }),
+        );
+      };
+      switch (payload.kind) {
+        case "cycle:halve":
+          patchStation(payload.stationLabel, (data) => {
+            const d = data.cycleDistribution;
+            if (!isDistribution(d)) return data;
+            return { ...data, cycleDistribution: scaleDistribution(d, 0.5) };
+          });
+          toast.success(`Halved ${payload.stationLabel}'s cycle time. Re-running…`);
+          setApplyAndRunTick((x) => x + 1);
+          break;
+        case "buffer:grow":
+          setSettings((s) => ({
+            ...s,
+            interStationBufferCapacity: s.interStationBufferCapacity + 5,
+          }));
+          toast.success("Inter-station buffer capacity +5. Re-running…");
+          setApplyAndRunTick((x) => x + 1);
+          break;
+        case "tool-pool:grow":
+          setSettings((s) => ({
+            ...s,
+            toolPools: (s.toolPools ?? []).map((p) =>
+              p.name === payload.poolName ? { ...p, capacity: p.capacity + 1 } : p,
+            ),
+          }));
+          toast.success(`Tool pool "${payload.poolName}" capacity +1. Re-running…`);
+          setApplyAndRunTick((x) => x + 1);
+          break;
+        case "reliability:flag":
+          toast.info("Open Breakdowns in run settings to raise MTBF / lower MTTR.", {
+            description: `Reliability work is the highest-leverage change at ${payload.stationLabel}.`,
+          });
+          break;
+      }
+    },
+    [setNodes],
+  );
+
   const handleCompare = useCallback(
     (savedName: string): void => {
       const payload = loadScenario(savedName);
@@ -3455,6 +3510,20 @@ function EditorCanvas() {
     toast.success("Downloaded timeseries CSV");
     setMoreOpen(false);
   }, [result, runMeta]);
+  // VROL-955 — constraint history CSV. Hidden in the More menu when the
+  // sampler didn't run (computeConstraintHistory needs > 1 sample).
+  const downloadCsvConstraintHistory = useCallback(() => {
+    if (!result || !runMeta) return;
+    const intervals = computeConstraintHistory(result);
+    if (intervals.length === 0) {
+      toast.info("No constraint history — enable the sampler in Run Settings to populate.");
+      return;
+    }
+    const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
+    downloadFile(`${stem}-constraint-history.csv`, constraintHistoryToCsv(intervals), "text/csv");
+    toast.success("Downloaded constraint history CSV");
+    setMoreOpen(false);
+  }, [result, runMeta]);
 
   // VROL-811 — central editor action registry. All actions (Run, Undo,
   // Save, Duplicate, Auto-layout, Fit view, Open scenarios, …) are defined
@@ -4036,6 +4105,17 @@ function EditorCanvas() {
                       >
                         <Download className="h-4 w-4" />
                         CSV (timeseries)
+                      </button>
+                    ) : null}
+                    {result.samples.length > 1 ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="hover:bg-accent flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm"
+                        onClick={downloadCsvConstraintHistory}
+                      >
+                        <Download className="h-4 w-4" />
+                        CSV (constraint history)
                       </button>
                     ) : null}
                     <div className="border-border my-1 border-t" />
@@ -5735,6 +5815,7 @@ function EditorCanvas() {
               // as the scrubber advances. Null when paused / no playback.
               playheadIdx={playbackSnapshot?.sampleIdxAtT ?? null}
               onApplyRecommendation={handleApplyRecommendation}
+              onApplyActionCard={handleApplyActionCard}
             />
           </Suspense>
         </>
