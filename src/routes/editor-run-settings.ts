@@ -152,6 +152,24 @@ export interface RunSettings {
    * Empty array → no constraint.
    */
   toolPools?: ReadonlyArray<{ readonly name: string; readonly capacity: number }>;
+  /**
+   * VROL-982 — shift calendar. Models the operating window
+   * (e.g. 16h/24h with a 1h dinner break). Outside-shift time is folded
+   * into perStationMaintenanceMs so TEEP's loading-fraction reflects
+   * calendar reality (a 24h horizon with 16h of shifts caps loading at
+   * 16/24 ≈ 0.67 regardless of how well the line runs during shifts).
+   */
+  shiftCalendar?: {
+    readonly enabled: boolean;
+    /** When this many ms have elapsed in the horizon, the line is shut. */
+    readonly operatingMs: number;
+    /** Optional mid-shift breaks (e.g., lunch). atMs is from horizon start. */
+    readonly breaks?: ReadonlyArray<{
+      readonly atMs: number;
+      readonly durationMs: number;
+      readonly label: string;
+    }>;
+  };
 }
 
 export const DEFAULT_RUN_SETTINGS: RunSettings = {

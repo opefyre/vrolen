@@ -75,7 +75,7 @@ export function InputAnalyzerModal({ open, onClose, onApply }: InputAnalyzerModa
               className="border-border bg-background h-72 w-full resize-none rounded-md border p-2 font-mono text-xs"
               aria-label="Numeric dataset"
             />
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
                 variant="outline"
@@ -85,6 +85,32 @@ export function InputAnalyzerModal({ open, onClose, onApply }: InputAnalyzerModa
               >
                 Load example
               </Button>
+              {/* VROL-983 — file upload path. Lets a plant engineer drag in
+                  a CSV of historical cycle times instead of pasting. */}
+              <label
+                className="border-input bg-background hover:bg-accent inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border px-3 text-sm font-medium"
+                title="Upload CSV / TSV / plain numbers"
+              >
+                <input
+                  type="file"
+                  accept=".csv,.tsv,.txt,text/plain,text/csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    file
+                      .text()
+                      .then((txt) => {
+                        setRaw(txt);
+                      })
+                      .catch(() => {
+                        /* silent — user can paste instead */
+                      });
+                    e.target.value = "";
+                  }}
+                />
+                Upload CSV
+              </label>
               <Button
                 size="sm"
                 variant="ghost"

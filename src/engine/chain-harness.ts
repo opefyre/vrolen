@@ -722,6 +722,17 @@ export interface ChainOptions {
     readonly name: string;
     readonly capacity: number;
   }>;
+  /**
+   * VROL-981 — line-level sequence-dependent changeover matrix applied
+   * uniformly to every station for the configured SKU transitions.
+   * Indexed as changeoverMatrix[fromSku][toSku] = Distribution.
+   *
+   * Lookup order at the cycle executor: per-station node.changeoverMatrix
+   * → this line-level matrix → no setup time. Per-station beats line-level
+   * for the same (from, to) pair so a station can override (e.g. a
+   * dedicated labeller with shorter changeover than the rest of the line).
+   */
+  readonly changeoverMatrix?: Readonly<Record<string, Readonly<Record<string, Distribution>>>>;
   /** Optional labels for each station (matches stationCycleTimes by index). Ignored in DAG mode. */
   readonly stationLabels?: readonly string[];
   /** Optional material consumption + replenishment configuration. */
@@ -1592,14 +1603,21 @@ function* simulationStream(
       cycleByProduct
         ? (part) => (part.productId !== undefined ? cycleByProduct[part.productId] : undefined)
         : undefined;
+    // VROL-981 — lookup order is per-station matrix → line-level matrix.
+    // Both undefined → no setup-time-for closure (cycle uses the scalar
+    // setupTimeMs if set).
+    const lineLevelMatrix = opts.changeoverMatrix;
     const setupTimeFor:
       | ((prevId: string | undefined, nextPart: TrackedPart) => Distribution | undefined)
-      | undefined = changeoverMatrix
-      ? (prevId, nextPart) => {
-          if (prevId === undefined || nextPart.productId === undefined) return undefined;
-          return changeoverMatrix[prevId]?.[nextPart.productId];
-        }
-      : undefined;
+      | undefined =
+      changeoverMatrix || lineLevelMatrix
+        ? (prevId, nextPart) => {
+            if (prevId === undefined || nextPart.productId === undefined) return undefined;
+            const stationOverride = changeoverMatrix?.[prevId]?.[nextPart.productId];
+            if (stationOverride !== undefined) return stationOverride;
+            return lineLevelMatrix?.[prevId]?.[nextPart.productId];
+          }
+        : undefined;
     // Build a router closure when this station has a rework target. The
     // target's input buffer is resolved AFTER executors are constructed, but
     // we capture the index now and look up the executor at call time so the

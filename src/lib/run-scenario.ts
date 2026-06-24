@@ -88,6 +88,32 @@ export function runScenario(
   translation.maintenanceWindows.forEach((windows, i) => {
     if (windows.length > 0) maintenanceMap.set(i, [...windows]);
   });
+  // VROL-982 — fold the shift calendar into per-station maintenance so
+  // TEEP's loading-fraction (which divides by maintenanceMs/horizon)
+  // reflects calendar reality.
+  const shiftWindows: { startMs: number; endMs: number }[] = [];
+  if (
+    settings.shiftCalendar?.enabled &&
+    settings.shiftCalendar.operatingMs > 0 &&
+    settings.shiftCalendar.operatingMs < settings.horizonMs
+  ) {
+    shiftWindows.push({
+      startMs: settings.shiftCalendar.operatingMs,
+      endMs: settings.horizonMs,
+    });
+  }
+  for (const br of settings.shiftCalendar?.breaks ?? []) {
+    if (br.durationMs > 0) {
+      shiftWindows.push({ startMs: br.atMs, endMs: br.atMs + br.durationMs });
+    }
+  }
+  if (shiftWindows.length > 0) {
+    const stationCount = translation.chainNodeIds.length;
+    for (let i = 0; i < stationCount; i++) {
+      const existing = maintenanceMap.get(i) ?? [];
+      maintenanceMap.set(i, [...existing, ...shiftWindows]);
+    }
+  }
   const maintenanceCfg: ChainMaintenanceConfig | undefined =
     maintenanceMap.size > 0 ? { perStationWindows: maintenanceMap } : undefined;
 

@@ -1308,6 +1308,108 @@ describe("runChain — multi-product mix (VROL-594)", () => {
     expect(withMatrix.completed).toBeGreaterThan(baseline.completed * 0.3);
   });
 
+  it("VROL-981 — line-level changeover applies to every station uniformly", () => {
+    // 2-station line, both stations naked of per-station changeover. The
+    // ChainOptions.changeoverMatrix should apply uniformly to both.
+    // 50/50 mix; cross-product A→B / B→A cost 500ms.
+    const common = {
+      interStationBufferCapacity: 10,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      products: {
+        products: [
+          { id: "A", weight: 1 },
+          { id: "B", weight: 1 },
+        ],
+      },
+    };
+    const baseline = runChain({
+      ...common,
+      prng: new SeededPrng(0xcafebabe),
+      topology: {
+        nodes: [
+          { id: "s0", cycleTimeMs: constant(100) },
+          { id: "s1", cycleTimeMs: constant(100) },
+        ],
+        edges: [{ source: "s0", target: "s1" }],
+      },
+    });
+    const withLineMatrix = runChain({
+      ...common,
+      prng: new SeededPrng(0xcafebabe),
+      changeoverMatrix: {
+        A: { B: constant(500) },
+        B: { A: constant(500) },
+      },
+      topology: {
+        nodes: [
+          { id: "s0", cycleTimeMs: constant(100) },
+          { id: "s1", cycleTimeMs: constant(100) },
+        ],
+        edges: [{ source: "s0", target: "s1" }],
+      },
+    });
+    // Both stations pay the changeover cost → throughput drops.
+    expect(withLineMatrix.completed).toBeLessThan(baseline.completed);
+  });
+
+  it("VROL-981 — per-station changeover overrides line-level for the same transition", () => {
+    // Line-level matrix says A→B = 500ms. Override BOTH stations to 0ms
+    // for that pair. Result should be measurably faster than the
+    // line-only baseline.
+    const common = {
+      interStationBufferCapacity: 10,
+      horizonMs: 30_000,
+      warmupMs: 0,
+      products: {
+        products: [
+          { id: "A", weight: 1 },
+          { id: "B", weight: 1 },
+        ],
+      },
+    } as const;
+    const lineOnly = runChain({
+      ...common,
+      prng: new SeededPrng(0xcafebabe),
+      changeoverMatrix: {
+        A: { B: constant(500) },
+        B: { A: constant(500) },
+      },
+      topology: {
+        nodes: [
+          { id: "s0", cycleTimeMs: constant(100) },
+          { id: "s1", cycleTimeMs: constant(100) },
+        ],
+        edges: [{ source: "s0", target: "s1" }],
+      },
+    });
+    const stationOverride = runChain({
+      ...common,
+      prng: new SeededPrng(0xcafebabe),
+      changeoverMatrix: {
+        A: { B: constant(500) },
+        B: { A: constant(500) },
+      },
+      topology: {
+        nodes: [
+          {
+            id: "s0",
+            cycleTimeMs: constant(100),
+            changeoverMatrix: { A: { B: constant(0) }, B: { A: constant(0) } },
+          },
+          {
+            id: "s1",
+            cycleTimeMs: constant(100),
+            changeoverMatrix: { A: { B: constant(0) }, B: { A: constant(0) } },
+          },
+        ],
+        edges: [{ source: "s0", target: "s1" }],
+      },
+    });
+    // Both stations now run setup-free → faster overall than line-only.
+    expect(stationOverride.completed).toBeGreaterThan(lineOnly.completed);
+  });
+
   it("changeover matrix: same-product transitions stay fast", () => {
     // Same matrix, but the mix is 100% A → A→A transitions only → no cost.
     const result = runChain({
