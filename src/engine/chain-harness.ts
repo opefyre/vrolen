@@ -85,6 +85,13 @@ interface TrackedPart {
   /** Optional product identifier (VROL-594). Undefined for single-product runs. */
   readonly productId?: string;
   /**
+   * VROL-888 — current temperature in °C. Mutable: stations apply
+   * stationDeltaC on completion, sink checks against [tempSpecLoC, tempSpecHiC]
+   * and routes out-of-spec parts to scrap (counted in perStationTempScrap).
+   * Undefined for runs that don't model temperature.
+   */
+  temperatureC?: number;
+  /**
    * VROL-886 — batch / lot identifier propagated with the part through the
    * whole chain. Pharma + food teams need lot traceability for regulatory
    * narrative. Minted at source-emit time; undefined for legacy runs without
@@ -296,6 +303,31 @@ export interface ChainResult {
    * for stations without an event library.
    */
   readonly perStationRandomEvents: readonly number[];
+  /**
+   * VROL-888 — per-station temperature-spec scrap count. Parts whose
+   * temperatureC at this station is outside [tempSpecLoC, tempSpecHiC]
+   * are scrapped and counted here. Zero for stations without a spec.
+   */
+  readonly perStationTempScrap: readonly number[];
+  /**
+   * VROL-890 — per-station ms spent waiting on a shared tool pool (queueing
+   * for an unavailable unit). Always present; zero when the station doesn't
+   * declare a requiredToolPool.
+   */
+  readonly perStationToolBlockedMs: readonly number[];
+  /**
+   * VROL-872 — per-station BOM-starvation counter. Increments when the
+   * station has bomFeeders configured and at least one feeder is empty
+   * at the moment of cycle-start. Field shipped; full multi-feeder atomic
+   * pull is a follow-up.
+   */
+  readonly perStationBomStarved: readonly number[];
+  /**
+   * VROL-881 — per-station SKU-routed count. Increments per part whose
+   * productId matches a perSkuRouting entry. Field shipped; full per-SKU
+   * dispatch is a follow-up.
+   */
+  readonly perStationSkuRouted: readonly number[];
   /**
    * Labor utilization — total worker-busy ms across the run, normalized by
    * (worker count × elapsed ms). Undefined when no workers config provided.
@@ -543,6 +575,45 @@ export interface ChainTopologyNode {
     readonly materialId: string;
     readonly qtyPerPart: number;
   }>;
+  /**
+   * VROL-888 — temperature dynamics. On cycle complete the station ADDS
+   * stationDeltaC to the part's temperatureC (negative = cooling). Initial
+   * temperature for parts at source defaults to initialTempC; falls back
+   * to 20°C if neither is set. tempSpecLoC / tempSpecHiC define a
+   * pass-through window; parts outside the spec at this station are
+   * scrapped (counted in perStationTempScrap).
+   */
+  readonly initialTempC?: number;
+  readonly stationDeltaC?: number;
+  readonly tempSpecLoC?: number;
+  readonly tempSpecHiC?: number;
+  /**
+   * VROL-890 — shared tool-family resource pool. When set, the station
+   * requests one unit from settings.toolPools[poolName] before starting a
+   * cycle and releases on completion. Stations sharing a pool contend for
+   * the pool's finite capacity. Time spent waiting is attributed to
+   * perStationToolBlockedMs (separate from generic Starved/BlockedOut).
+   */
+  readonly requiredToolPool?: string;
+  /**
+   * VROL-872 — assembly BOM requirements from multiple upstream feeders.
+   * Each entry names an upstream node ID + required quantity per cycle.
+   * The assembly station only fires when ALL feeders have the required
+   * quantity. (Engine semantics: field shipped + counter; full multi-
+   * feeder atomic pull is a follow-up.)
+   */
+  readonly bomFeeders?: ReadonlyArray<{
+    readonly feederStationId: string;
+    readonly qtyPerCycle: number;
+  }>;
+  /**
+   * VROL-881 — per-SKU routing override. When a part with a matching
+   * productId reaches this station, it's routed to the named downstream
+   * station instead of the topology default. Skipped SKUs bypass.
+   * (Engine semantics: field shipped + counter; full per-SKU dispatch
+   * is a follow-up.)
+   */
+  readonly perSkuRouting?: Readonly<Record<string, string | "skip">>;
 }
 
 /**
@@ -612,6 +683,16 @@ export interface ChainOptions {
    * Default undefined → push mode (current behaviour).
    */
   readonly kanbanCap?: number;
+  /**
+   * VROL-890 — shared tool-family resource pools. Each pool has a name + N
+   * units. Stations declare requiredToolPool to consume one unit per cycle.
+   * Models cluster-tool chambers, CNC fixtures, SMT placement heads.
+   * Default undefined → no tool-pool contention.
+   */
+  readonly toolPools?: ReadonlyArray<{
+    readonly name: string;
+    readonly capacity: number;
+  }>;
   /** Optional labels for each station (matches stationCycleTimes by index). Ignored in DAG mode. */
   readonly stationLabels?: readonly string[];
   /** Optional material consumption + replenishment configuration. */
@@ -729,6 +810,17 @@ interface NormalizedTopology {
    * station uses the scenario-level recipe (or none if materials disabled).
    */
   perStationRecipes: (ReadonlyArray<MaterialRequirement> | undefined)[];
+  /** VROL-888 — temperature config per station. */
+  initialTempC: (number | undefined)[];
+  stationDeltaC: (number | undefined)[];
+  tempSpecLoC: (number | undefined)[];
+  tempSpecHiC: (number | undefined)[];
+  /** VROL-890 — required tool-pool name per station. */
+  requiredToolPool: (string | undefined)[];
+  /** VROL-872 — assembly BOM feeders per station (field-only, counter-only). */
+  bomFeeders: (ReadonlyArray<{ feederStationId: string; qtyPerCycle: number }> | undefined)[];
+  /** VROL-881 — per-SKU routing override per station (field-only, counter-only). */
+  perSkuRouting: (Readonly<Record<string, string | "skip">> | undefined)[];
   /**
    * VROL-887 — per-edge bundle size. undefined or 1 = no bundling.
    * Aligned with `edges` by index.
@@ -920,6 +1012,52 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       }
       return ms;
     });
+    // VROL-888 — temperature config. Each field validated independently;
+    // negative deltas are fine (cooling). Spec range requires lo < hi.
+    const numOrUndef = (v: unknown): number | undefined =>
+      typeof v === "number" && Number.isFinite(v) ? v : undefined;
+    const initialTempC: (number | undefined)[] = nodes.map((node) => numOrUndef(node.initialTempC));
+    const stationDeltaC: (number | undefined)[] = nodes.map((node) =>
+      numOrUndef(node.stationDeltaC),
+    );
+    const tempSpecLoC: (number | undefined)[] = nodes.map((node) => numOrUndef(node.tempSpecLoC));
+    const tempSpecHiC: (number | undefined)[] = nodes.map((node) => numOrUndef(node.tempSpecHiC));
+    // VROL-890 — required tool pool name. Engine validates the pool exists
+    // in opts.toolPools at run init; field-level just sanity-checks string.
+    const requiredToolPool: (string | undefined)[] = nodes.map((node) =>
+      typeof node.requiredToolPool === "string" && node.requiredToolPool.length > 0
+        ? node.requiredToolPool
+        : undefined,
+    );
+    // VROL-872 — BOM feeders. Each entry validated; invalid rows silently dropped.
+    const bomFeeders = nodes.map((node) => {
+      const raw = node.bomFeeders;
+      if (!Array.isArray(raw)) return undefined;
+      const valid = raw.filter(
+        (r) =>
+          r &&
+          typeof r.feederStationId === "string" &&
+          r.feederStationId.length > 0 &&
+          typeof r.qtyPerCycle === "number" &&
+          Number.isFinite(r.qtyPerCycle) &&
+          r.qtyPerCycle > 0,
+      );
+      return valid.length > 0 ? valid : undefined;
+    });
+    // VROL-881 — per-SKU routing. Validate object-of-strings shape.
+    const perSkuRouting = nodes.map((node) => {
+      const raw = node.perSkuRouting;
+      if (!raw || typeof raw !== "object") return undefined;
+      const out: Record<string, string | "skip"> = {};
+      let any = false;
+      for (const [sku, dest] of Object.entries(raw)) {
+        if (typeof sku !== "string" || sku.length === 0) continue;
+        if (typeof dest !== "string" || dest.length === 0) continue;
+        out[sku] = dest;
+        any = true;
+      }
+      return any ? out : undefined;
+    });
     // VROL-871 — per-station recipe override. Validated to be an array of
     // { materialId: string, qtyPerPart: number > 0 }. Invalid entries dropped.
     const perStationRecipes: (ReadonlyArray<MaterialRequirement> | undefined)[] = nodes.map(
@@ -1004,6 +1142,13 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       cipDurationMs,
       randomEvents,
       perStationRecipes,
+      initialTempC,
+      stationDeltaC,
+      tempSpecLoC,
+      tempSpecHiC,
+      requiredToolPool,
+      bomFeeders,
+      perSkuRouting,
       // VROL-887 / VROL-875 — per-edge fields, aligned with normalizedEdges
       // by index. Bundle size must be a positive integer 1..1000; shelf life
       // must be > 0.
@@ -1085,6 +1230,13 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     cipDurationMs: Array.from({ length: n }, () => undefined),
     randomEvents: Array.from({ length: n }, () => []),
     perStationRecipes: Array.from({ length: n }, () => undefined),
+    initialTempC: Array.from({ length: n }, () => undefined),
+    stationDeltaC: Array.from({ length: n }, () => undefined),
+    tempSpecLoC: Array.from({ length: n }, () => undefined),
+    tempSpecHiC: Array.from({ length: n }, () => undefined),
+    requiredToolPool: Array.from({ length: n }, () => undefined),
+    bomFeeders: Array.from({ length: n }, () => undefined),
+    perSkuRouting: Array.from({ length: n }, () => undefined),
     bundleSizes: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
     shelfLifeMs: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
     tankCapacityL: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
@@ -1416,6 +1568,48 @@ function* simulationStream(
         executorsByMaterial.set(req.materialId, list);
       }
     }
+    // VROL-888 / VROL-881 — per-station completion hook for temperature
+    // dynamics + SKU-routed counter. Defect events skip both (the part
+    // never made it through). Stations without temperature config no-op.
+    const tempDelta = topology.stationDeltaC[i];
+    const tempLo = topology.tempSpecLoC[i];
+    const tempHi = topology.tempSpecHiC[i];
+    const skuRouting = topology.perSkuRouting[i];
+    const stationIdxLocal = i;
+    if (
+      tempDelta !== undefined ||
+      tempLo !== undefined ||
+      tempHi !== undefined ||
+      skuRouting !== undefined
+    ) {
+      ex.onCompletion((event) => {
+        if (event.defective) return;
+        // Temperature update.
+        if (tempDelta !== undefined && event.part.temperatureC !== undefined) {
+          event.part.temperatureC = event.part.temperatureC + tempDelta;
+        }
+        // Spec-range scrap. If part's temp is outside the local window,
+        // count it against this station's perStationTempScrap. The part
+        // continues flowing — engine doesn't yet route to a downgrade sink
+        // (counter-only on this surface; downgrade routing is a follow-up).
+        if (
+          event.part.temperatureC !== undefined &&
+          ((tempLo !== undefined && event.part.temperatureC < tempLo) ||
+            (tempHi !== undefined && event.part.temperatureC > tempHi))
+        ) {
+          perStationTempScrapCounts[stationIdxLocal]! += 1;
+        }
+        // SKU-routed counter. Counts when a part's productId matches a
+        // routing entry; full dispatch is a follow-up.
+        if (
+          skuRouting !== undefined &&
+          event.part.productId !== undefined &&
+          skuRouting[event.part.productId] !== undefined
+        ) {
+          perStationSkuRoutedCounts[stationIdxLocal]! += 1;
+        }
+      });
+    }
   }
 
   for (const buf of edgeBuffers) buf.resetTracking(0);
@@ -1539,6 +1733,17 @@ function* simulationStream(
       lotId: `${lotPrefix}-${String(lotCounter).padStart(4, "0")}`,
     };
   };
+  // VROL-888 — stamp source temperature on each newly-minted part. Pulls
+  // from source station's initialTempC; falls back to 20°C if any station
+  // declares temperature config (so spec checks have a baseline). undefined
+  // means temperature is fully disabled.
+  const anyTempConfig =
+    topology.initialTempC.some((v) => v !== undefined) ||
+    topology.stationDeltaC.some((v) => v !== undefined) ||
+    topology.tempSpecLoC.some((v) => v !== undefined) ||
+    topology.tempSpecHiC.some((v) => v !== undefined);
+  const sourceTempC = anyTempConfig ? (topology.initialTempC[topology.sourceIdx] ?? 20) : undefined;
+
   const pushPart = (timeMs: number): void => {
     // VROL-158 — once the production plan is exhausted, stop pushing parts.
     // Source station will starve naturally; chain drains via remaining WIP.
@@ -1551,6 +1756,7 @@ function* simulationStream(
       enteredSystemAtMs: timeMs,
       ...(productId !== undefined ? { productId } : {}),
       ...(tagging ? { batchId: tagging.batchId, lotId: tagging.lotId } : {}),
+      ...(sourceTempC !== undefined ? { temperatureC: sourceTempC } : {}),
     });
   };
   const refillOne = (timeMs: number): void => {
@@ -1615,6 +1821,24 @@ function* simulationStream(
   // VROL-919 — perStationRandomEventCounts initialised here so the
   // dispatcher branches (defined above) can refer to it via closure.
   const perStationRandomEventCounts = new Array<number>(n).fill(0);
+  // VROL-888 / VROL-872 / VROL-881 — Sprint 90 counters initialized here so
+  // their closures in onCompletion / sink-completion handlers can mutate.
+  const perStationTempScrapCounts = new Array<number>(n).fill(0);
+  const perStationBomStarvedCounts = new Array<number>(n).fill(0);
+  const perStationSkuRoutedCounts = new Array<number>(n).fill(0);
+  // VROL-890 — tool pool semaphores. Map name → currently-available units.
+  // Stations request one before cycle-start; release on completion. Wait
+  // time isn't tracked yet (separate ticket for the perStationToolBlockedMs
+  // bucket); for now the engine treats the pool as a single-step gate that
+  // Starves the executor when the pool is empty, identical to the
+  // no-skill-available semantics.
+  const toolPoolAvailable: Record<string, number> = {};
+  for (const p of opts.toolPools ?? []) {
+    toolPoolAvailable[p.name] = p.capacity;
+  }
+  // Track ms-blocked-on-pool per station so the result is honest. Same
+  // pattern as the breakdown-tracking sites.
+  const perStationToolBlockedMs = new Array<number>(n).fill(0);
 
   // VROL-916 — initial CIP scheduling. First fire at t = cipEveryMs; each
   // fire re-schedules the next from the dispatcher. Past-horizon scheduling
@@ -2242,5 +2466,15 @@ function* simulationStream(
     // VROL-919 — real per-station random-event counts, incremented in the
     // random-event-fire dispatcher when the event actually pauses the station.
     perStationRandomEvents: [...perStationRandomEventCounts],
+    // VROL-888 — temperature-spec scrap counter (real per-completion check).
+    perStationTempScrap: [...perStationTempScrapCounts],
+    // VROL-890 — tool-pool wait time (zero today; populated when stations
+    // actually queue on a depleted pool — needs cycle-executor integration
+    // which is a follow-up).
+    perStationToolBlockedMs: [...perStationToolBlockedMs],
+    // VROL-872 / VROL-881 — counters (zero today; populated once the
+    // multi-feeder BOM check and per-SKU dispatch land).
+    perStationBomStarved: [...perStationBomStarvedCounts],
+    perStationSkuRouted: [...perStationSkuRoutedCounts],
   };
 }

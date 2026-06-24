@@ -1171,6 +1171,77 @@ describe("audit VROL-899/900 — nominalCycleTimeMs + composite ranking", () => 
     expect(result.perStationMaintenanceMs?.[0] ?? 0).toBeGreaterThan(0);
   });
 
+  it("VROL-888 — stationDeltaC updates part temperature; tempSpec out-of-range scraps", () => {
+    // Source emits parts at 20°C. Station heats by +40 (now 60°C, in spec).
+    // Sink has spec [10, 50]: parts at 60°C are out of spec → scrapped per
+    // station counter. Source initialTempC defaults to 20 when any temp
+    // config is present.
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "src", cycleTimeMs: constant(100), initialTempC: 20 },
+          { id: "heat", cycleTimeMs: constant(100), stationDeltaC: 40 },
+          {
+            id: "snk",
+            cycleTimeMs: constant(100),
+            tempSpecLoC: 10,
+            tempSpecHiC: 50,
+          },
+        ],
+        edges: [
+          { source: "src", target: "heat" },
+          { source: "heat", target: "snk" },
+        ],
+      },
+      interStationBufferCapacity: 50,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    // Sink should record scrap for every completed part (all > 50°C after heat).
+    expect(result.perStationTempScrap[2]).toBeGreaterThan(0);
+  });
+
+  it("VROL-890 — toolPools field validates + result exposes perStationToolBlockedMs", () => {
+    const result = runChain({
+      topology: {
+        nodes: [{ id: "s", cycleTimeMs: constant(100), requiredToolPool: "chambers" }],
+        edges: [],
+      },
+      interStationBufferCapacity: 10,
+      horizonMs: 1_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+      toolPools: [{ name: "chambers", capacity: 2 }],
+    });
+    expect(Array.isArray(result.perStationToolBlockedMs)).toBe(true);
+    expect(result.perStationToolBlockedMs.length).toBe(1);
+  });
+
+  it("VROL-872 / VROL-881 — bomFeeders + perSkuRouting fields round-trip with counters", () => {
+    const result = runChain({
+      topology: {
+        nodes: [
+          {
+            id: "a",
+            cycleTimeMs: constant(100),
+            bomFeeders: [{ feederStationId: "u1", qtyPerCycle: 2 }],
+            perSkuRouting: { "sku-X": "alt-station" },
+          },
+        ],
+        edges: [],
+      },
+      interStationBufferCapacity: 10,
+      horizonMs: 1_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    expect(Array.isArray(result.perStationBomStarved)).toBe(true);
+    expect(Array.isArray(result.perStationSkuRouted)).toBe(true);
+    expect(result.perStationBomStarved.length).toBe(1);
+    expect(result.perStationSkuRouted.length).toBe(1);
+  });
+
   it("VROL-916 — cipEveryMs schedules recurring Maintenance windows at run time", () => {
     // 60s horizon, CIP every 20s for 5s each → ~3 cleaning cycles ≈ 15s Maintenance.
     const result = runChain({
