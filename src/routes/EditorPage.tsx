@@ -134,8 +134,15 @@ import {
   suggestedFilenameStem,
 } from "@/lib/export-run";
 // VROL-683 — line + station summary CSV (separate from per-station-only export-run).
-import { resultToCsv as resultToSummaryCsv, constraintHistoryToCsv } from "@/lib/result-to-csv";
+import {
+  resultToCsv as resultToSummaryCsv,
+  constraintHistoryToCsv,
+  kpiSummaryToCsv,
+  sixLossToCsv,
+  allInOneToCsv,
+} from "@/lib/result-to-csv";
 import { computeConstraintHistory } from "@/lib/constraint-history";
+import { computeSixLoss } from "@/lib/six-loss";
 import { graphToChainOptions } from "@/lib/graph-to-chain";
 import {
   addRun as addRunToHistory,
@@ -834,6 +841,7 @@ import { summarizeReplications, type ReplicationSummary } from "@/lib/replicatio
 import { summarizeCosts } from "@/lib/cost-economics";
 import { runSensitivitySweep, type SensitivitySummary } from "@/lib/sensitivity-sweep";
 import { findCycleMultiplierForTarget, type GoalResult } from "@/lib/goal-mode";
+import { runTwoWaySensitivity, type TwoWaySummary } from "@/lib/sensitivity-two-way";
 import { runWipCurve, type WipCurveSummary } from "@/lib/wip-curve";
 import {
   runOptimizationSearch,
@@ -996,6 +1004,9 @@ function EditorCanvas() {
   const [baselineSummary, setBaselineSummary] = useState<ReplicationSummary | null>(null);
   // Sensitivity sweep — fires on demand from the Results panel.
   const [sensitivitySummary, setSensitivitySummary] = useState<SensitivitySummary | null>(null);
+  // VROL-990 — two-way sensitivity summary, populated after the one-way
+  // sweep completes (cheap: cap is 27 runs at K=3).
+  const [twoWaySummary, setTwoWaySummary] = useState<TwoWaySummary | null>(null);
   // VROL-958 — goal mode state + running flag.
   const [goalResult, setGoalResult] = useState<GoalResult | null>(null);
   const [goalRunning, setGoalRunning] = useState<boolean>(false);
@@ -1145,6 +1156,7 @@ function EditorCanvas() {
     source: boolean;
     toolPools: boolean;
     shiftCalendar: boolean;
+    changeoverMatrix: boolean;
   }>({
     materials: false,
     products: false,
@@ -1153,6 +1165,7 @@ function EditorCanvas() {
     source: false,
     toolPools: false,
     shiftCalendar: false,
+    changeoverMatrix: false,
   });
   const toggleDrawerSection = useCallback((key: keyof typeof drawerSections) => {
     setDrawerSections((s) => ({ ...s, [key]: !s[key] }));
@@ -2402,6 +2415,21 @@ function EditorCanvas() {
         toast.success(
           `Sensitivity sweep · ${String(summary.rows.length)} stations · ${summary.elapsedMs.toFixed(0)}ms`,
         );
+        // VROL-990 — kick off two-way as well; small grid (≤ 27 runs).
+        try {
+          const tw = runTwoWaySensitivity({
+            horizonMs,
+            warmupMs,
+            seed: settings.seed,
+            buildBaseOptions,
+            stationCycleDistributions: translation.cycleDistributions,
+            stationLabels: translation.stationLabels,
+            oneWayRows: summary.rows,
+          });
+          setTwoWaySummary(tw);
+        } catch {
+          /* two-way is opportunistic; one-way is the headline */
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         toast.error("Sweep failed", { description: message });
@@ -2660,6 +2688,12 @@ function EditorCanvas() {
         case "reliability:flag":
           toast.info("Open Breakdowns in run settings to raise MTBF / lower MTTR.", {
             description: `Reliability work is the highest-leverage change at ${payload.stationLabel}.`,
+          });
+          break;
+        case "sampling:flag":
+          toast.info("Switch the affected station's cycle distribution to truncatedNormal.", {
+            description:
+              "Open the station inspector → Cycle distribution. Pick truncatedNormal and set min/max to physical bounds.",
           });
           break;
       }
@@ -3656,6 +3690,42 @@ function EditorCanvas() {
     toast.success("Downloaded constraint history CSV");
     setMoreOpen(false);
   }, [result, runMeta]);
+  // VROL-991 — KPI summary CSV (single-row flat). For pasting into a
+  // board-deck spreadsheet column.
+  const downloadCsvKpi = useCallback(() => {
+    if (!result || !runMeta) return;
+    const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
+    downloadFile(`${stem}-kpi-summary.csv`, kpiSummaryToCsv(result), "text/csv");
+    toast.success("Downloaded KPI summary CSV");
+    setMoreOpen(false);
+  }, [result, runMeta]);
+  // VROL-991 — six-loss CSV (Nakajima decomposition rows).
+  const downloadCsvSixLoss = useCallback(() => {
+    if (!result || !runMeta) return;
+    const rows = computeSixLoss(result);
+    if (rows.length === 0) {
+      toast.info("No six-loss data — enable the sampler to populate state-time deltas.");
+      return;
+    }
+    const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
+    downloadFile(`${stem}-six-loss.csv`, sixLossToCsv(rows), "text/csv");
+    toast.success("Downloaded six-loss CSV");
+    setMoreOpen(false);
+  }, [result, runMeta]);
+  // VROL-991 — all-in-one bundle.
+  const downloadCsvAllInOne = useCallback(() => {
+    if (!result || !runMeta) return;
+    const stem = suggestedFilenameStem(runMeta.stationLabels[0]);
+    const sixLoss = computeSixLoss(result);
+    const intervals = computeConstraintHistory(result);
+    downloadFile(
+      `${stem}-all-in-one.csv`,
+      allInOneToCsv(result, runMeta.stationLabels, sixLoss, intervals),
+      "text/csv",
+    );
+    toast.success("Downloaded all-in-one CSV");
+    setMoreOpen(false);
+  }, [result, runMeta]);
 
   // VROL-811 — central editor action registry. All actions (Run, Undo,
   // Save, Duplicate, Auto-layout, Fit view, Open scenarios, …) are defined
@@ -4250,6 +4320,34 @@ function EditorCanvas() {
                         CSV (constraint history)
                       </button>
                     ) : null}
+                    {/* VROL-991 — KPI / six-loss / all-in-one CSV exports. */}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="hover:bg-accent flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm"
+                      onClick={downloadCsvKpi}
+                    >
+                      <Download className="h-4 w-4" />
+                      CSV (KPI summary)
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="hover:bg-accent flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm"
+                      onClick={downloadCsvSixLoss}
+                    >
+                      <Download className="h-4 w-4" />
+                      CSV (six-loss)
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="hover:bg-accent flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm"
+                      onClick={downloadCsvAllInOne}
+                    >
+                      <Download className="h-4 w-4" />
+                      CSV (all-in-one bundle)
+                    </button>
                     <div className="border-border my-1 border-t" />
                     <label className="hover:bg-accent flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm">
                       <input
@@ -5955,6 +6053,7 @@ function EditorCanvas() {
               replicationSummary={replicationSummary}
               replicationBaseline={baselineSummary}
               sensitivitySummary={sensitivitySummary}
+              twoWaySummary={twoWaySummary}
               sensitivityRunning={sensitivityRunning}
               onRunSensitivity={handleSensitivitySweep}
               wipCurveSummary={wipCurveSummary}
@@ -8226,6 +8325,116 @@ function EditorCanvas() {
                 </Button>
               </div>
             </Accordion>
+
+            {/* VROL-988 — line-level changeover matrix editor. SKU×SKU
+                ms grid; per-station overrides still beat this for the same
+                pair. Hidden when fewer than 2 products are defined. */}
+            {settings.products.list.length >= 2 ? (
+              <Accordion
+                title="Changeover matrix (line)"
+                icon={<Tag className="h-4 w-4" />}
+                status={
+                  <AccordionStatus
+                    tone={Object.keys(settings.changeoverMatrix ?? {}).length > 0 ? "on" : "off"}
+                  >
+                    {Object.keys(settings.changeoverMatrix ?? {}).length > 0 ? "Defined" : "None"}
+                  </AccordionStatus>
+                }
+                expanded={drawerSections.changeoverMatrix ?? false}
+                onToggle={() => {
+                  toggleDrawerSection("changeoverMatrix");
+                }}
+              >
+                <p className="text-muted-foreground text-xs">
+                  Time penalty per SKU transition, in milliseconds. Applied uniformly to every
+                  station unless that station has its own override.
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="text-xs">
+                    <thead>
+                      <tr>
+                        <th
+                          className="text-muted-foreground p-1 text-left font-medium"
+                          aria-label="from / to"
+                        >
+                          from \ to
+                        </th>
+                        {settings.products.list.map((to) => (
+                          <th
+                            key={to.id}
+                            className="text-muted-foreground p-1 text-center font-medium"
+                          >
+                            {to.name || to.id}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {settings.products.list.map((from) => (
+                        <tr key={from.id}>
+                          <td className="text-muted-foreground p-1 font-medium">
+                            {from.name || from.id}
+                          </td>
+                          {settings.products.list.map((to) => {
+                            if (from.id === to.id) {
+                              return (
+                                <td key={to.id} className="text-muted-foreground p-1 text-center">
+                                  —
+                                </td>
+                              );
+                            }
+                            const ms = settings.changeoverMatrix?.[from.id]?.[to.id] ?? "";
+                            return (
+                              <td key={to.id} className="p-1">
+                                <input
+                                  type="number"
+                                  value={ms === "" ? "" : String(ms)}
+                                  min={0}
+                                  step={100}
+                                  placeholder="—"
+                                  onChange={(e) => {
+                                    const raw = e.target.value;
+                                    setSettings((s) => {
+                                      const matrix = {
+                                        ...(s.changeoverMatrix ?? {}),
+                                      } as Record<string, Record<string, number>>;
+                                      const fromRow = {
+                                        ...(matrix[from.id] ?? {}),
+                                      };
+                                      if (raw === "" || raw === "—") {
+                                        delete fromRow[to.id];
+                                      } else {
+                                        const n = Math.max(0, Math.floor(Number(raw) || 0));
+                                        fromRow[to.id] = n;
+                                      }
+                                      if (Object.keys(fromRow).length === 0) {
+                                        delete matrix[from.id];
+                                      } else {
+                                        matrix[from.id] = fromRow;
+                                      }
+                                      return {
+                                        ...s,
+                                        changeoverMatrix:
+                                          Object.keys(matrix).length > 0 ? matrix : undefined,
+                                      };
+                                    });
+                                  }}
+                                  className="border-input bg-background w-16 rounded-md border px-1.5 py-1 text-right font-mono text-[11px]"
+                                  aria-label={`Changeover ${from.id} to ${to.id} ms`}
+                                />
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-muted-foreground text-[10px]">
+                  Leave a cell blank for no override. 0 = configured-but-free transition.
+                </p>
+              </Accordion>
+            ) : null}
 
             {/* VROL-987 — shift calendar editor. Engine plumbing landed in
                 Sprint 102; this surfaces the controls. */}

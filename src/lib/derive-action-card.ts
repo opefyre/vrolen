@@ -23,7 +23,8 @@ export type ActionApplyPayload =
   | { kind: "cycle:halve"; stationLabel: string }
   | { kind: "buffer:grow"; edgeKey: string }
   | { kind: "tool-pool:grow"; poolName: string }
-  | { kind: "reliability:flag"; stationLabel: string };
+  | { kind: "reliability:flag"; stationLabel: string }
+  | { kind: "sampling:flag" };
 
 export interface ActionCard {
   readonly title: string;
@@ -37,6 +38,23 @@ export function deriveActionCard(result: ChainResult): ActionCard | null {
   const labels = result.perStationLabels ?? [];
   const top = result.bottlenecks[0];
   const topLabel = top?.label ?? "the bottleneck";
+
+  // VROL-992 — clamp-rate rule (audit ROI #8 close-out). When >5 % of
+  // cycle samples were floor-clamped, the Normal distribution's mean has
+  // drifted upward; recommend truncatedNormal before any other lever.
+  // Ranks above reliability because biased input invalidates every
+  // downstream conclusion.
+  const clamps = (result as { clampedSampleCount?: number }).clampedSampleCount ?? 0;
+  const totalCycles =
+    (result.completed ?? 0) + (result.perStationScrapped ?? []).reduce((s, v) => s + v, 0);
+  if (totalCycles > 0 && clamps / totalCycles > 0.05) {
+    return {
+      title: "Sampling bias is hiding the real numbers",
+      body: `${clamps.toLocaleString()} of ${totalCycles.toLocaleString()} cycle samples were clamped to >= 0 (${Math.round((clamps / totalCycles) * 100)} %). The Normal distribution's effective mean is drifting upward. Switch the affected station's cycle to a truncatedNormal (or shrink stddev relative to mean) before drawing conclusions from this run.`,
+      tone: "warn",
+      apply: { kind: "sampling:flag" },
+    };
+  }
 
   // 1. Down-heavy bottleneck → reliability is the biggest lever.
   if (top) {

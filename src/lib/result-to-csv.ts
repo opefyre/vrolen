@@ -80,3 +80,114 @@ export function constraintHistoryToCsv(
   }
   return lines.join("\n");
 }
+
+/**
+ * VROL-991 — KPI summary CSV. A single flat row with line-level
+ * headlines (completed, throughput/h, OEE, TEEP, etc.) for paste into
+ * a board deck spreadsheet column.
+ */
+export function kpiSummaryToCsv(result: ChainResult): string {
+  const tPerHr = result.throughputLambda * 3_600_000;
+  const maintMs = (result.perStationMaintenanceMs ?? []).reduce((s, v) => s + v, 0);
+  const stationCount = Math.max(1, result.perStationOee.length);
+  const loading =
+    result.elapsedMs > 0 ? Math.max(0, 1 - maintMs / stationCount / result.elapsedMs) : 1;
+  const teep = result.lineOee * loading;
+  const lines: string[] = [];
+  lines.push(
+    "completed,throughput_per_hour,line_oee,teep,avg_wip,avg_time_in_system_ms,line_scrap_rate,bottleneck,clamped_samples",
+  );
+  lines.push(
+    row([
+      result.completed,
+      tPerHr.toFixed(2),
+      result.lineOee.toFixed(4),
+      teep.toFixed(4),
+      result.averageWipL.toFixed(2),
+      result.avgTimeInSystemW.toFixed(0),
+      result.lineScrapRate.toFixed(4),
+      result.bottlenecks[0]?.label ?? "",
+      (result as { clampedSampleCount?: number }).clampedSampleCount ?? 0,
+    ]),
+  );
+  return lines.join("\n");
+}
+
+/**
+ * VROL-991 — six-loss decomposition CSV. One row per station; columns
+ * are the five buckets mapped in lib/six-loss.ts (breakdown / setup /
+ * minor-stop / speed-loss / defect) plus a total. Empty CSV
+ * (header-only) when result has no per-station data.
+ */
+export function sixLossToCsv(
+  rows: ReadonlyArray<{
+    stationLabel: string;
+    breakdownMs: number;
+    setupMs: number;
+    minorStopMs: number;
+    speedLossMs: number;
+    defectMs: number;
+  }>,
+): string {
+  const lines: string[] = [
+    "station_label,breakdown_ms,setup_ms,minor_stop_ms,speed_loss_ms,defect_ms,total_loss_ms",
+  ];
+  for (const r of rows) {
+    const total = r.breakdownMs + r.setupMs + r.minorStopMs + r.speedLossMs + r.defectMs;
+    lines.push(
+      row([
+        r.stationLabel,
+        Math.round(r.breakdownMs),
+        Math.round(r.setupMs),
+        Math.round(r.minorStopMs),
+        Math.round(r.speedLossMs),
+        Math.round(r.defectMs),
+        Math.round(total),
+      ]),
+    );
+  }
+  return lines.join("\n");
+}
+
+/**
+ * VROL-991 — all-in-one CSV: concatenates KPI summary + station table +
+ * six-loss + constraint history with `# section: ...` divider comments.
+ * Spreadsheet importers ignore commented rows; humans get a labeled
+ * single-file export.
+ */
+export function allInOneToCsv(
+  result: ChainResult,
+  stationLabels?: readonly string[],
+  sixLossRows?: ReadonlyArray<{
+    stationLabel: string;
+    breakdownMs: number;
+    setupMs: number;
+    minorStopMs: number;
+    speedLossMs: number;
+    defectMs: number;
+  }>,
+  constraintIntervals?: ReadonlyArray<{
+    fromMs: number;
+    toMs: number;
+    stationLabel: string;
+    runningPct: number;
+  }>,
+): string {
+  const parts: string[] = [];
+  parts.push("# section: KPI summary");
+  parts.push(kpiSummaryToCsv(result));
+  parts.push("");
+  parts.push("# section: Per-station");
+  parts.push(resultToCsv(result, stationLabels));
+  if (sixLossRows && sixLossRows.length > 0) {
+    parts.push("");
+    parts.push("# section: Six-loss decomposition");
+    parts.push(sixLossToCsv(sixLossRows));
+  }
+  if (constraintIntervals && constraintIntervals.length > 0) {
+    parts.push("");
+    parts.push("# section: Constraint history");
+    parts.push(constraintHistoryToCsv(constraintIntervals));
+  }
+  return parts.join("\n");
+}

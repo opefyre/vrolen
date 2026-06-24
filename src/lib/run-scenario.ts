@@ -18,6 +18,7 @@ import {
   type ChainResult,
   type ChainWorkerConfig,
   constant,
+  type Distribution,
   runChain,
   SeededPrng,
 } from "@/engine";
@@ -195,6 +196,25 @@ export function runScenario(
               )
               .map((p) => ({ name: p.name, capacity: Math.floor(p.capacity) })),
           }
+        : {}),
+      // VROL-988 — line-level changeover matrix. UI stores ms scalars;
+      // engine wants Distributions. constant(ms) per entry.
+      ...(settings.changeoverMatrix && Object.keys(settings.changeoverMatrix).length > 0
+        ? (() => {
+            const out: Record<string, Record<string, Distribution>> = {};
+            for (const [from, row] of Object.entries(settings.changeoverMatrix)) {
+              const r: Record<string, Distribution> = {};
+              let any = false;
+              for (const [to, ms] of Object.entries(row)) {
+                if (typeof ms === "number" && Number.isFinite(ms) && ms >= 0) {
+                  r[to] = constant(ms);
+                  any = true;
+                }
+              }
+              if (any) out[from] = r;
+            }
+            return Object.keys(out).length > 0 ? { changeoverMatrix: out } : {};
+          })()
         : {}),
     });
 

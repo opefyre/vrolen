@@ -170,6 +170,14 @@ export interface RunSettings {
       readonly label: string;
     }>;
   };
+  /**
+   * VROL-988 — line-level sequence-dependent changeover matrix in
+   * milliseconds. Indexed as [fromSku][toSku]; ms === 0 means a
+   * configured-but-free transition; missing entry means no line-level
+   * override. Per-station node.changeoverMatrix still beats this for
+   * the same (from, to) pair.
+   */
+  changeoverMatrix?: Readonly<Record<string, Readonly<Record<string, number>>>>;
 }
 
 export const DEFAULT_RUN_SETTINGS: RunSettings = {

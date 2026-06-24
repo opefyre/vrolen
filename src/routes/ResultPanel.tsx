@@ -97,6 +97,8 @@ interface ResultPanelProps {
   readonly costSummary?: import("@/lib/cost-economics").CostSummary | null;
   /** Sensitivity sweep summary. */
   readonly sensitivitySummary?: import("@/lib/sensitivity-sweep").SensitivitySummary | null;
+  /** VROL-990 — two-way sensitivity summary (pairwise interaction strengths). */
+  readonly twoWaySummary?: import("@/lib/sensitivity-two-way").TwoWaySummary | null;
   /** True while the sweep is running. */
   readonly sensitivityRunning?: boolean;
   /** Fires the sensitivity sweep on click. Card hidden if not provided. */
@@ -887,6 +889,7 @@ export function ResultPanel({
   replicationBaseline,
   costSummary,
   sensitivitySummary,
+  twoWaySummary,
   sensitivityRunning,
   onRunSensitivity,
   wipCurveSummary,
@@ -1420,6 +1423,57 @@ export function ResultPanel({
               onClickRow={(row) => setSensitivityRow(row)}
               onViewDetails={() => setChartDrilldown("sensitivity-tornado")}
             />
+          ) : null}
+          {/* VROL-990 — Two-way interactions card. Renders when the
+              EditorPage opportunistically runs the two-way sweep after a
+              one-way result. Caps at top-3 pairs by interactionStrength. */}
+          {twoWaySummary && twoWaySummary.pairs.length > 0 ? (
+            <div
+              className="border-border bg-card/50 space-y-2 rounded-md border p-3"
+              data-testid="two-way-card"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-foreground text-sm font-medium">Top interactions</h3>
+                <span className="text-muted-foreground text-[10px]">
+                  {twoWaySummary.searchSize} runs · {twoWaySummary.elapsedMs.toFixed(0)} ms
+                </span>
+              </div>
+              <p className="text-muted-foreground text-[11px] leading-snug">
+                Pairs whose combined-effect beats the sum of their individual one-way swings.
+                Positive strength = the levers reinforce each other.
+              </p>
+              <div className="space-y-1.5">
+                {twoWaySummary.pairs.slice(0, 3).map((p, i) => (
+                  <div
+                    key={`${String(p.aIdx)}-${String(p.bIdx)}`}
+                    className="flex flex-wrap items-center gap-2 text-[11px]"
+                  >
+                    <div className="text-foreground/80 min-w-[10rem] font-medium">
+                      #{i + 1} {p.aLabel} <span className="text-muted-foreground">+</span>{" "}
+                      {p.bLabel}
+                    </div>
+                    <div className="text-muted-foreground">
+                      best{" "}
+                      <span className="text-foreground font-mono tabular-nums">
+                        {Math.round(p.bestCornerPerHour).toLocaleString()}/h
+                      </span>{" "}
+                      ({p.bestCornerMultipliers[0].toFixed(1)}x ·{" "}
+                      {p.bestCornerMultipliers[1].toFixed(1)}x)
+                    </div>
+                    <div
+                      className={
+                        p.interactionStrength > 0
+                          ? "text-sim-running-foreground font-mono tabular-nums"
+                          : "text-muted-foreground font-mono tabular-nums"
+                      }
+                    >
+                      {p.interactionStrength > 0 ? "+" : ""}
+                      {Math.round(p.interactionStrength).toLocaleString()}/h vs OAT-sum
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           ) : null}
           {onRunWipCurve ? (
             <WipCurveCard
