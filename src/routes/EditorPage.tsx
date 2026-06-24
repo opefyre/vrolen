@@ -3354,7 +3354,12 @@ function EditorCanvas() {
     return map;
   }, [validation]);
 
-  const nodesForFlow = useMemo<Node[]>(() => {
+  // VROL-965 — perf split. The old monolithic memo touched five dynamic
+  // inputs and rebuilt every node's data on every playback tick (~60Hz).
+  // Splitting into a static layer (cached on nodes/result/severity) plus
+  // a playback overlay layer means the heavy 130-line body only re-runs
+  // when nodes/result/runMeta/severity change, not on every frame.
+  const nodesWithResultOverlay = useMemo<Node[]>(() => {
     const sevMap = severityByNodeId;
     // Build base nodes either from sparkline enrichment or just the raw nodes.
     const idxByNodeId = new Map<string, number>();
@@ -3382,23 +3387,12 @@ function EditorCanvas() {
       // carries a stationId → breakdown array). The state mix actually differs
       // per station, unlike cumulative throughput which is identical in steady
       // state.
-      // VROL-907 — when playback is active, prefer playbackSnapshot.perStation[i]
-      // .stateMix so the bar reflects the state mix UP TO the playhead instead
-      // of the whole-run mix. Falls back to result.bottlenecks at horizon-end
-      // / when no samples / when paused.
+      // Static layer puts whole-run stateMix from result.bottlenecks. The
+      // outer (playback overlay) memo overrides this with the live mix
+      // up-to-playhead when playback is active. See VROL-907 for the
+      // original prefer-playback semantics.
       if (result) {
-        let mix: ReadonlyArray<{ state: string; pct: number }> | undefined;
-        if (
-          playbackSnapshot &&
-          stationIdx !== undefined &&
-          stationIdx < playbackSnapshot.perStation.length
-        ) {
-          const live = playbackSnapshot.perStation[stationIdx]?.stateMix;
-          if (live && live.length > 0) mix = live;
-        }
-        if (!mix) {
-          mix = result.bottlenecks.find((b) => b.stationId === n.id)?.breakdown;
-        }
+        const mix = result.bottlenecks.find((b) => b.stationId === n.id)?.breakdown;
         if (mix && mix.length > 0) {
           if (nextData === baseData) nextData = { ...baseData };
           nextData = {
@@ -3460,12 +3454,37 @@ function EditorCanvas() {
         delete stripped._nominalSpeedRatio;
         nextData = stripped;
       }
-      // Live playback — paint the station with its current dominant state.
-      if (
-        playbackSnapshot &&
-        stationIdx !== undefined &&
-        stationIdx < playbackSnapshot.perStationState.length
-      ) {
+      if (nextData === baseData) return n;
+      return { ...n, data: nextData };
+    });
+  }, [nodes, result, runMeta, severityByNodeId]);
+
+  // VROL-965 — playback overlay. Runs on every playback tick but only
+  // touches the playback-specific fields (_playbackState,
+  // _isLiveBottleneck, and the up-to-playhead stateMix override). The
+  // expensive static enrichment above is cached.
+  const nodesForFlow = useMemo<Node[]>(() => {
+    if (!playbackSnapshot || !runMeta) return nodesWithResultOverlay;
+    const idxByNodeId = new Map<string, number>();
+    runMeta.chainNodeIds.forEach((id, i) => idxByNodeId.set(id, i));
+    return nodesWithResultOverlay.map((n) => {
+      const stationIdx = idxByNodeId.get(n.id);
+      if (stationIdx === undefined) return n;
+      const baseData = n.data as Record<string, unknown>;
+      let nextData: Record<string, unknown> = baseData;
+      // VROL-907 — playback's up-to-playhead state mix overrides the
+      // whole-run mix from the static layer (when result is present).
+      if (result && stationIdx < playbackSnapshot.perStation.length) {
+        const live = playbackSnapshot.perStation[stationIdx]?.stateMix;
+        if (live && live.length > 0) {
+          nextData = {
+            ...baseData,
+            stateMix: live.map((seg) => ({ state: seg.state, pct: seg.pct })),
+          };
+        }
+      }
+      // Live playback dominant-state fields.
+      if (stationIdx < playbackSnapshot.perStationState.length) {
         if (nextData === baseData) nextData = { ...baseData };
         nextData = {
           ...nextData,
@@ -3474,16 +3493,11 @@ function EditorCanvas() {
           // can paint a pulse badge that tracks playback.
           _isLiveBottleneck: playbackSnapshot.bindingStationIdx === stationIdx,
         };
-      } else if ("_playbackState" in nextData) {
-        const stripped = { ...nextData };
-        delete stripped._playbackState;
-        if ("_isLiveBottleneck" in stripped) delete stripped._isLiveBottleneck;
-        nextData = stripped;
       }
       if (nextData === baseData) return n;
       return { ...n, data: nextData };
     });
-  }, [nodes, result, runMeta, severityByNodeId, playbackSnapshot]);
+  }, [nodesWithResultOverlay, playbackSnapshot, runMeta, result]);
 
   // VROL-947 — derived sets/maps used by both edgesForFlow (label
   // annotation) and bomFeederEdges (virtual edge suppression). Declared
