@@ -106,8 +106,83 @@ function ReplicationsBody({
         </table>
       </div>
       <span className={`mt-2 inline-block font-mono text-[10px] ${noiseTone}`} aria-hidden />
+      {/* VROL-997 — paired-t vs Welch hint + expandable per-seed list.
+          Surfaces the actual seeds used (a stats credibility signal) and
+          which two-sample test the delta section would default to. */}
+      <SeedDetails summary={summary} baseline={baseline} />
       {baseline ? <DeltaSection summary={summary} baseline={baseline} /> : null}
     </>
+  );
+}
+
+function SeedDetails({
+  summary,
+  baseline,
+}: {
+  readonly summary: ReplicationSummary;
+  readonly baseline?: ReplicationSummary;
+}) {
+  const [open, setOpen] = useState(false);
+  const matched = baseline ? seedsMatch(summary.seeds, baseline.seeds) : true;
+  const throughput = summary.kpis.find((k) => k.label === "Throughput");
+  return (
+    <div
+      className="border-border/30 mt-2 border-t pt-2 text-[11px]"
+      data-testid="reps-seed-details"
+    >
+      <button
+        type="button"
+        onClick={() => {
+          setOpen((v) => !v);
+        }}
+        className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+        aria-expanded={open}
+      >
+        <span aria-hidden>{open ? "▾" : "▸"}</span>
+        <span>
+          {baseline
+            ? matched
+              ? "Paired-t (CRN: identical seeds)"
+              : "Welch's t-test (independent samples)"
+            : "Single sample — paired-t available when comparing"}
+          {" · "}
+          <span className="font-mono tabular-nums">{summary.n}</span> reps
+        </span>
+      </button>
+      {open ? (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="text-muted-foreground border-border border-b text-left uppercase">
+                <th className="py-1 pr-3 font-medium">#</th>
+                <th className="px-3 py-1 text-right font-medium">Seed</th>
+                {throughput ? (
+                  <th className="px-3 py-1 text-right font-medium">Throughput</th>
+                ) : null}
+              </tr>
+            </thead>
+            <tbody>
+              {summary.seeds.map((seed, i) => (
+                <tr
+                  key={`${String(seed)}-${String(i)}`}
+                  className="border-border/30 border-b last:border-0"
+                >
+                  <td className="text-muted-foreground py-1 pr-3">{i + 1}</td>
+                  <td className="px-3 py-1 text-right font-mono tabular-nums">{seed}</td>
+                  {throughput && typeof throughput.values[i] === "number" ? (
+                    <td className="px-3 py-1 text-right font-mono tabular-nums">
+                      {throughput.format(throughput.values[i] as number)}
+                    </td>
+                  ) : throughput ? (
+                    <td className="text-muted-foreground px-3 py-1 text-right">—</td>
+                  ) : null}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

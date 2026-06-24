@@ -142,6 +142,7 @@ import {
   allInOneToCsv,
 } from "@/lib/result-to-csv";
 import { computeConstraintHistory } from "@/lib/constraint-history";
+import { diffScenarios } from "@/lib/scenario-diff";
 import { computeSixLoss } from "@/lib/six-loss";
 import { graphToChainOptions } from "@/lib/graph-to-chain";
 import {
@@ -1209,6 +1210,8 @@ function EditorCanvas() {
     bStationLabels: readonly string[];
     horizonMs: number;
     warmupMs: number;
+    // VROL-994 — structured input diff between A and B.
+    configDiffRows?: readonly import("@/lib/scenario-diff").DiffRow[];
   } | null>(null);
   // VROL-654 — persisted comparison history.
   const [savedComparisons, setSavedComparisons] = useState<readonly ComparisonEntry[]>(() =>
@@ -2293,6 +2296,17 @@ function EditorCanvas() {
       const horizonMs = settings.horizonMs;
       const warmupMs = Math.min(settings.warmupMs, Math.floor(settings.horizonMs / 2));
       const aName = `Past run · ${new Date(entry.runAtMs).toLocaleTimeString()}`;
+      // VROL-994 — derive the structured input diff from the two payloads
+      // so the ComparisonTable can show what CHANGED, not just what's
+      // different in the output.
+      const configDiffRows = diffScenarios(
+        {
+          nodes: entry.payload.graph.nodes,
+          edges: entry.payload.graph.edges,
+          settings: entry.payload.settings,
+        },
+        { nodes, edges, settings },
+      );
       setComparison({
         aName,
         aResult: aOutcome.result,
@@ -2302,6 +2316,7 @@ function EditorCanvas() {
         bStationLabels: bOutcome.runMeta.stationLabels,
         horizonMs,
         warmupMs,
+        configDiffRows,
       });
       toast.success(`Comparing ${aName} vs current.`);
     },
@@ -6218,6 +6233,9 @@ function EditorCanvas() {
                   bStationLabels={comparison.bStationLabels}
                   horizonMs={comparison.horizonMs}
                   warmupMs={comparison.warmupMs}
+                  {...(comparison.configDiffRows
+                    ? { configDiffRows: comparison.configDiffRows }
+                    : {})}
                 />
               </Suspense>
             </div>

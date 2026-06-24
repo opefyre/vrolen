@@ -18,6 +18,7 @@
  */
 
 import type { ChainResult } from "@/engine";
+import { computeSixLoss, totalLossMs } from "./six-loss";
 
 export type ActionApplyPayload =
   | { kind: "cycle:halve"; stationLabel: string }
@@ -143,6 +144,62 @@ export function deriveActionCard(result: ChainResult): ActionCard | null {
           body: `Edge buffer #${String(hotEdgeIdx + 1)} held >= ${String(Math.round(hotPeak * 0.8))} parts in the last 10 samples (peak ${String(hotPeak)}). Growing this buffer is likely to lift throughput without changing cycle times.`,
           tone: "primary",
           apply: { kind: "buffer:grow", edgeKey: String(hotEdgeIdx) },
+        };
+      }
+    }
+  }
+
+  // VROL-995 — six-loss dominant bucket rule. When a single Nakajima
+  // loss category exceeds 40 % of total losses across the line, surface
+  // it as the next-thing-to-do with its dominant station. Ranks below
+  // the per-station rules because they reference specific stations;
+  // dominant-loss is a "look at this big bucket" line-level hint.
+  const sixLossRows = computeSixLoss(result);
+  if (sixLossRows.length > 0) {
+    const totals = {
+      breakdown: 0,
+      setup: 0,
+      minorStop: 0,
+      speedLoss: 0,
+      defect: 0,
+    };
+    let grand = 0;
+    let worstStation = "";
+    let worstStationTotal = 0;
+    for (const r of sixLossRows) {
+      totals.breakdown += r.breakdownMs;
+      totals.setup += r.setupMs;
+      totals.minorStop += r.minorStopMs;
+      totals.speedLoss += r.speedLossMs;
+      totals.defect += r.defectMs;
+      const t = totalLossMs(r);
+      grand += t;
+      if (t > worstStationTotal) {
+        worstStationTotal = t;
+        worstStation = r.stationLabel;
+      }
+    }
+    if (grand > 0) {
+      const entries: { key: keyof typeof totals; label: string; lever: string }[] = [
+        { key: "breakdown", label: "Breakdown losses", lever: "raise MTBF / lower MTTR" },
+        { key: "setup", label: "Setup / changeover losses", lever: "SMED + reduce variety" },
+        {
+          key: "minorStop",
+          label: "Minor-stop losses",
+          lever: "smooth upstream variability or grow buffers",
+        },
+        { key: "speedLoss", label: "Speed losses", lever: "investigate sub-nominal cycle" },
+        { key: "defect", label: "Defect / scrap losses", lever: "tighten quality controls" },
+      ];
+      const ranked = entries
+        .map((e) => ({ ...e, ms: totals[e.key], share: totals[e.key] / grand }))
+        .sort((a, b) => b.ms - a.ms);
+      const top = ranked[0];
+      if (top && top.share > 0.4) {
+        return {
+          title: `${top.label} dominate — ${Math.round(top.share * 100)} % of total losses`,
+          body: `Across the line, ${top.label.toLowerCase()} account for ${Math.round(top.share * 100)} % of all losses (worst station: ${worstStation || topLabel}). Lever to try: ${top.lever}.`,
+          tone: "warn",
         };
       }
     }

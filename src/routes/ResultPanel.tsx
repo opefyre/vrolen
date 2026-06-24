@@ -45,6 +45,7 @@ import { ConstraintHistoryChart } from "@/components/results/constraint-history-
 import { ActionCard } from "@/components/results/action-card";
 import { SixLossBreakdown } from "@/components/results/six-loss-bar";
 import { StationGantt } from "@/components/results/station-gantt";
+import { GlossaryTerm } from "@/components/ui/glossary-term";
 import { QualityLosses } from "./QualityLosses";
 import { RecommendationsCard } from "./RecommendationsCard";
 import { StatePareto } from "./StatePareto";
@@ -953,7 +954,7 @@ export function ResultPanel({
     "Line efficiency":
       "Actual throughput as a fraction of the theoretical bottleneck rate. Different from per-station OEE — the station numbers don't roll up to this directly.",
   };
-  const tile = (label: string, value: string, hint?: string) => {
+  const tile = (label: string, value: string, hint?: string, term?: string) => {
     const href = helpAnchor(label);
     const repKpi = replicationKpiFor(label);
     const clickable = repKpi !== null;
@@ -974,7 +975,7 @@ export function ResultPanel({
             and confused readers. The Throughput tab shows the proper
             chart with labeled axes. */}
         <div className="text-muted-foreground flex items-center justify-between text-xs tracking-wide uppercase">
-          <span>{label}</span>
+          <span>{term ? <GlossaryTerm term={term}>{label}</GlossaryTerm> : label}</span>
           {href ? (
             <a
               href={href}
@@ -1112,8 +1113,18 @@ export function ResultPanel({
       <InsightsBanner result={result} />
       {cycleStrip}
       <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
-        {tile("Completed", result.completed.toLocaleString(), "during measurement window")}
-        {tile("Line efficiency", `${fmt(result.lineOee * 100)}%`, "throughput vs theoretical")}
+        {tile(
+          "Completed",
+          result.completed.toLocaleString(),
+          "during measurement window",
+          "throughput",
+        )}
+        {tile(
+          "Line efficiency",
+          `${fmt(result.lineOee * 100)}%`,
+          "throughput vs theoretical",
+          "oee",
+        )}
         {(() => {
           // VROL-979 — TEEP = OEE × loading-fraction. loading = 1 − maintenance/horizon.
           // When no Maintenance windows are configured, loading = 1 → TEEP = OEE
@@ -1127,9 +1138,19 @@ export function ResultPanel({
           const avgMaintMs = maintMs / stationCount;
           const loading = Math.max(0, 1 - avgMaintMs / result.elapsedMs);
           const teep = result.lineOee * loading;
-          return tile("TEEP", `${fmt(teep * 100)}%`, "OEE × loading (includes maintenance)");
+          return tile(
+            "TEEP",
+            `${fmt(teep * 100)}%`,
+            "OEE × loading (includes maintenance)",
+            "teep",
+          );
         })()}
-        {tile("Time-in-system", `${fmt(result.avgTimeInSystemW, 0)} ms`, "average W per part")}
+        {tile(
+          "Time-in-system",
+          `${fmt(result.avgTimeInSystemW, 0)} ms`,
+          "average W per part",
+          "wip",
+        )}
       </div>
       {/* VROL-868 — theoretical yield tile, plus VROL-885 sustainability
           tiles, only when there's something to show. The Recommendations
@@ -2044,6 +2065,7 @@ export function ComparisonTable({
   bStationLabels,
   horizonMs,
   warmupMs,
+  configDiffRows,
 }: {
   aName: string;
   aResult: ChainResult;
@@ -2053,6 +2075,8 @@ export function ComparisonTable({
   bStationLabels: readonly string[];
   horizonMs: number;
   warmupMs: number;
+  /** VROL-994 — optional structured diff of input configuration (A vs B). */
+  configDiffRows?: readonly import("@/lib/scenario-diff").DiffRow[];
 }) {
   const fmt = (n: number, digits = 1) =>
     n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -2265,6 +2289,48 @@ export function ComparisonTable({
           </table>
         </div>
       </Accordion>
+      {/* VROL-994 — configuration diff between A and B. Shows what
+          INPUTS changed alongside the existing output deltas. */}
+      {configDiffRows && configDiffRows.length > 0 ? (
+        <Accordion
+          title="Configuration diff · A vs B"
+          status={
+            <AccordionStatus tone="configured">
+              {`${String(configDiffRows.length)} change${configDiffRows.length === 1 ? "" : "s"}`}
+            </AccordionStatus>
+          }
+          expanded={false}
+          onToggle={() => {
+            /* uncontrolled toggle is fine for first version */
+          }}
+        >
+          <div className="overflow-x-auto" data-testid="compare-config-diff">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-muted-foreground border-border border-b text-left tracking-wide uppercase">
+                  <th className="py-2 pr-3 font-medium">Category</th>
+                  <th className="py-2 pr-3 font-medium">Field</th>
+                  <th className="px-3 py-2 text-right font-medium">A</th>
+                  <th className="px-3 py-2 text-right font-medium">B</th>
+                </tr>
+              </thead>
+              <tbody>
+                {configDiffRows.map((r, i) => (
+                  <tr
+                    key={`${r.category}-${r.label}-${String(i)}`}
+                    className="border-border/50 border-b last:border-0"
+                  >
+                    <td className="text-muted-foreground py-2 pr-3 text-[11px]">{r.category}</td>
+                    <td className="py-2 pr-3">{r.label}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">{r.aValue}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">{r.bValue}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Accordion>
+      ) : null}
       {/* VROL-946 — per-station OEE breakdown side-by-side with Δ. Rows are
           aligned by topology index when both runs share the same station
           count; mismatched runs collapse into the line-level KPI tiles
