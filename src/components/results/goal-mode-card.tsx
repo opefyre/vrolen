@@ -1,24 +1,50 @@
 /**
- * VROL-954 — Goal-seek UI. User enters a target throughput; we display
- * the smallest cycle-time multiplier that meets it (from
- * findCycleMultiplierForTarget). Apply button feeds the scenario.
+ * VROL-954 / VROL-998 — Goal-seek UI. User enters a target throughput;
+ * the card surfaces (a) the single-lever cycle scale that hits it and
+ * (b) the multi-lever (cycle + buffer + tool-pool) cheapest combo that
+ * hits it. Each lever has its own Apply chip so the user can pick what
+ * they want to act on.
  */
 
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import type { GoalResult } from "@/lib/goal-mode";
+import type { MultiResult } from "@/lib/goal-mode-multi";
+import type { ActionApplyPayload } from "@/lib/derive-action-card";
 
 interface Props {
   readonly baselinePerHour: number;
   readonly running: boolean;
   readonly onRun: (targetPerHour: number) => void;
+  /** Single-lever apply (uniform cycle multiplier). */
   readonly onApply: (multiplier: number) => void;
   readonly result: GoalResult | null;
+  /** VROL-998 — multi-lever result (optional). */
+  readonly multiResult?: MultiResult | null;
+  /** VROL-998 — multi-lever per-lever apply. EditorPage routes the payload. */
+  readonly onApplyMulti?: (payload: ActionApplyPayload) => void;
 }
 
-export function GoalModeCard({ baselinePerHour, running, onRun, onApply, result }: Props) {
+export function GoalModeCard({
+  baselinePerHour,
+  running,
+  onRun,
+  onApply,
+  result,
+  multiResult,
+  onApplyMulti,
+}: Props) {
   const [target, setTarget] = useState<number>(Math.round(baselinePerHour * 1.2));
+  const multiBest = multiResult?.best ?? null;
+  // Show the multi-lever block when it found a candidate that beats
+  // single-lever on cost OR uses non-cycle levers (buffer / pool).
+  const multiBeatsSingle =
+    !!multiBest &&
+    multiBest.meetsTarget &&
+    (multiBest.bufferDelta > 0 ||
+      multiBest.toolPoolDelta > 0 ||
+      (result && multiBest.cost < 10 * Math.abs(1 - result.multiplier)));
   return (
     <div
       className="border-border bg-card/50 space-y-2 rounded-md border p-3"
@@ -64,7 +90,7 @@ export function GoalModeCard({ baselinePerHour, running, onRun, onApply, result 
             </p>
           ) : (
             <p>
-              Cycle-time scale{" "}
+              <strong>Single lever:</strong> cycle scale{" "}
               <strong className="font-mono tabular-nums">{result.multiplier.toFixed(2)}x</strong>{" "}
               hits{" "}
               <strong className="font-mono tabular-nums">
@@ -85,8 +111,86 @@ export function GoalModeCard({ baselinePerHour, running, onRun, onApply, result 
                 onApply(result.multiplier);
               }}
             >
-              Apply to every station
+              Apply uniform cycle {result.multiplier.toFixed(2)}x
             </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {/* VROL-998 — multi-lever picker. Renders when the search found a
+          candidate that genuinely uses non-cycle levers or beats the
+          single-lever cost. */}
+      {multiBeatsSingle && multiBest ? (
+        <div
+          className="border-sim-running/40 bg-sim-running/5 space-y-2 rounded-md border p-2 text-xs"
+          data-testid="goal-mode-multi"
+        >
+          <p>
+            <strong>Multi-lever:</strong> cycle{" "}
+            <span className="font-mono tabular-nums">{multiBest.cycleMultiplier.toFixed(2)}x</span>
+            {multiBest.bufferDelta > 0 ? (
+              <>
+                {" "}
+                + buffer{" "}
+                <span className="font-mono tabular-nums">+{String(multiBest.bufferDelta)}</span>
+              </>
+            ) : null}
+            {multiBest.toolPoolDelta > 0 ? (
+              <>
+                {" "}
+                + tool pools{" "}
+                <span className="font-mono tabular-nums">+{String(multiBest.toolPoolDelta)}</span>
+              </>
+            ) : null}{" "}
+            hits{" "}
+            <strong className="font-mono tabular-nums">
+              {Math.round(multiBest.perHour).toLocaleString()}
+            </strong>{" "}
+            /h. Cost <span className="font-mono tabular-nums">{multiBest.cost.toFixed(1)}</span>.
+          </p>
+          {onApplyMulti ? (
+            <div className="flex flex-wrap gap-1.5">
+              {Math.abs(1 - multiBest.cycleMultiplier) > 1e-3 ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    onApplyMulti({
+                      kind: "cycle:scaleAll",
+                      multiplier: multiBest.cycleMultiplier,
+                    });
+                  }}
+                >
+                  Apply cycle {multiBest.cycleMultiplier.toFixed(2)}x
+                </Button>
+              ) : null}
+              {multiBest.bufferDelta > 0 ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    // Apply via the existing buffer:grow handler — our handler
+                    // ignores edgeKey for additive grow.
+                    onApplyMulti({ kind: "buffer:grow", edgeKey: "all" });
+                  }}
+                >
+                  Apply buffer +{String(multiBest.bufferDelta)}
+                </Button>
+              ) : null}
+              {multiBest.toolPoolDelta > 0 ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    onApplyMulti({
+                      kind: "tool-pool:scaleAll",
+                      delta: multiBest.toolPoolDelta,
+                    });
+                  }}
+                >
+                  Apply tool +{String(multiBest.toolPoolDelta)}
+                </Button>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

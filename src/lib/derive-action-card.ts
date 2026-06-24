@@ -25,7 +25,14 @@ export type ActionApplyPayload =
   | { kind: "buffer:grow"; edgeKey: string }
   | { kind: "tool-pool:grow"; poolName: string }
   | { kind: "reliability:flag"; stationLabel: string }
-  | { kind: "sampling:flag" };
+  | { kind: "sampling:flag" }
+  // VROL-998 — uniform cycle scale across every station (used by the
+  // multi-lever goal-mode picker). Distinct from cycle:halve which
+  // targets a single named station.
+  | { kind: "cycle:scaleAll"; multiplier: number }
+  // VROL-998 — additive bump to every named tool pool's capacity.
+  // Distinct from tool-pool:grow which targets a single named pool.
+  | { kind: "tool-pool:scaleAll"; delta: number };
 
 export interface ActionCard {
   readonly title: string;

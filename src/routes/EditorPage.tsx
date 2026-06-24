@@ -842,6 +842,7 @@ import { summarizeReplications, type ReplicationSummary } from "@/lib/replicatio
 import { summarizeCosts } from "@/lib/cost-economics";
 import { runSensitivitySweep, type SensitivitySummary } from "@/lib/sensitivity-sweep";
 import { findCycleMultiplierForTarget, type GoalResult } from "@/lib/goal-mode";
+import { runMultiLeverGoal, type MultiResult } from "@/lib/goal-mode-multi";
 import { runTwoWaySensitivity, type TwoWaySummary } from "@/lib/sensitivity-two-way";
 import { runWipCurve, type WipCurveSummary } from "@/lib/wip-curve";
 import {
@@ -1010,6 +1011,8 @@ function EditorCanvas() {
   const [twoWaySummary, setTwoWaySummary] = useState<TwoWaySummary | null>(null);
   // VROL-958 — goal mode state + running flag.
   const [goalResult, setGoalResult] = useState<GoalResult | null>(null);
+  // VROL-998 — multi-lever goal-mode result alongside the single-lever one.
+  const [goalMultiResult, setGoalMultiResult] = useState<MultiResult | null>(null);
   const [goalRunning, setGoalRunning] = useState<boolean>(false);
   const [sensitivityRunning, setSensitivityRunning] = useState<boolean>(false);
   // Throughput-vs-WIP scan — fires on demand from the Results panel.
@@ -2355,6 +2358,22 @@ function EditorCanvas() {
             stationCycleDistributions: translation.cycleDistributions,
           });
           setGoalResult(r);
+          // VROL-998 — also run the multi-lever search so the card can
+          // surface buffer / tool-pool alternatives. Opportunistic; if
+          // it throws we fall back to single-lever.
+          try {
+            const m = runMultiLeverGoal({
+              targetPerHour,
+              horizonMs,
+              warmupMs,
+              seed: settings.seed,
+              buildBaseOptions,
+              stationCycleDistributions: translation.cycleDistributions,
+            });
+            setGoalMultiResult(m);
+          } catch {
+            setGoalMultiResult(null);
+          }
           toast.success(
             r.capped
               ? `Target ${String(targetPerHour)} unreachable (max ${String(Math.round(r.achievedPerHour))}/h).`
@@ -2710,6 +2729,39 @@ function EditorCanvas() {
             description:
               "Open the station inspector → Cycle distribution. Pick truncatedNormal and set min/max to physical bounds.",
           });
+          break;
+        case "cycle:scaleAll":
+          // VROL-998 — multi-lever goal-mode applies a uniform cycle
+          // multiplier to every station. Reuses scaleDistribution.
+          setNodes((ns) =>
+            ns.map((n) => {
+              const d = (n.data as { cycleDistribution?: unknown }).cycleDistribution;
+              if (!isDistribution(d)) return n;
+              return {
+                ...n,
+                data: {
+                  ...n.data,
+                  cycleDistribution: scaleDistribution(d, payload.multiplier),
+                },
+              };
+            }),
+          );
+          toast.success(
+            `Scaled every station's cycle by ${payload.multiplier.toFixed(2)}x. Re-running…`,
+          );
+          setApplyAndRunTick((x) => x + 1);
+          break;
+        case "tool-pool:scaleAll":
+          // VROL-998 — additive bump to every tool pool's capacity.
+          setSettings((s) => ({
+            ...s,
+            toolPools: (s.toolPools ?? []).map((p) => ({
+              ...p,
+              capacity: Math.max(1, p.capacity + payload.delta),
+            })),
+          }));
+          toast.success(`Every tool pool capacity +${String(payload.delta)}. Re-running…`);
+          setApplyAndRunTick((x) => x + 1);
           break;
       }
     },
@@ -6015,13 +6067,15 @@ function EditorCanvas() {
               scenarioName={activeScenarioName ?? null}
               onCompare={handleCompareWithHistoryEntry}
             />
-            {/* VROL-958 — goal mode card. */}
+            {/* VROL-958 / VROL-998 — goal mode card (single + multi lever). */}
             <GoalModeCard
               baselinePerHour={result.throughputLambda * 3_600_000}
               running={goalRunning}
               onRun={handleRunGoal}
               onApply={handleApplyGoalMultiplier}
               result={goalResult}
+              multiResult={goalMultiResult}
+              onApplyMulti={handleApplyActionCard}
             />
           </div>
           <Suspense
