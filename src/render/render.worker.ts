@@ -100,8 +100,29 @@ let appReady = false;
 let world: Container | null = null;
 let stationLayer: Container | null = null;
 let edgeLayer: Container | null = null;
+// VROL-933 — sprite trails. Dots travel along each edge at a speed
+// proportional to flowRate so the live playback shows visible motion.
+let dotLayer: Container | null = null;
 const stationNodes = new Map<string, { container: Container; lastState: string }>();
 const edgeNodes = new Map<string, Graphics>();
+// Per-edge state for sprite trails: cached endpoint positions, the dot
+// graphics (sized ~proportional to flowRate, capped), and each dot's
+// position along the edge t ∈ [0, 1).
+interface EdgeTrail {
+  readonly dots: readonly Graphics[];
+  readonly positions: number[];
+  flowRate: number;
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+}
+const edgeTrails = new Map<string, EdgeTrail>();
+// Cap the dot pool per edge — high flowRates don't get linearly more
+// dots, the eye can't follow more than ~8 anyway. Density throttle.
+const MAX_DOTS_PER_EDGE = 8;
+// Convert RenderEdge.flowRate (parts/sec at the playback's notional
+// scale) into a t-advance per frame. The visual goal: a part/sec of 1
+// completes the edge in ~2 seconds at 60 fps.
+const T_ADVANCE_PER_FRAME_PER_FLOW = 1 / (2 * 60);
 let dpr = 1;
 
 // Sampled FPS for reporting back to the main thread for diagnostics. Reset
@@ -145,6 +166,10 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
     world.label = "world";
     edgeLayer = new Container();
     edgeLayer.label = "edges";
+    // VROL-933 — separate layer for sprite trails so they always paint
+    // above edges (so dots don't disappear behind thick edge strokes).
+    dotLayer = new Container();
+    dotLayer.label = "dots";
     stationLayer = new Container();
     stationLayer.label = "stations";
     // VROL-191 — enable PixiJS auto-sort so containers respect zIndex.
@@ -153,7 +178,9 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
     stationLayer.sortableChildren = true;
     edgeLayer.sortableChildren = true;
     // Edges below stations so connections don't draw over node faces.
+    // Dots sit between edges and stations.
     world.addChild(edgeLayer);
+    world.addChild(dotLayer);
     world.addChild(stationLayer);
     app.stage.addChild(world);
 
@@ -183,8 +210,11 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
 
     // Frame-counter ticker → posts FPS every ~1s for diagnostics. The 1s
     // throttle keeps postMessage spam off the main thread.
+    // VROL-933 — same ticker advances sprite trails along their edges so
+    // the playback is visibly alive.
     app.ticker.add(() => {
       frameCount += 1;
+      advanceTrails();
       const now = performance.now();
       if (now - lastFpsPostMs > 1000) {
         const fps = app?.ticker.FPS ?? 0;
@@ -268,6 +298,72 @@ function drawEdge(
   return g;
 }
 
+// VROL-933 — sprite-trail helpers.
+
+function dotCountFor(flowRate: number): number {
+  if (flowRate <= 0) return 0;
+  // Logarithmic step so a 10x bump in flow doesn't crowd the edge.
+  const n = Math.ceil(1 + Math.log10(1 + flowRate * 100));
+  return Math.min(MAX_DOTS_PER_EDGE, Math.max(1, n));
+}
+
+function makeDot(): Graphics {
+  const g = new Graphics();
+  g.circle(0, 0, 3).fill({ color: 0x22c55e });
+  return g;
+}
+
+function syncTrail(
+  edgeId: string,
+  flowRate: number,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): void {
+  if (!dotLayer) return;
+  const wanted = dotCountFor(flowRate);
+  const existing = edgeTrails.get(edgeId);
+  if (wanted === 0) {
+    if (existing) {
+      for (const d of existing.dots) d.removeFromParent();
+      edgeTrails.delete(edgeId);
+    }
+    return;
+  }
+  if (existing && existing.dots.length === wanted) {
+    existing.flowRate = flowRate;
+    existing.from = from;
+    existing.to = to;
+    return;
+  }
+  // Resize. Drop old, build new pool; spread positions evenly so the
+  // first frame doesn't show every dot stacked at t=0.
+  if (existing) for (const d of existing.dots) d.removeFromParent();
+  const dots: Graphics[] = [];
+  const positions: number[] = [];
+  for (let i = 0; i < wanted; i++) {
+    const d = makeDot();
+    dotLayer.addChild(d);
+    dots.push(d);
+    positions.push(i / wanted);
+  }
+  edgeTrails.set(edgeId, { dots, positions, flowRate, from, to });
+}
+
+function advanceTrails(): void {
+  for (const trail of edgeTrails.values()) {
+    const advance = trail.flowRate * T_ADVANCE_PER_FRAME_PER_FLOW;
+    for (let i = 0; i < trail.dots.length; i++) {
+      let t = (trail.positions[i] ?? 0) + advance;
+      while (t >= 1) t -= 1;
+      trail.positions[i] = t;
+      const dot = trail.dots[i];
+      if (!dot) continue;
+      dot.x = trail.from.x + (trail.to.x - trail.from.x) * t;
+      dot.y = trail.from.y + (trail.to.y - trail.from.y) * t;
+    }
+  }
+}
+
 function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
   if (!appReady || !app || !stationLayer || !edgeLayer) return;
   try {
@@ -307,6 +403,9 @@ function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
     // is in the dozens and a diff-pass adds complexity without payoff.
     for (const g of edgeNodes.values()) g.removeFromParent();
     edgeNodes.clear();
+    // VROL-933 — track which edges were in this scene so we can prune
+    // sprite trails for any edges that left the scene.
+    const seenEdges = new Set<string>();
     for (const e of msg.edges) {
       const a = positions.get(e.sourceId);
       const b = positions.get(e.targetId);
@@ -314,6 +413,15 @@ function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
       const g = drawEdge(e, a, b);
       edgeLayer.addChild(g);
       edgeNodes.set(e.id, g);
+      seenEdges.add(e.id);
+      syncTrail(e.id, e.flowRate, a, b);
+    }
+    for (const id of [...edgeTrails.keys()]) {
+      if (seenEdges.has(id)) continue;
+      const trail = edgeTrails.get(id);
+      if (!trail) continue;
+      for (const d of trail.dots) d.removeFromParent();
+      edgeTrails.delete(id);
     }
   } catch (err) {
     reportError("scene", err);
@@ -327,8 +435,10 @@ function handleDispose(): void {
   world = null;
   stationLayer = null;
   edgeLayer = null;
+  dotLayer = null;
   stationNodes.clear();
   edgeNodes.clear();
+  edgeTrails.clear();
   scope.close();
 }
 
