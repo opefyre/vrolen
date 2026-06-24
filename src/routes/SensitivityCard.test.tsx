@@ -55,6 +55,7 @@ describe("SensitivityCard tornado rendering (VROL-793)", () => {
     return {
       baselinePerHour: 1_000,
       rows,
+      constraintRows: [],
       lowMultiplier: 0.8,
       highMultiplier: 1.2,
       elapsedMs: 42,

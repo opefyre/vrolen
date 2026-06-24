@@ -190,6 +190,7 @@ import { useOnlineStatus } from "@/lib/online-status";
 import { toast } from "@/lib/toast";
 import { PlaybackController } from "@/components/editor/playback-controller";
 import { CanvasControls } from "@/components/editor/canvas-controls";
+import { ToolPoolWidget } from "@/components/editor/tool-pool-widget";
 import { NonStationInspector } from "@/components/editor/non-station-inspector";
 import { RunConsole, logToRunConsole } from "@/components/editor/run-console";
 import { ScenariosList } from "@/components/editor/scenarios-list";
@@ -559,6 +560,17 @@ function StationNode({ data, selected, id }: NodeProps) {
           {Math.round(nominalSpeedRatio * 100)}% nom
         </span>
       ) : null}
+      {/* VROL-941 — required tool pool badge. */}
+      {typeof (d as { requiredToolPool?: string }).requiredToolPool === "string" &&
+      (d as { requiredToolPool: string }).requiredToolPool.length > 0 ? (
+        <span
+          className="bg-sim-setup/20 text-sim-setup-foreground absolute -bottom-2 left-2 z-10 rounded-full px-1.5 py-0.5 font-mono text-[9px] font-semibold shadow-sm ring-2 ring-white"
+          aria-label={`Tool pool: ${(d as { requiredToolPool: string }).requiredToolPool}`}
+          title={`This station consumes one unit of tool pool "${(d as { requiredToolPool: string }).requiredToolPool}" per cycle. Stations sharing this pool serialise.`}
+        >
+          {(d as { requiredToolPool: string }).requiredToolPool}
+        </span>
+      ) : null}
       {/* Lock badge — set via right-click → Lock. The node's draggable
           flag is also flipped so React Flow refuses to move it.
           VROL-802 — emoji swapped for lucide Lock so the badge matches
@@ -818,6 +830,8 @@ const NODE_TYPES = { station: StationNode, sticky: StickyNoteNode, frame: FrameN
 // bloat the first non-editor route. It's used inside this lazy-loaded file,
 // so a normal import is fine.
 import { AnimatedEdge } from "./AnimatedEdge";
+import { BomFeederEdge } from "./BomFeederEdge";
+import { SkuRoutingEdge } from "./SkuRoutingEdge";
 import { hasSeenWelcomeToast, markWelcomeToastSeen } from "@/lib/welcome-toast";
 
 import { OnboardingTour } from "./OnboardingTour";
@@ -837,7 +851,11 @@ const ResultPanel = lazy(() => import("./ResultPanel").then((m) => ({ default: m
 const ComparisonTable = lazy(() =>
   import("./ResultPanel").then((m) => ({ default: m.ComparisonTable })),
 );
-const EDGE_TYPES = { animated: AnimatedEdge };
+const EDGE_TYPES = {
+  animated: AnimatedEdge,
+  "bom-feeder": BomFeederEdge,
+  "sku-routing": SkuRoutingEdge,
+};
 
 function EditorCanvas() {
   // VROL-630 — consume any pending preset BEFORE seeding useState so the
@@ -3237,18 +3255,81 @@ function EditorCanvas() {
     });
   }, [edges, result, runMeta, animateFlow, playbackSnapshot]);
 
+  // VROL-940 — virtual BOM-feeder edges. Each station's bomFeeders entry
+  // becomes a dotted side-edge from feeder → consumer; only added when
+  // both ids exist as station nodes. Doesn't participate in graph-to-chain
+  // (the topology edge already handles flow); pure visual annotation.
+  const bomFeederEdges = useMemo<Edge[]>(() => {
+    const stationIds = new Set(nodes.filter((n) => n.type === "station").map((n) => n.id));
+    const out: Edge[] = [];
+    for (const n of nodes) {
+      const feeders = (
+        n.data as {
+          bomFeeders?: ReadonlyArray<{ feederStationId?: string; qtyPerCycle?: number }>;
+        }
+      ).bomFeeders;
+      if (!Array.isArray(feeders)) continue;
+      feeders.forEach((f, idx) => {
+        const fid = f.feederStationId;
+        if (typeof fid !== "string" || fid.length === 0) return;
+        if (!stationIds.has(fid)) return;
+        if (fid === n.id) return;
+        out.push({
+          id: `bom-${fid}-${n.id}-${String(idx)}`,
+          source: fid,
+          target: n.id,
+          type: "bom-feeder",
+          data: { qtyPerCycle: f.qtyPerCycle ?? 1 },
+          selectable: false,
+          zIndex: -1,
+        });
+      });
+    }
+    return out;
+  }, [nodes]);
+
+  // VROL-941 — virtual perSkuRouting edges. Each station's perSkuRouting
+  // entry creates a small purple side-arrow from this station to the
+  // routed destination (or none for "skip" since the destination is the
+  // sink, not a node).
+  const skuRoutingEdges = useMemo<Edge[]>(() => {
+    const stationIds = new Set(nodes.filter((n) => n.type === "station").map((n) => n.id));
+    const out: Edge[] = [];
+    for (const n of nodes) {
+      const routing = (n.data as { perSkuRouting?: Record<string, string> }).perSkuRouting;
+      if (!routing || typeof routing !== "object") continue;
+      for (const [sku, dest] of Object.entries(routing)) {
+        if (typeof dest !== "string" || dest.length === 0) continue;
+        if (dest === "skip") continue;
+        if (!stationIds.has(dest)) continue;
+        if (dest === n.id) continue;
+        out.push({
+          id: `sku-${n.id}-${dest}-${sku}`,
+          source: n.id,
+          target: dest,
+          type: "sku-routing",
+          data: { productId: sku },
+          selectable: false,
+          zIndex: -1,
+        });
+      }
+    }
+    return out;
+  }, [nodes]);
+
   // Sprint 90 — Raise the selected edge to the end of the array so its
   // SVG renders LAST (on top). Two edges converging on the same handle
   // would otherwise share a hit zone and the click always picks the same
   // one regardless of where the user is hovering.
   const edgesForFlowOrdered = useMemo<Edge[]>(() => {
-    if (!selectedEdgeId) return edgesForFlow;
-    const idx = edgesForFlow.findIndex((e) => e.id === selectedEdgeId);
-    if (idx < 0) return edgesForFlow;
-    const front = edgesForFlow[idx];
-    if (!front) return edgesForFlow;
-    return [...edgesForFlow.slice(0, idx), ...edgesForFlow.slice(idx + 1), front];
-  }, [edgesForFlow, selectedEdgeId]);
+    const combined = [...bomFeederEdges, ...skuRoutingEdges, ...edgesForFlow];
+    if (!selectedEdgeId) return combined;
+    const idx = combined.findIndex((e) => e.id === selectedEdgeId);
+    if (idx < 0) return combined;
+    const front = combined[idx];
+    if (!front) return combined;
+    return [...combined.slice(0, idx), ...combined.slice(idx + 1), front];
+  }, [edgesForFlow, bomFeederEdges, skuRoutingEdges, selectedEdgeId]);
 
   // VROL-634 — derive top-bar status pill state. Idle until first run; pulses
   // while a run is in flight; stays "Done at HH:MM:SS" after completion.
@@ -4373,6 +4454,20 @@ function EditorCanvas() {
               </div>
             ) : null}
           </ReactFlow>
+          {/* VROL-942 — tool-pool widget overlay. */}
+          <ToolPoolWidget
+            pools={settings.toolPools ?? []}
+            consumersByPool={(() => {
+              const map: Record<string, string[]> = {};
+              for (const n of nodes) {
+                const pool = (n.data as { requiredToolPool?: string }).requiredToolPool;
+                if (typeof pool !== "string" || pool.length === 0) continue;
+                const label = (n.data as { label?: string }).label ?? n.id;
+                (map[pool] ??= []).push(label);
+              }
+              return map;
+            })()}
+          />
           {/* VROL-819 — contextual coach overlay. Renders a single nudge at
               a time in the bottom-right of the canvas; auto-dismisses when
               its trigger flips false. */}

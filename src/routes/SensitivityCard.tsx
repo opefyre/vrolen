@@ -218,6 +218,69 @@ export function SensitivityBody({
           <span>Below noise floor</span>
         </span>
       </div>
+      {/* VROL-938 — constraint-dimension rows: BOM qty + tool-pool capacity.
+          Same horizontal bar pattern as the cycle-time tornado, but the
+          'positive' tone means a higher constraint value helped throughput,
+          which is the more intuitive read for these dimensions. */}
+      {summary.constraintRows.length > 0 ? (
+        <div
+          className="border-border space-y-1.5 border-t pt-2"
+          data-testid="sensitivity-constraints"
+        >
+          <div className="text-muted-foreground text-[11px] font-medium">Constraint dimensions</div>
+          {summary.constraintRows.map((row, idx) => {
+            const lowOffset = row.lowPerHour - base;
+            const highOffset = row.highPerHour - base;
+            const constraintMax = Math.max(
+              maxSwing,
+              summary.constraintRows.reduce((m, r) => Math.max(m, r.swingPerHour), 0),
+            );
+            const lowPct = constraintMax > 0 ? (lowOffset / constraintMax) * halfBarWidthPct : 0;
+            const highPct = constraintMax > 0 ? (highOffset / constraintMax) * halfBarWidthPct : 0;
+            const left = 50 + Math.min(lowPct, highPct);
+            const width = Math.abs(highPct - lowPct);
+            // Higher capacity / higher BOM qty → "high" run. If high beats low,
+            // raising the constraint helped → positive tone.
+            const tone =
+              row.highPerHour > row.lowPerHour
+                ? "positive"
+                : row.highPerHour < row.lowPerHour
+                  ? "negative"
+                  : "noise";
+            const barColor =
+              tone === "positive"
+                ? "bg-sim-running/70"
+                : tone === "negative"
+                  ? "bg-sim-down/70"
+                  : "bg-muted-foreground/30";
+            return (
+              <div
+                key={`${row.kind}-${String(idx)}`}
+                className="flex items-center gap-2 text-[11px]"
+                data-tone={tone}
+                title={`${row.label}: ${fmt(row.lowPerHour)}/h (low) → ${fmt(row.highPerHour)}/h (high)`}
+              >
+                <div className="text-foreground/80 w-28 shrink-0 truncate text-right font-medium">
+                  {row.label}
+                </div>
+                <div className="bg-muted/40 relative h-4 flex-1 rounded">
+                  <div className="bg-border absolute top-0 bottom-0 left-1/2 w-px" />
+                  <div
+                    className={`absolute top-0 bottom-0 rounded ${barColor}`}
+                    style={{ left: `${left.toFixed(2)}%`, width: `${width.toFixed(2)}%` }}
+                  />
+                </div>
+                <div className="text-muted-foreground w-24 shrink-0 text-right font-mono tabular-nums">
+                  ±{fmt(row.swingPerHour / 2)}/h
+                </div>
+                <div className="text-muted-foreground w-12 shrink-0 text-right font-mono tabular-nums">
+                  {row.swingPct.toFixed(1)}%
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
