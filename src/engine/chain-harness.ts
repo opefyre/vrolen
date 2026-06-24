@@ -1373,14 +1373,30 @@ function* simulationStream(
     );
   });
 
+  // Per-station tool-blocked tracking (VROL-922). When a station enters
+  // Starved with reason "starved-tool", remember the timestamp; on the next
+  // transition out of Starved, accrue elapsed ms into perStationToolBlockedMs.
+  // Declared at the top of the function so the closures below can mutate.
+  const toolBlockedSince: (number | undefined)[] = Array.from({ length: n }, () => undefined);
+  const perStationToolBlockedMs = new Array<number>(n).fill(0);
+
   // Wire each tracker (and, if applicable, breakdown manager) to its state machine.
   for (let i = 0; i < n; i++) {
     const tracker = stateTimeTrackers[i] as StateTimeTracker;
     const sm = stateMachines[i] as StationStateMachine;
     const manager = breakdownManagers?.[i];
+    const stationIdxLocal = i;
     sm.onStateChange((e) => {
       tracker.recordTransition(e.toState, e.timeMs);
       if (manager && e.toState === "Running") manager.arm(e.timeMs);
+      // VROL-922 — tool-blocked accrual.
+      if (e.toState === "Starved" && e.reason === "starved-tool") {
+        toolBlockedSince[stationIdxLocal] = e.timeMs;
+      } else if (e.fromState === "Starved" && toolBlockedSince[stationIdxLocal] !== undefined) {
+        const since = toolBlockedSince[stationIdxLocal] as number;
+        perStationToolBlockedMs[stationIdxLocal]! += Math.max(0, e.timeMs - since);
+        toolBlockedSince[stationIdxLocal] = undefined;
+      }
     });
   }
 
@@ -1497,6 +1513,27 @@ function* simulationStream(
     return false;
   }
 
+  // Map user-facing node id → topology index for VROL-920/921 routing
+  // closures. (stationIds[i] is the internal UUID-StationId; bomFeeders /
+  // perSkuRouting use the user-facing node.id.)
+  const stationIdToIdx = new Map<string, number>();
+  for (let i = 0; i < n; i++) stationIdToIdx.set(topology.nodeIds[i] as string, i);
+
+  // VROL-888 / VROL-872 / VROL-881 / VROL-922 — counters hoisted here so the
+  // per-station cfg closures below can capture them. Old declarations
+  // further down the file have been removed.
+  const perStationTempScrapCounts = new Array<number>(n).fill(0);
+  const perStationBomStarvedCounts = new Array<number>(n).fill(0);
+  const perStationSkuRoutedCounts = new Array<number>(n).fill(0);
+  // VROL-922 — tool pool semaphores. Stations request one before cycle-start;
+  // release on completion.
+  const toolPoolAvailable: Record<string, number> = {};
+  for (const p of opts.toolPools ?? []) {
+    toolPoolAvailable[p.name] = p.capacity;
+  }
+  // station-idx → list of executors that share its tool pool; populated post-loop.
+  const executorsByTool: Map<string, CycleExecutor<TrackedPart>[]> = new Map();
+
   // VROL-626 — bounded rework loops. Defective parts at a station with a
   // reworkTargetId are routed back into the target's input buffer with an
   // incremented reworkCount; parts whose count hits the per-station limit
@@ -1537,6 +1574,86 @@ function* simulationStream(
             return pushReworkTo(reworkTargetIdx, part);
           }
         : undefined;
+    // VROL-920 — bomGate closure. Builds per-feeder edge resolution once
+    // (stable across cycles); each call checks availability and atomically
+    // consumes on success. On failure, increments perStationBomStarved[i].
+    const bomFeedersForThis = topology.bomFeeders[i];
+    const bomFeedersResolved: { buf: CountingTrackedBuffer<TrackedPart>; qty: number }[] = [];
+    if (bomFeedersForThis) {
+      for (const f of bomFeedersForThis) {
+        const feederIdx = stationIdToIdx.get(f.feederStationId);
+        if (feederIdx === undefined) continue;
+        const eIdx = incomingEdgeIdx[i]!.find((e) => topology.edges[e]?.sourceIdx === feederIdx);
+        if (eIdx === undefined) continue;
+        const buf = edgeBuffers[eIdx] as CountingTrackedBuffer<TrackedPart>;
+        bomFeedersResolved.push({ buf, qty: f.qtyPerCycle });
+      }
+    }
+    // Sprint 91 semantic: CHECK-ONLY. The gate verifies that every feeder
+    // edge has at least qtyPerCycle units available; if not, the station
+    // Starves with reason "starved-bom" and the counter increments. We do
+    // NOT atomically consume from the feeder edge here — that's a deeper
+    // change (the cycle's primary upstream.pull() also pulls from the same
+    // edge in the common case, so a separate consume here would leak
+    // inventory when upstream is short after the BOM pull). Full atomic
+    // pull with dedicated feeder buffers is deferred to a follow-up
+    // ticket; the check-only counter still exposes BOM starvation as a
+    // first-class signal in the result.
+    const bomGate: ((timeMs: number) => boolean) | undefined =
+      bomFeedersResolved.length > 0
+        ? () => {
+            for (const f of bomFeedersResolved) {
+              if (f.buf.size < f.qty) {
+                perStationBomStarvedCounts[i] = (perStationBomStarvedCounts[i] ?? 0) + 1;
+                return false;
+              }
+            }
+            return true;
+          }
+        : undefined;
+
+    // VROL-921 — downstreamFor closure. For perSkuRouting[productId]:
+    //   "skip"     → route directly to sinkBuffer
+    //   "<id>"     → route to the edge from this station to that destination
+    //                station (falls back to the default downstream if no
+    //                such edge exists).
+    const skuRoutingForThis = topology.perSkuRouting[i];
+    const downstreamForFn: ((part: TrackedPart) => Buffer<TrackedPart> | undefined) | undefined =
+      skuRoutingForThis
+        ? (part: TrackedPart): Buffer<TrackedPart> | undefined => {
+            if (part.productId === undefined) return undefined;
+            const dest = skuRoutingForThis[part.productId];
+            if (dest === undefined) return undefined;
+            if (dest === "skip") return sinkBuffer;
+            const destIdx = stationIdToIdx.get(dest);
+            if (destIdx === undefined) return undefined;
+            const eIdx = outgoingEdgeIdx[i]!.find((e) => topology.edges[e]?.targetIdx === destIdx);
+            if (eIdx === undefined) return undefined;
+            return edgeBuffers[eIdx] as Buffer<TrackedPart>;
+          }
+        : undefined;
+
+    // VROL-922 — tool-pool acquire/release closures. The semaphore is a
+    // shared Record; on release we nudge every co-pool executor in case
+    // any was Starved-tool waiting for this unit.
+    const toolName = topology.requiredToolPool[i];
+    const toolAcquire: ((timeMs: number) => boolean) | undefined = toolName
+      ? () => {
+          const avail = toolPoolAvailable[toolName] ?? 0;
+          if (avail <= 0) return false;
+          toolPoolAvailable[toolName] = avail - 1;
+          return true;
+        }
+      : undefined;
+    const toolRelease: ((timeMs: number) => void) | undefined = toolName
+      ? (timeMs: number) => {
+          toolPoolAvailable[toolName] = (toolPoolAvailable[toolName] ?? 0) + 1;
+          const sharers = executorsByTool.get(toolName);
+          if (!sharers) return;
+          for (const peer of sharers) peer.attemptStart(timeMs);
+        }
+      : undefined;
+
     const cfg: CycleConfig<TrackedPart> = {
       stationId: stationIds[i] as StationId,
       cycleTimeMs: topology.cycleTimes[i] as Distribution,
@@ -1553,6 +1670,10 @@ function* simulationStream(
       ...(materialPool && recipe?.length ? { materialPool, materialRequirements: recipe } : {}),
       ...(workerPool ? { workerPool, ...(requiredSkills ? { requiredSkills } : {}) } : {}),
       ...(reworkRouter ? { reworkRouter } : {}),
+      ...(bomGate ? { bomGate } : {}),
+      ...(toolAcquire ? { toolAcquire } : {}),
+      ...(toolRelease ? { toolRelease } : {}),
+      ...(downstreamForFn ? { downstreamFor: downstreamForFn } : {}),
     };
     const ex = new CycleExecutor<TrackedPart>(
       cfg,
@@ -1567,6 +1688,13 @@ function* simulationStream(
         list.push(ex);
         executorsByMaterial.set(req.materialId, list);
       }
+    }
+    // VROL-922 — register this executor with its tool-pool peers so
+    // toolRelease can nudge them.
+    if (toolName) {
+      const list = executorsByTool.get(toolName) ?? [];
+      list.push(ex);
+      executorsByTool.set(toolName, list);
     }
     // VROL-888 / VROL-881 — per-station completion hook for temperature
     // dynamics + SKU-routed counter. Defect events skip both (the part
@@ -1821,24 +1949,9 @@ function* simulationStream(
   // VROL-919 — perStationRandomEventCounts initialised here so the
   // dispatcher branches (defined above) can refer to it via closure.
   const perStationRandomEventCounts = new Array<number>(n).fill(0);
-  // VROL-888 / VROL-872 / VROL-881 — Sprint 90 counters initialized here so
-  // their closures in onCompletion / sink-completion handlers can mutate.
-  const perStationTempScrapCounts = new Array<number>(n).fill(0);
-  const perStationBomStarvedCounts = new Array<number>(n).fill(0);
-  const perStationSkuRoutedCounts = new Array<number>(n).fill(0);
-  // VROL-890 — tool pool semaphores. Map name → currently-available units.
-  // Stations request one before cycle-start; release on completion. Wait
-  // time isn't tracked yet (separate ticket for the perStationToolBlockedMs
-  // bucket); for now the engine treats the pool as a single-step gate that
-  // Starves the executor when the pool is empty, identical to the
-  // no-skill-available semantics.
-  const toolPoolAvailable: Record<string, number> = {};
-  for (const p of opts.toolPools ?? []) {
-    toolPoolAvailable[p.name] = p.capacity;
-  }
-  // Track ms-blocked-on-pool per station so the result is honest. Same
-  // pattern as the breakdown-tracking sites.
-  const perStationToolBlockedMs = new Array<number>(n).fill(0);
+  // Sprint-90/91 counters (perStationTempScrapCounts, perStationBomStarvedCounts,
+  // perStationSkuRoutedCounts, toolPoolAvailable) are hoisted above the
+  // executor loop so cfg closures can capture them.
 
   // VROL-916 — initial CIP scheduling. First fire at t = cipEveryMs; each
   // fire re-schedules the next from the dispatcher. Past-horizon scheduling

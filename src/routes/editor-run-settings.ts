@@ -146,6 +146,12 @@ export interface RunSettings {
    * — Arena-style credibility on KPI numbers. Clamp at 1..50.
    */
   replications: number;
+  /**
+   * VROL-923 — shared tool-resource pools. Stations declare
+   * requiredToolPool to consume one unit per cycle from a named pool here.
+   * Empty array → no constraint.
+   */
+  toolPools?: ReadonlyArray<{ readonly name: string; readonly capacity: number }>;
 }
 
 export const DEFAULT_RUN_SETTINGS: RunSettings = {

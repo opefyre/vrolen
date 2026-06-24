@@ -157,6 +157,19 @@ export function runScenario(
       ...(settings.samplerIntervalMs > 0
         ? { sampler: { intervalMs: settings.samplerIntervalMs } }
         : {}),
+      ...(settings.toolPools && settings.toolPools.length > 0
+        ? {
+            toolPools: settings.toolPools
+              .filter(
+                (p) =>
+                  typeof p.name === "string" &&
+                  p.name.length > 0 &&
+                  Number.isFinite(p.capacity) &&
+                  p.capacity > 0,
+              )
+              .map((p) => ({ name: p.name, capacity: Math.floor(p.capacity) })),
+          }
+        : {}),
     });
 
     return {

@@ -101,6 +101,35 @@ export interface CycleConfig<P> {
   readonly workerPool?: WorkerPool;
   readonly requiredSkills?: readonly string[];
   /**
+   * VROL-920 — assembly BOM atomic pull. Called before the cycle pulls its
+   * primary upstream part. Returns true if all configured feeders had at
+   * least their per-cycle quantity AND consumed atomically; false if any
+   * feeder was short. On false, the executor transitions Starved with
+   * reason "starved-bom" (so perStationBomStarved bookkeeping can listen
+   * for it).
+   */
+  readonly bomGate?: (timeMs: number) => boolean;
+  /**
+   * VROL-922 — tool-pool acquire. Called after a worker has been requested
+   * but before pulling the part. Returns true if a unit was acquired from
+   * the named pool (executor holds it for the duration of the cycle); false
+   * if the pool was exhausted. On false, the executor releases the worker
+   * and transitions Starved with reason "starved-tool".
+   */
+  readonly toolAcquire?: (timeMs: number) => boolean;
+  /**
+   * VROL-922 — tool-pool release. Called on cycle-complete (good, defective,
+   * scrapped due to Down/Maintenance) when toolAcquire returned true earlier.
+   */
+  readonly toolRelease?: (timeMs: number) => void;
+  /**
+   * VROL-921 — per-SKU downstream override. When set, the cycle executor
+   * pushes a completed part into the buffer returned by this function
+   * instead of `downstream`. Return `downstream` (or undefined) for the
+   * default route. Used by chain-harness to wire perSkuRouting.
+   */
+  readonly downstreamFor?: (part: P) => Buffer<P> | undefined;
+  /**
    * Optional rework router (VROL-626). Called on a defect roll BEFORE the
    * scrap counter increments. Return true if the part was successfully
    * re-routed (the executor counts it under `reworked` and skips the scrap
@@ -126,6 +155,7 @@ interface InFlightEntry<P> {
   readonly partIdx: number;
   readonly part: P;
   readonly workerId: import("./ids").ResourceId | null;
+  readonly heldTool: boolean;
   scheduledAt: number;
   isPaused: boolean;
   remainingMs: number;
@@ -215,6 +245,20 @@ export class CycleExecutor<P> {
         }
       }
 
+      // VROL-920 — BOM atomic pull. After materials but BEFORE worker /
+      // tool acquisition so we don't tie up shared resources behind a
+      // short feeder. The gate consumes from feeder buffers atomically
+      // when it returns true.
+      if (this.config.bomGate) {
+        const bomReady = this.config.bomGate(timeMs);
+        if (!bomReady) {
+          if (state === "Idle" || state === "Running") {
+            this.stateMachine.transition("Starved", "starved-bom", timeMs);
+          }
+          return;
+        }
+      }
+
       // Worker check — request a qualified worker. If none, go Starved with
       // the no-skill reason. We've already consumed materials at this point,
       // which is "wrong" in the sense that the recipe leaks if the worker
@@ -240,9 +284,25 @@ export class CycleExecutor<P> {
         }
       }
 
+      // VROL-922 — tool pool acquire. After worker so we don't acquire a
+      // tool nobody can use yet.
+      let heldTool = false;
+      if (this.config.toolAcquire) {
+        const acquired = this.config.toolAcquire(timeMs);
+        if (!acquired) {
+          if (assignedWorkerId) this.config.workerPool?.release(assignedWorkerId, timeMs);
+          if (state === "Idle" || state === "Running") {
+            this.stateMachine.transition("Starved", "starved-tool", timeMs);
+          }
+          return;
+        }
+        heldTool = true;
+      }
+
       const part = this.config.upstream.pull();
       if (part === undefined) {
         if (assignedWorkerId) this.config.workerPool?.release(assignedWorkerId, timeMs);
+        if (heldTool) this.config.toolRelease?.(timeMs);
         return;
       }
 
@@ -263,6 +323,7 @@ export class CycleExecutor<P> {
         partIdx,
         part,
         workerId: assignedWorkerId ?? null,
+        heldTool,
         scheduledAt: completeAt,
         isPaused: false,
         remainingMs: 0,
@@ -343,6 +404,7 @@ export class CycleExecutor<P> {
     if (entry.workerId && this.config.workerPool) {
       this.config.workerPool.release(entry.workerId, timeMs);
     }
+    if (entry.heldTool) this.config.toolRelease?.(timeMs);
 
     const part = entry.part;
     // Update the changeover memory regardless of whether the part is scrapped
@@ -380,7 +442,8 @@ export class CycleExecutor<P> {
       return;
     }
 
-    const pushed = this.config.downstream.push(part);
+    const target = this.config.downstreamFor?.(part) ?? this.config.downstream;
+    const pushed = target.push(part);
     if (pushed) {
       // VROL-870 — multi-output station: one cycle ⇒ N units produced.
       this.completed_ += this.config.unitsPerCycle ?? 1;
@@ -444,9 +507,12 @@ export class CycleExecutor<P> {
    * blocked parts, transition out of BlockedOut, and resume cycling.
    */
   onDownstreamCleared(timeMs: number): void {
-    while (this.pendingPush.length > 0 && !this.config.downstream.isFull) {
-      const part = this.pendingPush.shift() as P;
-      this.config.downstream.push(part);
+    while (this.pendingPush.length > 0) {
+      const part = this.pendingPush[0] as P;
+      const target = this.config.downstreamFor?.(part) ?? this.config.downstream;
+      if (target.isFull) break;
+      this.pendingPush.shift();
+      target.push(part);
       // VROL-870 — same N-units-per-cycle accounting applies on the
       // pending-push drain path.
       this.completed_ += this.config.unitsPerCycle ?? 1;

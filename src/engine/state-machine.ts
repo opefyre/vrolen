@@ -46,6 +46,8 @@ export type TransitionReason =
   | "downstream-cleared"
   | "starved-upstream"
   | "starved-material"
+  | "starved-bom"
+  | "starved-tool"
   | "upstream-available"
   | "no-skill-available"
   | "skill-available"

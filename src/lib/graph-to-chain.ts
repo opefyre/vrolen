@@ -256,6 +256,54 @@ function stationKeyOf(node: Node): string {
  * nominalCycle, PM) flow through every code path. Pre-VROL-880 the fallback
  * emitted only cycleDistributions, silently dropping every other setting.
  */
+function finiteNumOf(node: Node, key: string): number | undefined {
+  const raw = (node.data as Record<string, unknown> | undefined)?.[key];
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  return raw;
+}
+
+function positiveNumOf(node: Node, key: string): number | undefined {
+  const v = finiteNumOf(node, key);
+  if (v === undefined || v <= 0) return undefined;
+  return v;
+}
+
+function stringOf(node: Node, key: string): string | undefined {
+  const raw = (node.data as Record<string, unknown> | undefined)?.[key];
+  return typeof raw === "string" && raw.length > 0 ? raw : undefined;
+}
+
+function bomFeedersOf(
+  node: Node,
+): ReadonlyArray<{ feederStationId: string; qtyPerCycle: number }> | undefined {
+  const raw = (node.data as { bomFeeders?: unknown } | undefined)?.bomFeeders;
+  if (!Array.isArray(raw)) return undefined;
+  const out: { feederStationId: string; qtyPerCycle: number }[] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    const fid = (r as { feederStationId?: unknown }).feederStationId;
+    const qty = (r as { qtyPerCycle?: unknown }).qtyPerCycle;
+    if (typeof fid !== "string" || fid.length === 0) continue;
+    if (typeof qty !== "number" || !Number.isFinite(qty) || qty <= 0) continue;
+    out.push({ feederStationId: fid, qtyPerCycle: qty });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+function perSkuRoutingOf(node: Node): Record<string, string | "skip"> | undefined {
+  const raw = (node.data as { perSkuRouting?: unknown } | undefined)?.perSkuRouting;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, string | "skip"> = {};
+  let any = false;
+  for (const [sku, dest] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof sku !== "string" || sku.length === 0) continue;
+    if (typeof dest !== "string" || dest.length === 0) continue;
+    out[sku] = dest;
+    any = true;
+  }
+  return any ? out : undefined;
+}
+
 function buildTopologyNode(node: Node, id: string, topoSet: Set<string>): ChainTopologyNode {
   const setup = setupDistributionOf(node);
   const byProduct = cycleByProductOf(node);
@@ -275,6 +323,20 @@ function buildTopologyNode(node: Node, id: string, topoSet: Set<string>): ChainT
   const co2ePerCycleG = nonNegNumOf(node, "co2ePerCycleG");
   const qualityGrades = qualityGradesOf(node);
   const materialRequirements = materialRequirementsOf(node);
+  // Sprint 89/90/91 round-trips: maintenance/CIP/PM, temperature, tool
+  // pool, BOM, per-SKU routing. All optional and dropped silently when
+  // missing or malformed.
+  const cipEveryMs = positiveNumOf(node, "cipEveryMs");
+  const cipDurationMs = positiveNumOf(node, "cipDurationMs");
+  const pmEveryNCycles = positiveNumOf(node, "pmEveryNCycles");
+  const pmCycleDurationMs = positiveNumOf(node, "pmCycleDurationMs");
+  const initialTempC = finiteNumOf(node, "initialTempC");
+  const stationDeltaC = finiteNumOf(node, "stationDeltaC");
+  const tempSpecLoC = finiteNumOf(node, "tempSpecLoC");
+  const tempSpecHiC = finiteNumOf(node, "tempSpecHiC");
+  const requiredToolPool = stringOf(node, "requiredToolPool");
+  const bomFeeders = bomFeedersOf(node);
+  const perSkuRouting = perSkuRoutingOf(node);
   return {
     id,
     label: labelOf(node),
@@ -293,6 +355,17 @@ function buildTopologyNode(node: Node, id: string, topoSet: Set<string>): ChainT
     ...(co2ePerCycleG !== undefined ? { co2ePerCycleG } : {}),
     ...(qualityGrades ? { qualityGrades } : {}),
     ...(materialRequirements ? { materialRequirements } : {}),
+    ...(cipEveryMs !== undefined ? { cipEveryMs } : {}),
+    ...(cipDurationMs !== undefined ? { cipDurationMs } : {}),
+    ...(pmEveryNCycles !== undefined ? { pmEveryNCycles } : {}),
+    ...(pmCycleDurationMs !== undefined ? { pmCycleDurationMs } : {}),
+    ...(initialTempC !== undefined ? { initialTempC } : {}),
+    ...(stationDeltaC !== undefined ? { stationDeltaC } : {}),
+    ...(tempSpecLoC !== undefined ? { tempSpecLoC } : {}),
+    ...(tempSpecHiC !== undefined ? { tempSpecHiC } : {}),
+    ...(requiredToolPool ? { requiredToolPool } : {}),
+    ...(bomFeeders ? { bomFeeders } : {}),
+    ...(perSkuRouting ? { perSkuRouting } : {}),
   };
 }
 

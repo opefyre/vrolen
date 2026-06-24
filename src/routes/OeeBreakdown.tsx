@@ -35,8 +35,62 @@ function Segment({ label, pct, colorClass }: SegmentProps) {
   );
 }
 
+type ConstraintKey = "tempScrap" | "toolBlockedMs" | "bomStarved" | "skuRouted";
+
+function getConstraint(result: ChainResult, idx: number, key: ConstraintKey): number {
+  switch (key) {
+    case "tempScrap":
+      return result.perStationTempScrap?.[idx] ?? 0;
+    case "toolBlockedMs":
+      return result.perStationToolBlockedMs?.[idx] ?? 0;
+    case "bomStarved":
+      return result.perStationBomStarved?.[idx] ?? 0;
+    case "skuRouted":
+      return result.perStationSkuRouted?.[idx] ?? 0;
+  }
+}
+
+function constraintLabel(key: ConstraintKey): string {
+  switch (key) {
+    case "tempScrap":
+      return "Temp-spec scrap";
+    case "toolBlockedMs":
+      return "Tool-pool wait";
+    case "bomStarved":
+      return "BOM-starved";
+    case "skuRouted":
+      return "SKU-routed";
+  }
+}
+
+function constraintTitle(key: ConstraintKey): string {
+  switch (key) {
+    case "tempScrap":
+      return "Parts whose temperature fell outside the station's tempSpec window after the station's stationDeltaC was applied. Scrapped at this station.";
+    case "toolBlockedMs":
+      return "Total milliseconds this station spent Starved waiting for a unit from its shared tool pool (requiredToolPool). Direct loss vs. a dedicated tool.";
+    case "bomStarved":
+      return "Cycle attempts blocked because the station's bomFeeders entry had insufficient quantity on its feeder edge. Count of starvation events, not duration.";
+    case "skuRouted":
+      return "Completed parts whose productId matched an entry in this station's perSkuRouting. Currently a counter — full per-SKU dispatch is a follow-up.";
+  }
+}
+
+function formatConstraint(key: ConstraintKey, value: number): string {
+  if (key === "toolBlockedMs") return `${(value / 1000).toFixed(1)}s`;
+  return value.toLocaleString();
+}
+
+const CONSTRAINT_KEYS: ConstraintKey[] = ["tempScrap", "toolBlockedMs", "bomStarved", "skuRouted"];
+
 export function OeeBreakdown({ result }: OeeBreakdownProps) {
   if (result.perStationOee.length === 0) return null;
+
+  // VROL-925 — Sprint 91 constraint rows. Hidden when every station has
+  // zero on a given counter, so legacy lines stay uncluttered.
+  const visibleConstraints = CONSTRAINT_KEYS.filter((k) =>
+    result.perStationOee.some((_, idx) => getConstraint(result, idx, k) > 0),
+  );
   // VROL-897 — Both perStationLabels and perStationRunningPct are now emitted
   // by runChain in topology order, aligned by index with perStationOee.
   // The legacy fallback to result.bottlenecks[idx] (sorted DESC by runningPct)
@@ -85,6 +139,25 @@ export function OeeBreakdown({ result }: OeeBreakdownProps) {
               <Segment label="Performance" pct={oee.performance} colorClass="bg-sim-setup" />
               <Segment label="Quality" pct={oee.quality} colorClass="bg-sim-maintenance" />
             </div>
+            {visibleConstraints.length > 0 && (
+              <div
+                className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-[10px]"
+                data-testid="oee-constraints"
+              >
+                {visibleConstraints.map((key) => {
+                  const v = getConstraint(result, idx, key);
+                  if (v === 0) return null;
+                  return (
+                    <span key={key} title={constraintTitle(key)}>
+                      {constraintLabel(key)}:{" "}
+                      <span className="text-foreground font-mono tabular-nums">
+                        {formatConstraint(key, v)}
+                      </span>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
       })}

@@ -2071,6 +2071,20 @@ function EditorCanvas() {
                   },
                 }
               : {}),
+            // VROL-923 — shared tool-resource pools threaded into runChain.
+            ...(settings.toolPools && settings.toolPools.length > 0
+              ? {
+                  toolPools: settings.toolPools
+                    .filter(
+                      (p) =>
+                        typeof p.name === "string" &&
+                        p.name.length > 0 &&
+                        Number.isFinite(p.capacity) &&
+                        p.capacity > 0,
+                    )
+                    .map((p) => ({ name: p.name, capacity: Math.floor(p.capacity) })),
+                }
+              : {}),
           }) as const;
         // First rep is the canonical one (powers canvas + playback). Extra reps
         // contribute to the cross-replication 95 % CI summary only.
@@ -5174,6 +5188,105 @@ function EditorCanvas() {
                           }}
                         />
                       ) : null}
+                      {/* VROL-923/924 — Sprint 91 constraint editors:
+                          requiredToolPool + bomFeeders + perSkuRouting. UI is
+                          intentionally minimal (plain inputs / JSON-shaped
+                          textareas); richer widgets land in a follow-up. */}
+                      <div className="border-border space-y-2 rounded-md border border-dashed p-3">
+                        <div className="text-foreground text-xs font-medium">
+                          Shared constraints
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label
+                            htmlFor="inspector-tool-pool"
+                            className="text-muted-foreground text-xs font-medium"
+                          >
+                            Required tool pool
+                          </label>
+                          <input
+                            id="inspector-tool-pool"
+                            type="text"
+                            value={
+                              (selectedNode.data as { requiredToolPool?: string })
+                                .requiredToolPool ?? ""
+                            }
+                            onChange={(e) => {
+                              const v = e.target.value.trim();
+                              updateSelectedNodeData({
+                                requiredToolPool: v.length > 0 ? v : undefined,
+                              });
+                            }}
+                            placeholder="e.g. chambers"
+                            className="border-input bg-background rounded-md border px-2 py-1.5 text-sm"
+                          />
+                          <p className="text-muted-foreground text-[11px]">
+                            Station holds one unit of this pool per cycle. Define pools in scenario
+                            settings (toolPools).
+                          </p>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label
+                            htmlFor="inspector-bom-feeders"
+                            className="text-muted-foreground text-xs font-medium"
+                          >
+                            BOM feeders (JSON)
+                          </label>
+                          <textarea
+                            id="inspector-bom-feeders"
+                            value={JSON.stringify(
+                              (selectedNode.data as { bomFeeders?: unknown }).bomFeeders ?? [],
+                            )}
+                            onChange={(e) => {
+                              try {
+                                const parsed = JSON.parse(e.target.value) as unknown;
+                                updateSelectedNodeData({
+                                  bomFeeders:
+                                    Array.isArray(parsed) && parsed.length > 0 ? parsed : undefined,
+                                });
+                              } catch {
+                                /* keep current value while user edits */
+                              }
+                            }}
+                            placeholder='[{"feederStationId":"feed-A","qtyPerCycle":2}]'
+                            rows={2}
+                            className="border-input bg-background rounded-md border px-2 py-1.5 font-mono text-[11px]"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label
+                            htmlFor="inspector-sku-routing"
+                            className="text-muted-foreground text-xs font-medium"
+                          >
+                            Per-SKU routing (JSON)
+                          </label>
+                          <textarea
+                            id="inspector-sku-routing"
+                            value={JSON.stringify(
+                              (selectedNode.data as { perSkuRouting?: unknown }).perSkuRouting ??
+                                {},
+                            )}
+                            onChange={(e) => {
+                              try {
+                                const parsed = JSON.parse(e.target.value) as unknown;
+                                updateSelectedNodeData({
+                                  perSkuRouting:
+                                    parsed &&
+                                    typeof parsed === "object" &&
+                                    !Array.isArray(parsed) &&
+                                    Object.keys(parsed as object).length > 0
+                                      ? parsed
+                                      : undefined,
+                                });
+                              } catch {
+                                /* keep current value while user edits */
+                              }
+                            }}
+                            placeholder='{"sku-A":"qa-bay","sku-B":"skip"}'
+                            rows={2}
+                            className="border-input bg-background rounded-md border px-2 py-1.5 font-mono text-[11px]"
+                          />
+                        </div>
+                      </div>
                       {/* VROL-286 — customParams editor. Lives in Schedule
                           because most custom params are time-related. */}
                       <CustomParamsField

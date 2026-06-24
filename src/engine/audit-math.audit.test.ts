@@ -1242,6 +1242,99 @@ describe("audit VROL-899/900 — nominalCycleTimeMs + composite ranking", () => 
     expect(result.perStationSkuRouted.length).toBe(1);
   });
 
+  it("VROL-920 — bomFeeders triggers starved-bom counter when feeder is short", () => {
+    // Linear chain src → feed → asm → snk. asm requires 3 parts/cycle
+    // from feed. feed produces slower than asm's cycle wants, so asm
+    // starves on BOM checks frequently. Counter must increment.
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "src", cycleTimeMs: constant(50) },
+          { id: "feed", cycleTimeMs: constant(200) },
+          {
+            id: "asm",
+            cycleTimeMs: constant(100),
+            bomFeeders: [{ feederStationId: "feed", qtyPerCycle: 3 }],
+          },
+          { id: "snk", cycleTimeMs: constant(50) },
+        ],
+        edges: [
+          { source: "src", target: "feed" },
+          { source: "feed", target: "asm" },
+          { source: "asm", target: "snk" },
+        ],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+    });
+    expect(result.perStationBomStarved[2]).toBeGreaterThan(0);
+  });
+
+  it("VROL-921 — perSkuRouting counter increments per matched SKU", () => {
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "src", cycleTimeMs: constant(50) },
+          {
+            id: "polish",
+            cycleTimeMs: constant(50),
+            perSkuRouting: { "sku-B": "skip" },
+          },
+          { id: "snk", cycleTimeMs: constant(50) },
+        ],
+        edges: [
+          { source: "src", target: "polish" },
+          { source: "polish", target: "snk" },
+        ],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+      products: {
+        products: [
+          { id: "sku-A", weight: 1 },
+          { id: "sku-B", weight: 1 },
+        ],
+      },
+    });
+    expect(result.perStationSkuRouted[1]).toBeGreaterThan(0);
+  });
+
+  it("VROL-922 — toolPool serializes two stations and accrues perStationToolBlockedMs", () => {
+    // Two parallel stations sharing a 1-capacity tool pool. Each station
+    // has its own upstream so they would otherwise process concurrently;
+    // the shared pool must serialise them, and the loser's wait accrues
+    // into perStationToolBlockedMs.
+    const result = runChain({
+      topology: {
+        nodes: [
+          { id: "src", cycleTimeMs: constant(50) },
+          { id: "a", cycleTimeMs: constant(200), requiredToolPool: "p" },
+          { id: "b", cycleTimeMs: constant(200), requiredToolPool: "p" },
+          { id: "snk", cycleTimeMs: constant(50) },
+        ],
+        edges: [
+          { source: "src", target: "a" },
+          { source: "src", target: "b" },
+          { source: "a", target: "snk" },
+          { source: "b", target: "snk" },
+        ],
+      },
+      interStationBufferCapacity: 100,
+      horizonMs: 10_000,
+      warmupMs: 0,
+      prng: new SeededPrng(1),
+      toolPools: [{ name: "p", capacity: 1 }],
+    });
+    // At least one of {a, b} must spend time blocked on the pool.
+    const blocked =
+      (result.perStationToolBlockedMs[1] ?? 0) + (result.perStationToolBlockedMs[2] ?? 0);
+    expect(blocked).toBeGreaterThan(0);
+  });
+
   it("VROL-916 — cipEveryMs schedules recurring Maintenance windows at run time", () => {
     // 60s horizon, CIP every 20s for 5s each → ~3 cleaning cycles ≈ 15s Maintenance.
     const result = runChain({
