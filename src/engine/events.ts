@@ -70,7 +70,12 @@ export type EngineEvent =
   // the durationMs + next exponential gap. Station goes Down for that
   // duration; random-event-end re-arms the executor.
   | { readonly kind: "random-event-fire"; readonly stationId: StationId; readonly eventIdx: number }
-  | { readonly kind: "random-event-end"; readonly stationId: StationId };
+  | { readonly kind: "random-event-end"; readonly stationId: StationId }
+  // VROL-1002 — conveyor arrival. A part finished its transit through
+  // an edge conveyor (DelayedBuffer wrapper) and is now ready for the
+  // downstream station to consume. Dispatch wakes that executor via
+  // attemptStart so a Starved station retries the pull immediately.
+  | { readonly kind: "conveyor-arrival"; readonly edgeIdx: number };
 
 // Future event kinds (added in their own stories):
 //   - "shift-start" / "shift-end"                   (VROL-133)

@@ -21,6 +21,7 @@
 import { detectBottlenecks, type BottleneckCandidate } from "./bottleneck";
 import { BreakdownManager } from "./breakdown";
 import { Buffer, TrackedBuffer } from "./buffer";
+import { DelayedBuffer } from "./delayed-buffer";
 import type { CycleConfig } from "./cycle-execution";
 import { CycleExecutor } from "./cycle-execution";
 import type { Distribution } from "./distribution";
@@ -120,6 +121,58 @@ class CountingTrackedBuffer<T> extends TrackedBuffer<T> {
     const ok = super.push(item);
     if (ok) this.flowed += 1;
     return ok;
+  }
+}
+
+/**
+ * VROL-1002 — Conveyor push wrapper. Stands in front of an edge buffer
+ * for edges configured with delayMs > 0. The upstream station's
+ * `downstream.push(part)` call lands here instead of the edge buffer
+ * directly. We:
+ *   1. Push the part into the DelayedBuffer (capacity-bounded, includes
+ *      in-transit items so back-pressure is correct).
+ *   2. Schedule a `conveyor-arrival` event at currentTime + delayMs.
+ *      The harness dispatcher drains ready parts to the real edge
+ *      buffer and wakes the downstream executor.
+ *   3. Return push success only when the DelayedBuffer accepted the
+ *      part — i.e. the conveyor wasn't already full.
+ *
+ * `pull` / `peek` are not expected to be called on this wrapper; the
+ * executor only uses it as the OUTPUT side. Downstream pulls from the
+ * underlying edge buffer (which is unchanged).
+ */
+class ConveyorPushWrapper<T> extends Buffer<T> {
+  constructor(
+    private readonly delayed: DelayedBuffer<T>,
+    private readonly scheduler: Scheduler<EngineEvent>,
+    private readonly edgeIdx: number,
+    private readonly nowMs: { v: number },
+  ) {
+    super(0); // capacity is enforced by the DelayedBuffer; this is unused.
+  }
+  override get size(): number {
+    return this.delayed.size;
+  }
+  override get isEmpty(): boolean {
+    return this.delayed.size === 0;
+  }
+  override get isFull(): boolean {
+    return this.delayed.isFull;
+  }
+  override push(item: T): boolean {
+    const ok = this.delayed.pushAt(item, this.nowMs.v);
+    if (!ok) return false;
+    this.scheduler.schedule(this.nowMs.v + this.delayed.residenceTimeMs, {
+      kind: "conveyor-arrival",
+      edgeIdx: this.edgeIdx,
+    });
+    return true;
+  }
+  override pull(): T | undefined {
+    return undefined;
+  }
+  override peek(): T | undefined {
+    return undefined;
   }
 }
 
@@ -712,6 +765,18 @@ export interface ChainOptions {
    * Default undefined → push mode (current behaviour).
    */
   readonly kanbanCap?: number;
+  /**
+   * VROL-1002 — per-edge conveyor delay. Each entry maps an edge index
+   * (topology order) to the residence time in ms for parts crossing
+   * that edge. When > 0, the edge is modelled as a conveyor / tunnel
+   * oven / dryer: pushed parts enter a DelayedBuffer and only become
+   * available to the downstream station after delayMs has elapsed. In
+   * linear mode (stationCycleTimes), edge index i is the i → i+1
+   * edge. Default 0 for every edge (no delay; current behaviour).
+   * Currently only honoured for single-output upstream stations
+   * (out-degree 1). Multi-output conveyors are a follow-up.
+   */
+  readonly bufferDelayMs?: readonly number[];
   /**
    * VROL-890 — shared tool-family resource pools. Each pool has a name + N
    * units. Stations declare requiredToolPool to consume one unit per cycle.
@@ -1481,6 +1546,19 @@ function* simulationStream(
       feedsSink && kanbanCap && kanbanCap > 0 ? kanbanCap : opts.interStationBufferCapacity;
     return new CountingTrackedBuffer<TrackedPart>(cap);
   });
+  // VROL-1002 — per-edge conveyor (DelayedBuffer) on the upstream side.
+  // Only created for edges with a positive delay AND only used by the
+  // single-output downstreamFor path (multi-output conveyors are a
+  // follow-up). The `nowMs` ref is a shared time read by
+  // ConveyorPushWrapper at the moment of push.
+  const nowMs: { v: number } = { v: 0 };
+  const edgeConveyors: (DelayedBuffer<TrackedPart> | undefined)[] = topology.edges.map(
+    (_edge, idx) => {
+      const delayMs = opts.bufferDelayMs?.[idx] ?? 0;
+      if (delayMs <= 0) return undefined;
+      return new DelayedBuffer<TrackedPart>(opts.interStationBufferCapacity, delayMs);
+    },
+  );
 
   // Workers — optional. The TrackingWorkerPool below extends WorkerPool with
   // acquire/release time bookkeeping so we can compute labor utilization at
@@ -1536,7 +1614,18 @@ function* simulationStream(
   function downstreamFor(nodeIdx: number): Buffer<TrackedPart> {
     if (nodeIdx === topology.sinkIdx) return sinkBuffer;
     const outs = outgoingEdgeIdx[nodeIdx]!;
-    if (outs.length === 1) return edgeBuffers[outs[0]!] as CountingTrackedBuffer<TrackedPart>;
+    if (outs.length === 1) {
+      const edgeIdx = outs[0]!;
+      // VROL-1002 — when the edge has a conveyor delay, upstream pushes
+      // go through the wrapper that schedules conveyor-arrival events
+      // instead of writing the part straight to the downstream-visible
+      // edge buffer.
+      const conveyor = edgeConveyors[edgeIdx];
+      if (conveyor) {
+        return new ConveyorPushWrapper<TrackedPart>(conveyor, scheduler, edgeIdx, nowMs);
+      }
+      return edgeBuffers[edgeIdx] as CountingTrackedBuffer<TrackedPart>;
+    }
     return new MultiOutputBuffer<TrackedPart>(
       outs.map((idx) => edgeBuffers[idx] as CountingTrackedBuffer<TrackedPart>),
     );
@@ -2228,6 +2317,10 @@ function* simulationStream(
     // matching the engine's "discrete event clock" semantics.
     if (samplerIntervalMs > 0) drainSamplesUpTo(peeked.timeMs - 1);
     const ev = scheduler.popMin();
+    // VROL-1002 — keep `nowMs.v` aligned with the dispatcher's notion
+    // of current time so ConveyorPushWrapper.push reads the right
+    // timestamp from the upstream's downstream.push call.
+    nowMs.v = ev.timeMs;
     // VROL-148 — `dispatch:` labels the per-event handler. Replaces the old
     // `continue` short-circuits with `break dispatch` so the generator
     // can `yield ev` at the bottom of every iteration (step mode requires
@@ -2302,6 +2395,27 @@ function* simulationStream(
         // "no-skill-available" will retry the worker pool, which now sees the
         // break window has closed.
         for (const ex of executors) ex.attemptStart(ev.timeMs);
+        break dispatch;
+      }
+      if (ev.payload.kind === "conveyor-arrival") {
+        // VROL-1002 — drain any parts whose transit completed at or before
+        // ev.timeMs out of the edge conveyor and into the downstream-visible
+        // edge buffer; then wake the downstream executor (it may have been
+        // Starved waiting for this arrival).
+        const eIdx = ev.payload.edgeIdx;
+        const conveyor = edgeConveyors[eIdx];
+        const edgeBuf = edgeBuffers[eIdx];
+        if (!conveyor || !edgeBuf) break dispatch;
+        for (;;) {
+          const part = conveyor.pullAt(ev.timeMs);
+          if (part === undefined) break;
+          edgeBuf.pushAt(part, ev.timeMs);
+        }
+        const dEdge = topology.edges[eIdx];
+        if (dEdge) {
+          const downstreamExec = executors[dEdge.targetIdx];
+          if (downstreamExec) downstreamExec.attemptStart(ev.timeMs);
+        }
         break dispatch;
       }
       if (ev.payload.kind === "maintenance-end") {
