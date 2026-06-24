@@ -53,6 +53,18 @@ function pdfFor(d: Distribution): number[] {
       }
       return out;
     }
+    case "truncatedNormal": {
+      // VROL-976 — Normal shape zero-clipped outside [min, max].
+      const out: number[] = [];
+      const span = Math.max(1e-9, d.max - d.min);
+      for (let i = 0; i < POINTS; i++) {
+        const x = d.min + (i / (POINTS - 1)) * span;
+        const z = (x - d.mean) / Math.max(1e-9, d.stddev);
+        if (x < d.min || x > d.max) out.push(0);
+        else out.push(Math.exp(-(z * z) / 2));
+      }
+      return out;
+    }
     case "triangular": {
       const out: number[] = [];
       const peak = Math.floor((POINTS * (d.mode - d.min)) / Math.max(1, d.max - d.min));
@@ -122,6 +134,7 @@ export function DistributionPdf({ distribution }: { distribution: Distribution }
     constant: "Constant",
     uniform: "Uniform",
     normal: "Normal",
+    truncatedNormal: "Truncated normal",
     triangular: "Triangular",
     exponential: "Exponential",
     lognormal: "Log-normal",

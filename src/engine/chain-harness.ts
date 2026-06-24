@@ -343,6 +343,21 @@ export interface ChainResult {
    */
   readonly perStationSkuRouted: readonly number[];
   /**
+   * VROL-976 — total count of cycle-time / setup-time samples that were
+   * clamped by the engine's {min: 0} guard during this run. Non-zero
+   * means at least one distribution produced a negative draw and was
+   * silently floor-clamped; if this exceeds ~1 % of total cycles the
+   * effective mean is biased upward and the UI suggests truncatedNormal.
+   */
+  readonly clampedSampleCount: number;
+  /**
+   * VROL-975 — raw sampled cycle times per station, capped at
+   * CYCLE_SAMPLE_CAP entries per station to bound memory. Powers the
+   * drilldown histogram so a plant engineer can see bimodality or a
+   * long tail rather than just min/median/max scalars.
+   */
+  readonly perStationCycleSamples: readonly (readonly number[])[];
+  /**
    * Labor utilization — total worker-busy ms across the run, normalized by
    * (worker count × elapsed ms). Undefined when no workers config provided.
    * Caps at 1.0 (every worker busy every moment).
@@ -1393,6 +1408,18 @@ function* simulationStream(
   // Declared at the top of the function so the closures below can mutate.
   const toolBlockedSince: (number | undefined)[] = Array.from({ length: n }, () => undefined);
   const perStationToolBlockedMs = new Array<number>(n).fill(0);
+  // VROL-976 — count cycle-time / setup-time samples that were clamped
+  // by the engine's {min: 0} guard. Surfaced on ChainResult so the UI
+  // can warn 'your Normal sampling clamped N times — bias possible;
+  // consider truncatedNormal'.
+  let clampedSampleCount = 0;
+  const incrementCycleClamp = () => {
+    clampedSampleCount += 1;
+  };
+  // VROL-975 — raw cycle samples per station, capped at CYCLE_SAMPLE_CAP
+  // to bound memory. Drilldown surfaces these as a histogram.
+  const CYCLE_SAMPLE_CAP = 5000;
+  const perStationCycleSamples: number[][] = Array.from({ length: n }, () => []);
 
   // Wire each tracker (and, if applicable, breakdown manager) to its state machine.
   for (let i = 0; i < n; i++) {
@@ -1702,6 +1729,12 @@ function* simulationStream(
       ...(toolRelease ? { toolRelease } : {}),
       ...(downstreamForFn ? { downstreamFor: downstreamForFn } : {}),
       ...(pushPartForFn ? { pushPartFor: pushPartForFn } : {}),
+      onCycleClamp: incrementCycleClamp,
+      // VROL-975 — per-station cycle sample collector, capped.
+      onCycleSample: (ms: number) => {
+        const bucket = perStationCycleSamples[i];
+        if (bucket && bucket.length < CYCLE_SAMPLE_CAP) bucket.push(ms);
+      },
     };
     const ex = new CycleExecutor<TrackedPart>(
       cfg,
@@ -2633,5 +2666,7 @@ function* simulationStream(
     // multi-feeder BOM check and per-SKU dispatch land).
     perStationBomStarved: [...perStationBomStarvedCounts],
     perStationSkuRouted: [...perStationSkuRoutedCounts],
+    clampedSampleCount,
+    perStationCycleSamples: perStationCycleSamples.map((arr) => [...arr]),
   };
 }

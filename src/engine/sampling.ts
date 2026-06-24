@@ -48,6 +48,21 @@ export function sample(d: Distribution, prng: Prng, options?: SampleOptions): nu
     case "normal":
       v = sampleNormal(d.mean, d.stddev, prng);
       break;
+    case "truncatedNormal": {
+      // VROL-976 — rejection-sampling truncated normal. 50-attempt cap
+      // keeps worst-case bounded; if the truncation window is so narrow
+      // that every draw is rejected, fall through to a single Normal
+      // sample and let the outer clamp catch it (which also fires
+      // onClamp via the existing mechanism).
+      let attempt = 0;
+      let draw = sampleNormal(d.mean, d.stddev, prng);
+      while ((draw < d.min || draw > d.max) && attempt < 50) {
+        draw = sampleNormal(d.mean, d.stddev, prng);
+        attempt += 1;
+      }
+      v = draw;
+      break;
+    }
     case "exponential":
       v = sampleExponential(d.rate, prng);
       break;

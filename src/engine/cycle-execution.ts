@@ -130,6 +130,19 @@ export interface CycleConfig<P> {
    */
   readonly downstreamFor?: (part: P) => Buffer<P> | undefined;
   /**
+   * VROL-976 — invoked when a cycle-time / setup-time sample was
+   * clamped by the engine's {min: 0} guard. Lets chain-harness count
+   * clamps and surface ChainResult.clampedSampleCount so the UI can
+   * warn 'your Normal sampling clamped N times — bias possible'.
+   */
+  readonly onCycleClamp?: () => void;
+  /**
+   * VROL-975 — invoked with the post-clamp cycle-time sample (excluding
+   * the worker multiplier). chain-harness captures these per-station up
+   * to a cap so the drilldown can render a histogram.
+   */
+  readonly onCycleSample?: (cycleMs: number) => void;
+  /**
    * VROL-927 — alternate per-part downstream push. When set, called for a
    * part instead of downstream.push when the part has a custom routing
    * destination that isn't a topology-edge buffer (e.g. perSkuRouting to a
@@ -321,10 +334,21 @@ export class CycleExecutor<P> {
       // before the cycle clock starts. Otherwise, go straight to Running.
       const setupDistribution =
         this.config.setupTimeFor?.(this.lastProductId_, part) ?? this.config.setupTimeMs;
-      const setupMs = setupDistribution ? sample(setupDistribution, this.prng, { min: 0 }) : 0;
+      const setupMs = setupDistribution
+        ? sample(setupDistribution, this.prng, {
+            min: 0,
+            ...(this.config.onCycleClamp ? { onClamp: this.config.onCycleClamp } : {}),
+          })
+        : 0;
       const partDistribution = this.config.cycleTimeFor?.(part) ?? this.config.cycleTimeMs;
       // VROL-884 — apply the worker multiplier to the sampled cycle time.
-      const cycleTimeMs = sample(partDistribution, this.prng, { min: 0 }) * workerCycleMultiplier;
+      const rawCycleSample = sample(partDistribution, this.prng, {
+        min: 0,
+        ...(this.config.onCycleClamp ? { onClamp: this.config.onCycleClamp } : {}),
+      });
+      // VROL-975 — emit the post-clamp pre-multiplier sample for histogram.
+      this.config.onCycleSample?.(rawCycleSample);
+      const cycleTimeMs = rawCycleSample * workerCycleMultiplier;
       const completeAt = timeMs + setupMs + cycleTimeMs;
 
       this.inFlight.push({

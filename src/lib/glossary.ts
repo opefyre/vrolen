@@ -19,6 +19,11 @@ export const GLOSSARY: Readonly<Record<string, GlossaryEntry>> = {
     body: "Availability × Performance × Quality. Measures losses while a station is allowed to run — does NOT include starvation or blocking (those are surfaced by the Util percentage alongside).",
     source: "ISA-95 / Nakajima 1988",
   },
+  teep: {
+    title: "Total Effective Equipment Performance (TEEP)",
+    body: "OEE × Loading. Includes planned downtime (Setup + Maintenance + CIP) in the denominator, so a line that's only run 16h/24h with 95% OEE reads ~63% TEEP. The honest 'how much of calendar time produced parts' number for capacity planning.",
+    source: "Vorne / Productivity Press",
+  },
   availability: {
     title: "Availability",
     body: "Fraction of operating time the station was not Down due to unplanned breakdowns. Per SEMI E10 / Nakajima, planned downtime (Setup + Maintenance + CIP) is excluded from the Availability denominator — those losses surface elsewhere (Setup ↘ Performance, Maintenance ↘ TEEP). A station with frequent CIP can still read 100 % Availability; check Util or TEEP for an inclusive view.",

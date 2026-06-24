@@ -13,6 +13,22 @@ export type Distribution =
   | { readonly kind: "constant"; readonly value: number }
   | { readonly kind: "uniform"; readonly min: number; readonly max: number }
   | { readonly kind: "normal"; readonly mean: number; readonly stddev: number }
+  /**
+   * VROL-976 — Normal with explicit truncation. Re-samples until a draw
+   * falls in [min, max]; after a cap of attempts (50) the sample is
+   * clamped to the nearest bound and `onClamp` fires (via SampleOptions).
+   * Use this when the underlying physical quantity is bounded (cycle
+   * times can't be negative, station-fed temperatures have a spec
+   * window) and you want the engine to bias-correct rather than
+   * silently shift the mean upward via a one-sided clamp.
+   */
+  | {
+      readonly kind: "truncatedNormal";
+      readonly mean: number;
+      readonly stddev: number;
+      readonly min: number;
+      readonly max: number;
+    }
   | {
       readonly kind: "triangular";
       readonly min: number;

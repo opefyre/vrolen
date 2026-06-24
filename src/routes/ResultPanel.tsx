@@ -43,6 +43,8 @@ import { FinalStateCard } from "./FinalStateCard";
 import { OeeBreakdown } from "./OeeBreakdown";
 import { ConstraintHistoryChart } from "@/components/results/constraint-history-chart";
 import { ActionCard } from "@/components/results/action-card";
+import { SixLossBreakdown } from "@/components/results/six-loss-bar";
+import { StationGantt } from "@/components/results/station-gantt";
 import { QualityLosses } from "./QualityLosses";
 import { RecommendationsCard } from "./RecommendationsCard";
 import { StatePareto } from "./StatePareto";
@@ -1106,9 +1108,24 @@ export function ResultPanel({
       />
       <InsightsBanner result={result} />
       {cycleStrip}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
         {tile("Completed", result.completed.toLocaleString(), "during measurement window")}
         {tile("Line efficiency", `${fmt(result.lineOee * 100)}%`, "throughput vs theoretical")}
+        {(() => {
+          // VROL-979 — TEEP = OEE × loading-fraction. loading = 1 − maintenance/horizon.
+          // When no Maintenance windows are configured, loading = 1 → TEEP = OEE
+          // and we hide the tile (it would be visually redundant).
+          const maintMs = (result.perStationMaintenanceMs ?? []).reduce((s, v) => s + v, 0);
+          if (result.elapsedMs <= 0 || maintMs <= 0) return null;
+          // Per-station maintenance averaged across stations — caller can argue
+          // for line-level instead, but per-station avg matches how the engine
+          // already models PM (per-station windows).
+          const stationCount = result.perStationOee.length || 1;
+          const avgMaintMs = maintMs / stationCount;
+          const loading = Math.max(0, 1 - avgMaintMs / result.elapsedMs);
+          const teep = result.lineOee * loading;
+          return tile("TEEP", `${fmt(teep * 100)}%`, "OEE × loading (includes maintenance)");
+        })()}
         {tile("Time-in-system", `${fmt(result.avgTimeInSystemW, 0)} ms`, "average W per part")}
       </div>
       {/* VROL-868 — theoretical yield tile, plus VROL-885 sustainability
@@ -1453,6 +1470,8 @@ export function ResultPanel({
               {...(onApplyActionCard ? { onApply: onApplyActionCard } : {})}
             />
             <OeeBreakdown result={result} replicationSummary={replicationSummary} />
+            <SixLossBreakdown result={result} />
+            <StationGantt result={result} />
             <ConstraintHistoryChart result={result} />
           </CardContent>
         </Card>

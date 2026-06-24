@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/sheet";
 import type { ChainResult } from "@/engine/chain-harness";
 import { Sparkline } from "@/routes/Sparkline";
+import { CycleHistogram } from "@/components/results/cycle-histogram";
 
 interface StationDrilldownProps {
   readonly open: boolean;
@@ -193,6 +194,47 @@ export function StationDrilldown({
                   </div>
                   <div className="text-muted-foreground text-[10px]">A × P × Q</div>
                 </div>
+                {/* VROL-978 — Blocked / Starved chips from the final sample's
+                    state-time totals. Surfaces "is this station throttled by
+                    upstream or downstream?" without expanding the bottlenecks
+                    card. */}
+                {(() => {
+                  const final = samples[samples.length - 1]?.perStationStateMs?.[stationIdx];
+                  if (!final) return null;
+                  let total = 0;
+                  for (const v of Object.values(final)) total += v;
+                  if (total <= 0) return null;
+                  const blocked = (final.BlockedOut ?? 0) / total;
+                  const starved = (final.Starved ?? 0) / total;
+                  return (
+                    <>
+                      <div
+                        className="border-border bg-card rounded-md border p-2.5"
+                        data-testid="drilldown-blocked-chip"
+                      >
+                        <div className="text-muted-foreground text-[10px] uppercase">Blocked</div>
+                        <div
+                          className={`font-mono text-base font-semibold tabular-nums ${blocked > 0.2 ? "text-sim-blocked-foreground" : ""}`}
+                        >
+                          {pct(blocked)}
+                        </div>
+                        <div className="text-muted-foreground text-[10px]">downstream choke</div>
+                      </div>
+                      <div
+                        className="border-border bg-card rounded-md border p-2.5"
+                        data-testid="drilldown-starved-chip"
+                      >
+                        <div className="text-muted-foreground text-[10px] uppercase">Starved</div>
+                        <div
+                          className={`font-mono text-base font-semibold tabular-nums ${starved > 0.2 ? "text-sim-starved-foreground" : ""}`}
+                        >
+                          {pct(starved)}
+                        </div>
+                        <div className="text-muted-foreground text-[10px]">upstream choke</div>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </section>
 
@@ -359,6 +401,23 @@ export function StationDrilldown({
                 </p>
               </section>
             ) : null}
+
+            {/* VROL-975 — sampled cycle-time histogram. Surfaces bimodality
+                and long tails that the median scalar hides. */}
+            {(() => {
+              const samples =
+                (result as { perStationCycleSamples?: readonly (readonly number[])[] })
+                  .perStationCycleSamples?.[stationIdx] ?? [];
+              if (samples.length < 2) return null;
+              return (
+                <section className="space-y-1.5">
+                  <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+                    Cycle-time distribution
+                  </div>
+                  <CycleHistogram samples={samples} />
+                </section>
+              );
+            })()}
 
             {(inEdges.length > 0 || outEdges.length > 0) && (
               <section className="space-y-1.5">

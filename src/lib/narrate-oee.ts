@@ -97,5 +97,17 @@ export function narrateOee(result: ChainResult): readonly NarrationPart[] {
     });
   }
 
+  // VROL-976 — clamp warning. Normal samples clamped to zero bias the
+  // mean upward; warn when more than 1 % of cycles hit the clamp.
+  const scrapSum = (result.perStationScrapped ?? []).reduce((s, v) => s + v, 0);
+  const totalCycles = (result.completed ?? 0) + scrapSum;
+  const clamps = (result as { clampedSampleCount?: number }).clampedSampleCount ?? 0;
+  if (totalCycles > 0 && clamps / totalCycles > 0.01) {
+    parts.push({
+      key: "clamp-warning",
+      text: `${clamps.toLocaleString()} cycle-time samples were floor-clamped (≥ 1 % of cycles). A Normal distribution with a wide stddev relative to its mean drifts upward via this clamp. Switch to truncatedNormal for an unbiased fit.`,
+    });
+  }
+
   return parts;
 }
