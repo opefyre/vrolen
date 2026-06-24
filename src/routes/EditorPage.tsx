@@ -3179,6 +3179,31 @@ function EditorCanvas() {
     });
   }, [nodes, result, runMeta, severityByNodeId, playbackSnapshot]);
 
+  // VROL-947 — derived sets/maps used by both edgesForFlow (label
+  // annotation) and bomFeederEdges (virtual edge suppression). Declared
+  // BEFORE edgesForFlow so the closure can capture them.
+  const primaryEdgePairs = useMemo<Set<string>>(() => {
+    return new Set(edges.map((e) => `${e.source}→${e.target}`));
+  }, [edges]);
+  const bomQtyByEdgePair = useMemo<Map<string, number>>(() => {
+    const map = new Map<string, number>();
+    for (const n of nodes) {
+      const feeders = (
+        n.data as {
+          bomFeeders?: ReadonlyArray<{ feederStationId?: string; qtyPerCycle?: number }>;
+        }
+      ).bomFeeders;
+      if (!Array.isArray(feeders)) continue;
+      for (const f of feeders) {
+        if (typeof f.feederStationId !== "string" || f.feederStationId.length === 0) continue;
+        const key = `${f.feederStationId}→${n.id}`;
+        if (!primaryEdgePairs.has(key)) continue;
+        map.set(key, (map.get(key) ?? 0) + (f.qtyPerCycle ?? 1));
+      }
+    }
+    return map;
+  }, [nodes, primaryEdgePairs]);
+
   const edgesForFlow = useMemo<Edge[]>(() => {
     if (!result || !runMeta || result.elapsedMs <= 0) return edges;
     const flowByKey = new Map<string, number>();
@@ -3224,6 +3249,12 @@ function EditorCanvas() {
       // "throughput/h · peak N" on each edge once a run has data.
       const bufferPeak = bufferFillSeries ? Math.max(0, ...bufferFillSeries) : 0;
       const labelWithPeak = bufferPeak > 0 ? `${label} · peak ${String(bufferPeak)}` : label;
+      // VROL-947 — annotate edges that ALSO carry a BOM relationship.
+      const bomQty = bomQtyByEdgePair.get(key);
+      const labelFinal =
+        bomQty !== undefined && bomQty > 0
+          ? `${labelWithPeak} · BOM ×${String(bomQty)}`
+          : labelWithPeak;
       // Live playback — current buffer fill drives both edge stroke width
       // and dot color so the canvas reads like a live simulation.
       const playbackFillNow =
@@ -3237,7 +3268,7 @@ function EditorCanvas() {
         (animateFlow && flowed > 0) || bufferFillSeries !== undefined || playbackSnapshot !== null;
       return {
         ...e,
-        label: labelWithPeak,
+        label: labelFinal,
         animated: !usesCustomEdge && flowed > 0,
         ...(usesCustomEdge
           ? {
@@ -3253,12 +3284,16 @@ function EditorCanvas() {
           : {}),
       };
     });
-  }, [edges, result, runMeta, animateFlow, playbackSnapshot]);
+  }, [edges, result, runMeta, animateFlow, playbackSnapshot, bomQtyByEdgePair]);
 
   // VROL-940 — virtual BOM-feeder edges. Each station's bomFeeders entry
   // becomes a dotted side-edge from feeder → consumer; only added when
   // both ids exist as station nodes. Doesn't participate in graph-to-chain
   // (the topology edge already handles flow); pure visual annotation.
+  // VROL-947 — when the BOM feeder edge shares (source, target) with a
+  // primary topology edge, suppress the virtual edge to avoid a dashed
+  // line over the existing one. The primary edge's label gets " · BOM ×N"
+  // appended in edgesForFlow (see bomQtyByEdgePair declared above).
   const bomFeederEdges = useMemo<Edge[]>(() => {
     const stationIds = new Set(nodes.filter((n) => n.type === "station").map((n) => n.id));
     const out: Edge[] = [];
@@ -3274,6 +3309,8 @@ function EditorCanvas() {
         if (typeof fid !== "string" || fid.length === 0) return;
         if (!stationIds.has(fid)) return;
         if (fid === n.id) return;
+        // VROL-947 — suppress virtual edge when primary edge already exists.
+        if (primaryEdgePairs.has(`${fid}→${n.id}`)) return;
         out.push({
           id: `bom-${fid}-${n.id}-${String(idx)}`,
           source: fid,
@@ -3286,7 +3323,7 @@ function EditorCanvas() {
       });
     }
     return out;
-  }, [nodes]);
+  }, [nodes, primaryEdgePairs]);
 
   // VROL-941 — virtual perSkuRouting edges. Each station's perSkuRouting
   // entry creates a small purple side-arrow from this station to the

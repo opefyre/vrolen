@@ -158,6 +158,16 @@ export interface TimeseriesSample {
    * ChainResult.perStationReworked. Empty array when no sampler.
    */
   readonly perStationRework: readonly number[];
+  /**
+   * VROL-943 — Sprint 90/91 constraint counters snapshotted per sample
+   * (cumulative). All aligned with perStationCompleted by index. Empty
+   * arrays when no sampler. Last sample equals the corresponding
+   * result.perStation* arrays.
+   */
+  readonly perStationTempScrap: readonly number[];
+  readonly perStationToolBlockedMs: readonly number[];
+  readonly perStationBomStarved: readonly number[];
+  readonly perStationSkuRouted: readonly number[];
 }
 
 /**
@@ -2129,6 +2139,22 @@ function* simulationStream(
           // VROL-639 — cumulative rework count per station; last sample
           // matches result.perStationReworked.
           perStationRework: executors.map((e) => e.reworked),
+          // VROL-943 — Sprint 90/91 counters snapshotted per-tick. All four
+          // are additive cumulative counts/ms; the delta between consecutive
+          // samples is the within-interval rate. Last sample equals the
+          // corresponding result.perStation* arrays.
+          perStationTempScrap: [...perStationTempScrapCounts],
+          perStationToolBlockedMs:
+            tMs > 0
+              ? [...perStationToolBlockedMs].map((accumulated, idx) => {
+                  const since = toolBlockedSince[idx];
+                  return since !== undefined && tMs > since
+                    ? accumulated + (tMs - since)
+                    : accumulated;
+                })
+              : [...perStationToolBlockedMs],
+          perStationBomStarved: [...perStationBomStarvedCounts],
+          perStationSkuRouted: [...perStationSkuRoutedCounts],
         });
       } else {
         // Pre-warmup: still advance trackers so the snapshot deltas stay

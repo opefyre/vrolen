@@ -419,6 +419,8 @@ export function StationDrilldown({
             {(() => {
               // VROL-931 — Constraints section: surface the Sprint 90/91
               // counters for the selected station. Hidden when all are zero.
+              // VROL-944 — sparkline next to each non-zero counter when the
+              // sampler ran (samples carry the per-tick series).
               if (!haveData) return null;
               const tempScrap = result.perStationTempScrap?.[stationIdx] ?? 0;
               const toolBlocked = result.perStationToolBlockedMs?.[stationIdx] ?? 0;
@@ -427,38 +429,58 @@ export function StationDrilldown({
               if (tempScrap === 0 && toolBlocked === 0 && bomStarved === 0 && skuRouted === 0) {
                 return null;
               }
+              const seriesFor = (
+                key:
+                  | "perStationTempScrap"
+                  | "perStationToolBlockedMs"
+                  | "perStationBomStarved"
+                  | "perStationSkuRouted",
+              ): number[] =>
+                samples.map((s) => (s[key] as readonly number[] | undefined)?.[stationIdx] ?? 0);
+              const tempSeries = tempScrap > 0 ? seriesFor("perStationTempScrap") : [];
+              const toolSeries =
+                toolBlocked > 0 ? seriesFor("perStationToolBlockedMs").map((v) => v / 1000) : [];
+              const bomSeries = bomStarved > 0 ? seriesFor("perStationBomStarved") : [];
+              const skuSeries = skuRouted > 0 ? seriesFor("perStationSkuRouted") : [];
+              const counterRow = (label: string, value: string, series: number[], unit: string) => (
+                <div className="space-y-0.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground text-[10px]">{label}</span>
+                    <span className="font-mono tabular-nums">{value}</span>
+                  </div>
+                  {series.length > 1 ? (
+                    <Sparkline series={series} width={240} height={20} unit={unit} />
+                  ) : null}
+                </div>
+              );
               return (
                 <section className="space-y-1.5" data-testid="drilldown-constraints">
                   <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
                     Constraints
                   </div>
-                  <div className="text-foreground/80 grid grid-cols-2 gap-2 text-xs">
-                    {tempScrap > 0 && (
-                      <div>
-                        <div className="text-muted-foreground text-[10px]">Temp-spec scrap</div>
-                        <div className="font-mono tabular-nums">{tempScrap.toLocaleString()}</div>
-                      </div>
-                    )}
-                    {toolBlocked > 0 && (
-                      <div>
-                        <div className="text-muted-foreground text-[10px]">Tool-pool wait</div>
-                        <div className="font-mono tabular-nums">
-                          {(toolBlocked / 1000).toFixed(1)}s
-                        </div>
-                      </div>
-                    )}
-                    {bomStarved > 0 && (
-                      <div>
-                        <div className="text-muted-foreground text-[10px]">BOM-starved</div>
-                        <div className="font-mono tabular-nums">{bomStarved.toLocaleString()}</div>
-                      </div>
-                    )}
-                    {skuRouted > 0 && (
-                      <div>
-                        <div className="text-muted-foreground text-[10px]">SKU-routed</div>
-                        <div className="font-mono tabular-nums">{skuRouted.toLocaleString()}</div>
-                      </div>
-                    )}
+                  <div className="text-foreground/80 space-y-2 text-xs">
+                    {tempScrap > 0
+                      ? counterRow(
+                          "Temp-spec scrap",
+                          tempScrap.toLocaleString(),
+                          tempSeries,
+                          "parts",
+                        )
+                      : null}
+                    {toolBlocked > 0
+                      ? counterRow(
+                          "Tool-pool wait",
+                          `${(toolBlocked / 1000).toFixed(1)}s`,
+                          toolSeries,
+                          "s",
+                        )
+                      : null}
+                    {bomStarved > 0
+                      ? counterRow("BOM-starved", bomStarved.toLocaleString(), bomSeries, "events")
+                      : null}
+                    {skuRouted > 0
+                      ? counterRow("SKU-routed", skuRouted.toLocaleString(), skuSeries, "parts")
+                      : null}
                   </div>
                 </section>
               );

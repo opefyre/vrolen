@@ -32,7 +32,9 @@ export function resultToCsv(result: ChainResult, stationLabels?: readonly string
   lines.push(row(["line", "oee", result.lineOee.toFixed(4)]));
   lines.push("");
 
-  lines.push("station_idx,label,completed,scrapped,reworked,availability,performance,quality,oee");
+  lines.push(
+    "station_idx,label,completed,scrapped,reworked,availability,performance,quality,oee,temp_spec_scrap,tool_blocked_ms,bom_starved,sku_routed",
+  );
   for (let i = 0; i < result.perStationCompleted.length; i++) {
     const label = stationLabels?.[i] ?? result.bottlenecks[i]?.label ?? `s${String(i)}`;
     const oee = result.perStationOee[i];
@@ -47,9 +49,34 @@ export function resultToCsv(result: ChainResult, stationLabels?: readonly string
         oee ? oee.performance.toFixed(4) : "",
         oee ? oee.quality.toFixed(4) : "",
         oee ? oee.oee.toFixed(4) : "",
+        // VROL-945 — Sprint 90/91 counters.
+        result.perStationTempScrap?.[i] ?? 0,
+        result.perStationToolBlockedMs?.[i] ?? 0,
+        result.perStationBomStarved?.[i] ?? 0,
+        result.perStationSkuRouted?.[i] ?? 0,
       ]),
     );
   }
 
+  return lines.join("\n");
+}
+
+/**
+ * VROL-945 — constraint history → CSV. One row per binding-station
+ * interval from computeConstraintHistory. Empty CSV (header-only) when
+ * the run has no sampler / too few samples.
+ */
+export function constraintHistoryToCsv(
+  intervals: ReadonlyArray<{
+    fromMs: number;
+    toMs: number;
+    stationLabel: string;
+    runningPct: number;
+  }>,
+): string {
+  const lines: string[] = ["from_ms,to_ms,station_label,running_pct"];
+  for (const iv of intervals) {
+    lines.push(row([iv.fromMs, iv.toMs, iv.stationLabel, (iv.runningPct * 100).toFixed(2)]));
+  }
   return lines.join("\n");
 }

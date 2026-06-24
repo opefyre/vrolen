@@ -1976,6 +1976,9 @@ export function ComparisonTable({
   // VROL-653 — collapse the dense scalar table behind an accordion. KPI delta
   // tiles + charts stay always-visible at the top.
   const [allDeltasOpen, setAllDeltasOpen] = useState(false);
+  // VROL-946 — per-station OEE accordion (separate toggle so users can
+  // expand the deeper table without losing the line-level view).
+  const [perStationOpen, setPerStationOpen] = useState(false);
 
   type Row = {
     label: string;
@@ -2179,6 +2182,78 @@ export function ComparisonTable({
           </table>
         </div>
       </Accordion>
+      {/* VROL-946 — per-station OEE breakdown side-by-side with Δ. Rows are
+          aligned by topology index when both runs share the same station
+          count; mismatched runs collapse into the line-level KPI tiles
+          above and skip this section. */}
+      {aResult.perStationOee.length > 0 &&
+      aResult.perStationOee.length === bResult.perStationOee.length ? (
+        <Accordion
+          title="Per-station OEE · A vs B"
+          status={
+            <AccordionStatus tone="configured">
+              {`${String(aResult.perStationOee.length)} station${
+                aResult.perStationOee.length === 1 ? "" : "s"
+              }`}
+            </AccordionStatus>
+          }
+          expanded={perStationOpen}
+          onToggle={() => {
+            setPerStationOpen((v) => !v);
+          }}
+        >
+          <div className="overflow-x-auto" data-testid="compare-per-station-oee">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-muted-foreground border-border border-b text-left tracking-wide uppercase">
+                  <th className="py-2 pr-3 font-medium">Station</th>
+                  <th className="px-3 py-2 text-right font-medium">A · OEE</th>
+                  <th className="px-3 py-2 text-right font-medium">B · OEE</th>
+                  <th className="py-2 pl-3 text-right font-medium">Δ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {aResult.perStationOee.map((aOee, i) => {
+                  const bOee = bResult.perStationOee[i];
+                  if (!bOee) return null;
+                  const label =
+                    aStationLabels[i] ??
+                    bStationLabels[i] ??
+                    aResult.perStationLabels?.[i] ??
+                    `Station ${String(i)}`;
+                  const delta = bOee.oee - aOee.oee;
+                  const big = Math.abs(delta) >= 0.1;
+                  return (
+                    <tr
+                      key={`${label}-${String(i)}`}
+                      className="border-border/50 border-b last:border-0"
+                    >
+                      <td className="py-2 pr-3">{label}</td>
+                      <td className="px-3 py-2 text-right font-mono tabular-nums">
+                        {`${(aOee.oee * 100).toFixed(1)}%`}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono tabular-nums">
+                        {`${(bOee.oee * 100).toFixed(1)}%`}
+                      </td>
+                      <td
+                        className={`py-2 pl-3 text-right font-mono tabular-nums ${
+                          big && delta > 0
+                            ? "text-sim-running-foreground font-semibold"
+                            : big && delta < 0
+                              ? "text-sim-down-foreground font-semibold"
+                              : "text-muted-foreground"
+                        }`}
+                      >
+                        {`${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(1)}pp`}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Accordion>
+      ) : null}
       {showChartRow ? (
         <div className="space-y-3">
           <div className="border-border space-y-2 rounded-md border p-3">
