@@ -1,30 +1,92 @@
 # Vrolen
 
-Browser-based production-line simulator for industrial engineers and continuous-improvement practitioners. Model multi-line discrete manufacturing — stations, workers, materials, shifts, defects, breakdowns — and simulate locally in your browser via WebAssembly. Visualized as a live isometric factory scene.
+Browser-based discrete-event simulator for industrial production lines. Sketch your line as a graph, hit Run, and Vrolen surfaces the bottleneck, the binding constraint, and the single most impactful thing to change next. Everything runs in your browser — no install, no cloud account required.
 
-> _Model your production line. Press play. Watch the bottleneck._
+> _Model your line. Press play. Watch the bottleneck. Apply the fix. See the lift._
 
-## Status
+## Who it's for
 
-Pre-development. Backlog planned and seeded in [Jira VROL](https://opefyre.atlassian.net/jira/software/projects/VROL/boards/34). Active work tracked through sprints.
+- Manufacturing and operations engineers comparing capacity changes before committing to them on the real line
+- Continuous-improvement practitioners running Theory-of-Constraints / OEE-loss analyses
+- Consultants who want a tool that explains its math instead of treating it as a black box
+- Q-commerce / dark-store operators modeling fulfilment lines with shared resources, BOM-style picking, and SKU-aware routing
+
+## What it does
+
+### Discrete-event engine
+
+- **Stations + buffers**: cycle-time distributions (constant, uniform, normal, triangular, exponential, lognormal, weibull, gamma, empirical), parallel capacity, defect roll, setup times, product-changeover matrices, rework targets with pass limits.
+- **Reliability**: stochastic breakdowns (MTBF/MTTR), planned maintenance windows, cycle-count-driven PM, recurring CIP cleaning, random-event library.
+- **Workers + materials**: per-shift workforce with skills, worker breaks, shift handovers; material recipes with replenishment + per-station overrides.
+- **Multi-SKU**: per-product cycle distributions, changeover matrices, weighted production plans, per-batch tagging, quality grades, per-SKU routing overrides (route or skip).
+- **Assembly**: BOM feeders — an assembly station pulls _qtyPerCycle_ from each feeder edge with atomic consume + reservation for the primary upstream.
+- **Shared resources**: tool pools with capacity. Stations holding the same pool serialise; wait time accrues to perStationToolBlockedMs.
+- **Temperature / spec**: parts carry a temperatureC field; stations apply per-step deltas; out-of-spec parts at downstream stations are scrapped and counted.
+- **Sustainability**: per-cycle energy (J), water (L), CO₂e (g) — line totals reported.
+
+### Insight surfaces
+
+- **Action card**: every run ranks the single highest-leverage change — reliability work, speed-up, BOM imbalance, tool-pool contention, downstream blocking, slim OEE factor. One-click Apply mutates the scenario and re-runs.
+- **OEE narration**: plain-language summary above the per-station breakdown — "Performance is the slim factor at Filler (62 %). Filler is binding 91 % of the window."
+- **Constraint history**: horizontal lane chart showing which station was the binding constraint over the run.
+- **Goal mode**: enter a target throughput; binary-search returns the cheapest uniform cycle-scale that meets it.
+- **Sensitivity tornado**: per-station cycle ±20 % + BOM qty + tool-pool capacity dimensions.
+- **Replications + CIs**: line-level KPI 95 % CIs + per-station OEE half-widths when N > 1.
+- **A/B compare**: two scenarios side-by-side with per-station Δ highlighted.
+- **Run history**: last 10 runs persisted; click any cell to compare against the current canvas.
+- **Drilldowns**: station-level Sheet with state mix, throughput, buffer pressure, constraint counters, recommendation.
+
+### Canvas
+
+- React-flow graph with custom edges for primary flow, BOM feeders (dashed amber), and per-SKU routing (dashed purple).
+- Tool-pool dashboard overlay; corner badges on stations declaring requiredToolPool.
+- Live playback with state-tinted nodes, edge fill width, and a **Binding** pulse badge that follows the empirical bottleneck moment-to-moment.
+
+### Pedagogy
+
+- **In-app glossary** with sourced definitions (Goldratt, ISA-95 / Nakajima, Little 1961, Welch 1983).
+- **Wizard advisor** flags physics-implausible inputs without blocking the user.
+- **Validation panel** groups BOM / tool-pool / per-SKU misconfig as their own Constraints section.
+- **Onboarding tour** ends at the action card.
 
 ## Stack
 
-- **Frontend:** React 19 · Vite · TypeScript (strict) · Tailwind v4 · shadcn/ui · Zustand · Zod
-- **Visualization:** PixiJS in a Web Worker (OffscreenCanvas) · Kenney.nl isometric sprites
-- **Editor:** react-flow (xyflow)
-- **Engine:** TypeScript (Phases 0–3) → Rust→WASM (Phase 4+)
-- **Backend:** Supabase (Auth · Postgres + RLS · Storage · Edge Functions)
-- **Hosting:** Cloudflare Pages
-- **AI:** Provider-agnostic with Gemini Flash default; BYO key supported
+- **Frontend** — React 19 · Vite · TypeScript (strict) · Tailwind v4 · shadcn/ui · Zustand · Zod
+- **Visualization** — PixiJS in a Web Worker (OffscreenCanvas) · Kenney.nl isometric sprites · react-flow (xyflow) for the editor
+- **Engine** — TypeScript (Phases 0–3) → Rust→WASM (Phase 4+)
+- **Backend** — Supabase (Auth · Postgres + RLS · Storage · Edge Functions)
+- **Hosting** — Cloudflare Pages
+- **AI** — Provider-agnostic with Gemini Flash default; BYO-key path supported (deferred)
 
-## Working agreements
+## How it compares
 
-All work flows through Jira. See [`vrolen-rules`](../.claude/skills/vrolen-rules/SKILL.md) for the source-of-truth on sprint discipline, the stack, credentials, and skill delegation.
+| Capability            | Vrolen                                                       | AnyLogic PLE            | Simul8 / FlexSim |
+| --------------------- | ------------------------------------------------------------ | ----------------------- | ---------------- |
+| Install               | None (browser)                                               | Java client             | Windows client   |
+| Cost (intro tier)     | Free                                                         | Free (limited)          | Paid licenses    |
+| Determinism           | Seeded PRNG; identical seed → identical output               | Yes                     | Yes              |
+| Replications + CIs    | Built-in (paired-t / Welch)                                  | Yes                     | Yes              |
+| Theory of Constraints | First-class (binding score, subordination chip, action card) | Manual                  | Manual           |
+| OEE narration         | Plain-language, derived                                      | —                       | —                |
+| Goal seek             | Target throughput → cycle scale                              | Optimization experiment | OptQuest         |
+| Shareable scenarios   | URL / JSON                                                   | `.alp` files            | `.sim` files     |
+| Source viewable       | Yes (engine in TS / Rust)                                    | No                      | No               |
 
 ## Local development
 
-To be filled in as Phase 0 scaffolding lands.
+```bash
+pnpm install      # in vrolen/
+pnpm dev          # vite dev server
+pnpm test         # vitest
+pnpm typecheck    # tsc --noEmit
+pnpm lint         # eslint --max-warnings 0
+```
+
+Engine subset: 988 tests covering distribution sampling, scheduler, state machine, cycle execution, bottleneck detection, OEE, Little's Law, multi-product changeover, materials, workers, maintenance, breakdowns, BOM atomic pull, tool-pool queueing, per-SKU dispatch, sampler counters, and constraint-history derivation.
+
+## Working agreements
+
+All work flows through Jira. See [`vrolen-rules`](../.claude/skills/vrolen-rules/SKILL.md) for the source-of-truth on sprint discipline, the locked stack, credentials, and skill delegation.
 
 ## License
 
