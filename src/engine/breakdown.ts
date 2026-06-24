@@ -58,9 +58,26 @@ export class BreakdownManager {
   /** Called by the engine when a breakdown-start event fires for this station. */
   handleBreakdown(timeMs: number): void {
     const state = this.stateMachine.state;
-    // If station is already Down (rare race), no-op.
-    if (state === "Down" || state === "Maintenance") {
+    // VROL-968 — pre-fix this branch silently disarmed the breakdown when
+    // the station was already Down or in Maintenance. That inflated
+    // Availability on CIP-heavy / PM-heavy lines by 1-3 % because every
+    // failure-event that coincided with planned downtime was dropped.
+    // Now: keep the breakdown armed and reschedule another MTBF-sampled
+    // attempt so the failure actually counts once the station leaves
+    // planned downtime. (If the station is already Down due to a different
+    // breakdown, no-op — the existing repair will fire and the next arm()
+    // call after the upcoming Running entry will re-schedule.)
+    if (state === "Down") {
       this.armed = false;
+      return;
+    }
+    if (state === "Maintenance") {
+      const retryAfter = sample(this.mtbfMs, this.prng, { min: 0 });
+      this.scheduler.schedule(timeMs + retryAfter, {
+        kind: "breakdown-start",
+        stationId: this.stationId,
+      });
+      // stays armed — next attempt is scheduled.
       return;
     }
     this.stateMachine.transition("Down", "breakdown", timeMs);

@@ -32,18 +32,27 @@ export class StateTimeTracker {
 
   /** Record a transition from currentState → toState at the given simulated time. */
   recordTransition(toState: StationState, timeMs: number): void {
-    if (timeMs < this.enterTimeMs) {
+    // VROL-969 — tolerate sub-millisecond floating-point drift between
+    // event timestamps (e.g., an integer-time scheduled event firing
+    // immediately after a float-time breakdown reschedule). The previous
+    // strict `<` check threw on legitimate scenarios where two events
+    // share an integer timestamp but one is computed via a chain of
+    // float arithmetic. Tolerate negative gaps below 1 ms by clamping;
+    // anything bigger is a real ordering bug worth throwing on.
+    const EPS_MS = 1;
+    if (timeMs + EPS_MS < this.enterTimeMs) {
       throw new Error(
         `StateTimeTracker: transition at t=${String(timeMs)} preceded the current state's entry time t=${String(this.enterTimeMs)}`,
       );
     }
-    const elapsed = timeMs - this.enterTimeMs;
+    const clamped = Math.max(timeMs, this.enterTimeMs);
+    const elapsed = clamped - this.enterTimeMs;
     this.accumulated.set(
       this.currentState,
       (this.accumulated.get(this.currentState) ?? 0) + elapsed,
     );
     this.currentState = toState;
-    this.enterTimeMs = timeMs;
+    this.enterTimeMs = clamped;
   }
 
   /**

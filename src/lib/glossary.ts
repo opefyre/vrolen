@@ -21,7 +21,8 @@ export const GLOSSARY: Readonly<Record<string, GlossaryEntry>> = {
   },
   availability: {
     title: "Availability",
-    body: "Fraction of allowed-to-run time the station was actually running, excluding scheduled maintenance. Penalises breakdowns and unplanned downtime.",
+    body: "Fraction of operating time the station was not Down due to unplanned breakdowns. Per SEMI E10 / Nakajima, planned downtime (Setup + Maintenance + CIP) is excluded from the Availability denominator — those losses surface elsewhere (Setup ↘ Performance, Maintenance ↘ TEEP). A station with frequent CIP can still read 100 % Availability; check Util or TEEP for an inclusive view.",
+    source: "SEMI E10 / Nakajima 1988",
   },
   performance: {
     title: "Performance",

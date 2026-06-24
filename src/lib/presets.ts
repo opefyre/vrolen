@@ -12,7 +12,7 @@
 
 import type { Edge, Node } from "@xyflow/react";
 
-import { constant } from "@/engine";
+import { constant, type Distribution } from "@/engine";
 import { DEFAULT_RUN_SETTINGS, type RunSettings } from "@/routes/editor-run-settings";
 
 export interface Preset {
@@ -510,44 +510,59 @@ const ASSEMBLY_CELL: Preset = {
 // bottle), shared autoclave tool pool, per-SKU label routing for two
 // shampoo variants. Reproduces the "all stations 100 % running but only
 // one at nominal" case discussed in VROL-899/900.
+//
+// VROL-969 — every station now samples its cycle from a triangular
+// distribution (CoV ~10-15 %) and the Filler + Capper have MTBF/MTTR so
+// the demo actually exercises the stochastic + reliability paths. A
+// previous all-constant() version produced a deterministic sawtooth that
+// a reviewer could mistake for the engine being naive.
+const tri = (min: number, mode: number, max: number): Distribution => ({
+  kind: "triangular",
+  min,
+  mode,
+  max,
+});
+
 const SHAMPOO_LINE: Preset = {
   id: "shampoo-line",
   title: "Shampoo line",
   blurb:
-    "Unilever-style FMCG line: mix → fill (BOM: 2 caps/cycle) → cap → label (split by SKU) → pack → palletise. Autoclave tool pool shared between mix + cap (capacity 1) creates serialised contention.",
-  highlight: "BOM + tool pool + per-SKU",
+    "Unilever-style FMCG line: mix → fill (BOM: 2 caps/cycle) → cap → label (split by SKU) → pack → palletise. Autoclave tool pool shared between mix + cap (capacity 1) creates serialised contention. Stochastic cycle times + Filler/Capper breakdowns.",
+  highlight: "BOM + tool pool + per-SKU + stochastic",
   graph: {
     nodes: [
-      station("src", "Bulk in", "input", 40, 200, { cycleDistribution: constant(60) }),
+      station("src", "Bulk in", "input", 40, 200, { cycleDistribution: tri(50, 60, 75) }),
       station("cap-feeder", "Cap feeder", "machine", 200, 80, {
-        cycleDistribution: constant(40),
+        cycleDistribution: tri(32, 40, 52),
       }),
       station("mix", "Mix tank", "machine", 200, 320, {
-        cycleDistribution: constant(80),
+        cycleDistribution: tri(65, 80, 100),
         requiredToolPool: "autoclave",
       }),
       station("fill", "Filler", "machine", 380, 200, {
-        cycleDistribution: constant(70),
+        cycleDistribution: tri(58, 70, 88),
         bomFeeders: [{ feederStationId: "cap-feeder", qtyPerCycle: 2 }],
       }),
       station("cap", "Capper", "machine", 540, 200, {
-        cycleDistribution: constant(60),
+        cycleDistribution: tri(50, 60, 78),
         requiredToolPool: "autoclave",
       }),
       station("label-family", "Family label", "machine", 700, 120, {
-        cycleDistribution: constant(50),
+        cycleDistribution: tri(42, 50, 62),
       }),
       station("label-kids", "Kids label", "machine", 700, 280, {
-        cycleDistribution: constant(70),
+        cycleDistribution: tri(58, 70, 88),
       }),
       station("pack", "Packer", "machine", 880, 200, {
-        cycleDistribution: constant(45),
+        cycleDistribution: tri(38, 45, 58),
         perSkuRouting: {
           "family-shampoo": "label-family",
           "kids-shampoo": "label-kids",
         },
       }),
-      station("pallet", "Palletise", "output", 1050, 200, { cycleDistribution: constant(40) }),
+      station("pallet", "Palletise", "output", 1050, 200, {
+        cycleDistribution: tri(34, 40, 52),
+      }),
     ],
     edges: [
       edge("e1", "src", "cap-feeder"),
@@ -565,6 +580,14 @@ const SHAMPOO_LINE: Preset = {
     ...DEFAULT_RUN_SETTINGS,
     horizonMs: 120_000,
     samplerIntervalMs: 1_000,
+    // VROL-969 — line-wide breakdowns so Filler/Capper actually fail
+    // over a 2-minute horizon (MTBF 30s for visibility on the demo;
+    // production scenarios would use minute-scale numbers).
+    breakdowns: {
+      enabled: true,
+      mtbfMs: 30_000,
+      mttrMs: 4_000,
+    },
     toolPools: [{ name: "autoclave", capacity: 1 }],
     products: {
       enabled: true,

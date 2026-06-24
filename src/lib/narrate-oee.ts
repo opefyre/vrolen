@@ -84,5 +84,18 @@ export function narrateOee(result: ChainResult): readonly NarrationPart[] {
     });
   }
 
+  // VROL-971 — planned-downtime callout. Availability excludes Setup +
+  // Maintenance + CIP by SEMI E10 convention; surface that here when the
+  // line's planned downtime is non-trivial so operators don't read a
+  // high Availability as "the line never stops".
+  const maintMs = (result.perStationMaintenanceMs ?? []).reduce((s, v) => s + v, 0);
+  if (result.elapsedMs > 0 && maintMs / result.elapsedMs > 0.05) {
+    const pctMaint = (maintMs / result.elapsedMs) * 100;
+    parts.push({
+      key: "planned-downtime",
+      text: `Planned downtime (Setup + Maintenance + CIP) was ${pctMaint.toFixed(0)} % of the horizon — that's NOT counted in Availability. Use Util or TEEP for an inclusive view.`,
+    });
+  }
+
   return parts;
 }

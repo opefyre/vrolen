@@ -26,7 +26,8 @@ function summary(presetId: string) {
     firstStation,
   );
   if (!("result" in outcome)) {
-    throw new Error(`Preset "${presetId}" failed to run: ${outcome.kind}`);
+    const msg = "message" in outcome ? outcome.message : "";
+    throw new Error(`Preset "${presetId}" failed to run: ${outcome.kind} ${msg}`);
   }
   const r = outcome.result;
   // Round throughput + OEE to 6 decimals so seed-independent tiny FP

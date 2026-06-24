@@ -135,4 +135,38 @@ describe("BreakdownManager", () => {
     const expected = 1000 / 1100;
     expect(Math.abs(availability - expected)).toBeLessThan(0.02);
   });
+
+  // VROL-968 — pre-fix, a breakdown that fired while the station was in
+  // Maintenance was silently disarmed and never rescheduled. This biased
+  // Availability upward on CIP-heavy / PM-heavy lines. The fix reschedules
+  // the breakdown after one MTBF sample so failures actually count after
+  // planned downtime ends.
+  it("reschedules a breakdown that fires during Maintenance instead of dropping it", () => {
+    const id = newStationId();
+    const scheduler = new Scheduler<EngineEvent>();
+    const sm = new StationStateMachine(id);
+    sm.transition("Running", "start-cycle", 0);
+    sm.transition("Maintenance", "maintenance-start", 100);
+
+    const mgr = new BreakdownManager(
+      id,
+      constant(500),
+      constant(50),
+      sm,
+      scheduler,
+      new SeededPrng(1),
+    );
+    // Manually fire the breakdown handler while in Maintenance.
+    mgr.handleBreakdown(200);
+
+    // Post-fix: a NEW breakdown-start event has been scheduled. Station
+    // stays in Maintenance; no Down transition happens.
+    expect(sm.state).toBe("Maintenance");
+    let scheduledBreakdowns = 0;
+    while (scheduler.size > 0) {
+      const ev = scheduler.popMin();
+      if (ev.payload.kind === "breakdown-start") scheduledBreakdowns += 1;
+    }
+    expect(scheduledBreakdowns).toBeGreaterThan(0);
+  });
 });

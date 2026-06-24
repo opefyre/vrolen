@@ -23,6 +23,13 @@ export interface SampleOptions {
   readonly min?: number;
   /** Clamp the sampled value to be <= max. */
   readonly max?: number;
+  /**
+   * VROL-970 — called once per sample whose raw value was clamped by
+   * min or max. Lets the engine surface a clampedSampleCount on
+   * ChainResult so the UI can warn 'your Normal distribution clamped N
+   * times — bias may be present; consider a truncated normal'.
+   */
+  readonly onClamp?: () => void;
 }
 
 /** Produce one sample from the distribution using the given PRNG. */
@@ -57,8 +64,16 @@ export function sample(d: Distribution, prng: Prng, options?: SampleOptions): nu
       v = sampleEmpirical(d.values, prng);
       break;
   }
-  if (options?.min !== undefined && v < options.min) v = options.min;
-  if (options?.max !== undefined && v > options.max) v = options.max;
+  let clamped = false;
+  if (options?.min !== undefined && v < options.min) {
+    v = options.min;
+    clamped = true;
+  }
+  if (options?.max !== undefined && v > options.max) {
+    v = options.max;
+    clamped = true;
+  }
+  if (clamped) options?.onClamp?.();
   return v;
 }
 
