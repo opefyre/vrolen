@@ -90,6 +90,23 @@ export const GLOSSARY: Readonly<Record<string, GlossaryEntry>> = {
     title: "Per-SKU routing",
     body: "Override the downstream destination on a per-product basis. 'skip' routes the part to the sink; otherwise the named station receives the part directly.",
   },
+  // VROL-1008 — entries for Sprints 112-118 features.
+  conveyor: {
+    title: "Conveyor (Transport station)",
+    body: "A station-shaped edge segment with physical length and travel speed. Parts entering take residenceTimeMs = lengthM / speedMps × 1000 before becoming available downstream. Multiple parts can be in transit at once, capped by the inter-station buffer capacity.",
+  },
+  "residence-time": {
+    title: "Residence time",
+    body: "How long a part takes to traverse a conveyor or hold tank, measured from entry to availability at the downstream station. Adds latency to time-in-system but does not reduce steady-state throughput (bandwidth is set by the slowest cycle, not the conveyor).",
+  },
+  "unit-of-measure": {
+    title: "Unit of measure (UoM)",
+    body: "Per-station label that describes what 'one part' counts as in this line (parts, kg, L, doses…). The sink's unit drives the throughput display so a dairy line reads in kg / hour, a pharmaceutical line in doses / hour. v1 is display-only; the engine still counts integer parts.",
+  },
+  stability: {
+    title: "Stability (replication CV)",
+    body: "Coefficient of variation = stddev / mean of throughput across replications. CV < 5 % is Stable (the model is decisive). 5–10 % is some variance (more reps would tighten the answer). ≥ 10 % means a single run could mislead — run more replications.",
+  },
 };
 
 export function lookupGlossary(key: string): GlossaryEntry | undefined {
