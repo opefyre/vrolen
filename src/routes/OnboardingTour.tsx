@@ -78,6 +78,17 @@ const STEPS: readonly TourStep[] = [
     body: "After every run, an Action card up top tells you the single next thing to try — speed up the bottleneck, grow a buffer, fix a tool-pool contention, or look at reliability. Click Apply to mutate the scenario and re-run.",
     placement: "bottom",
   },
+  {
+    // VROL-1022 — surface the Sustainability card. The target lives in
+    // the Overview tab; the card renders only when at least one
+    // station declared energy / water / CO₂e per cycle. When it isn't
+    // on screen, the tour falls back to a center-of-screen popover so
+    // the message still lands.
+    target: "[data-testid='sustainability-card']",
+    title: "Energy + water + CO₂e",
+    body: "When stations declare per-cycle resource use, the Sustainability card surfaces line totals, per-station breakdown bars, and an intensity figure (e.g. J/kg) so you can compare scenarios on environmental footprint, not just throughput. Load the 'Sustainable line' preset to see it in action.",
+    placement: "top",
+  },
 ];
 
 interface OnboardingTourProps {

@@ -62,7 +62,7 @@ describe("OnboardingTour (VROL-818)", () => {
   it("renders step 1 with welcome copy, Skip, Next, and disabled Back", () => {
     render(<OnboardingTour open={true} onClose={vi.fn()} />);
     expect(screen.getByText(/Welcome to Vrolen/i)).toBeInTheDocument();
-    expect(screen.getByText(/1 of 6/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 of 7/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Skip tour/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Next$/ })).toBeInTheDocument();
     const back = screen.getByRole("button", { name: /^Back$/ });
@@ -81,7 +81,7 @@ describe("OnboardingTour (VROL-818)", () => {
   it("Next advances to step 2 and persists the resume-step", () => {
     render(<OnboardingTour open={true} onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
-    expect(screen.getByText(/2 of 6/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 of 7/i)).toBeInTheDocument();
     expect(screen.getByText(/graph is your line/i)).toBeInTheDocument();
     expect(loadOnboardingStep()).toBe(1);
   });
@@ -89,9 +89,9 @@ describe("OnboardingTour (VROL-818)", () => {
   it("Back returns to the previous step", () => {
     render(<OnboardingTour open={true} onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
-    expect(screen.getByText(/2 of 6/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 of 7/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Back$/ }));
-    expect(screen.getByText(/1 of 6/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 of 7/i)).toBeInTheDocument();
     expect(loadOnboardingStep()).toBe(0);
   });
 
@@ -102,14 +102,15 @@ describe("OnboardingTour (VROL-818)", () => {
     // round-trip test below using the same module surface.
     saveOnboardingStep(2);
     render(<OnboardingTour open={true} onClose={vi.fn()} />);
-    expect(screen.getByText(/3 of 6/i)).toBeInTheDocument();
+    expect(screen.getByText(/3 of 7/i)).toBeInTheDocument();
   });
 
-  it("step 6 shows Finish and clicking it closes + marks seen", () => {
-    saveOnboardingStep(5);
+  it("last step shows Finish and clicking it closes + marks seen", () => {
+    // VROL-1022 — 7 steps total; the Finish button shows on step 7.
+    saveOnboardingStep(6);
     const onClose = vi.fn();
     render(<OnboardingTour open={true} onClose={onClose} />);
-    expect(screen.getByText(/6 of 6/i)).toBeInTheDocument();
+    expect(screen.getByText(/7 of 7/i)).toBeInTheDocument();
     const finish = screen.getByRole("button", { name: /^Finish$/ });
     fireEvent.click(finish);
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -159,8 +160,8 @@ describe("OnboardingTour (VROL-818)", () => {
       // After auto-skipping past step 4, we should land on step 5
       // (scenarios-menu) — that target IS in the DOM so the tour holds
       // there instead of finishing.
-      expect(screen.queryByText(/4 of 6/i)).not.toBeInTheDocument();
-      expect(screen.getByText(/5 of 6/i)).toBeInTheDocument();
+      expect(screen.queryByText(/4 of 7/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/5 of 7/i)).toBeInTheDocument();
     } finally {
       rafSpy.mockRestore();
       cancelSpy.mockRestore();
