@@ -15,6 +15,32 @@ import type { Edge, Node } from "@xyflow/react";
 import { constant, type Distribution } from "@/engine";
 import { DEFAULT_RUN_SETTINGS, type RunSettings } from "@/routes/editor-run-settings";
 
+/**
+ * VROL-1023 — capability tags. Each preset declares which engine
+ * features it exercises so the templates gallery can filter by chip.
+ * Keep the vocabulary small + stable; adding a new tag adds a new
+ * chip on the gallery automatically.
+ */
+export type PresetTag =
+  | "starter"
+  | "multi-product"
+  | "reliability"
+  | "workers"
+  | "parallel"
+  | "source-rate"
+  | "two-line"
+  | "job-shop"
+  | "pharma"
+  | "bakery"
+  | "electronics"
+  | "beverage"
+  | "shampoo"
+  | "conveyor"
+  | "dairy"
+  | "batch"
+  | "multi-plate"
+  | "sustainability";
+
 export interface Preset {
   readonly id: string;
   readonly title: string;
@@ -22,6 +48,8 @@ export interface Preset {
   readonly highlight: string;
   readonly graph: { readonly nodes: Node[]; readonly edges: Edge[] };
   readonly settings: RunSettings;
+  /** VROL-1023 — capability tags for the gallery chip filter. */
+  readonly tags?: readonly PresetTag[];
 }
 
 function station(
@@ -51,6 +79,7 @@ const BOTTLING_LINE: Preset = {
   blurb:
     "Diamond topology: two parallel fillers feed a slow capper, QC reworks defects back to the capper, plus a mid-run maintenance dip on Filler A.",
   highlight: "Branching + rework loop + maintenance",
+  tags: ["starter", "reliability"],
   graph: {
     nodes: [
       station("n1", "Input", "input", 60, 180, { cycleDistribution: constant(30) }),
@@ -91,6 +120,7 @@ const MULTI_PRODUCT_CHANGEOVER: Preset = {
   blurb:
     "Two products (A 60% / B 40%) running on a 4-station chain. The Filler has a changeover matrix — A→B costs 800ms, B→A costs 500ms, same-product transitions are free.",
   highlight: "Multi-product mix + changeover matrix",
+  tags: ["multi-product"],
   graph: {
     nodes: [
       station("n1", "Mixer", "input", 60, 160, { cycleDistribution: constant(40) }),
@@ -127,6 +157,7 @@ const MAINTENANCE_BOUND: Preset = {
   blurb:
     "A 3-station chain where the middle station eats two 8-second maintenance windows. Watch throughput collapse during each window on the chart.",
   highlight: "Planned maintenance windows",
+  tags: ["reliability"],
   graph: {
     nodes: [
       station("n1", "Feeder", "input", 80, 160, { cycleDistribution: constant(50) }),
@@ -151,6 +182,7 @@ const WORKER_BOTTLENECK: Preset = {
   blurb:
     "Four stations all need a worker, but only two workers are on the floor (one knows capping, one knows labelling, both can do qc). Labor utilization caps the line.",
   highlight: "Workers + skills + labor utilization",
+  tags: ["workers"],
   graph: {
     nodes: [
       station("n1", "Input", "input", 60, 160, { cycleDistribution: constant(40) }),
@@ -195,6 +227,7 @@ const PARALLEL_FILLERS: Preset = {
   blurb:
     "Source → three parallel fillers (one node, capacity 3) → fast capper → QC. The Filler's parallel cycles match the Capper's higher rate so neither side bottlenecks.",
   highlight: "capacity > 1 (parallel cycles)",
+  tags: ["parallel"],
   graph: {
     nodes: [
       station("n1", "Source", "input", 60, 180, { cycleDistribution: constant(30) }),
@@ -217,6 +250,7 @@ const SOURCE_RATE: Preset = {
   blurb:
     "Three-station line where the source only emits a part every 2 minutes. Stations idle between arrivals — throughput is gated by upstream supply, not station cycles.",
   highlight: "finite-rate source (inter-arrival)",
+  tags: ["source-rate"],
   graph: {
     nodes: [
       station("n1", "Source", "input", 60, 180, { cycleDistribution: constant(30) }),
@@ -240,6 +274,7 @@ const TWO_LINE_PACKING: Preset = {
   blurb:
     "Two parallel lines (Filler→Capper each) merge into a single Packer. Packer is the bottleneck — both upstream cappers compete for it.",
   highlight: "merge topology + downstream bottleneck",
+  tags: ["two-line"],
   graph: {
     nodes: [
       // Single shared source feeds both lines (engine requires single source).
@@ -272,6 +307,7 @@ const MIXED_MODEL_JOB_SHOP: Preset = {
   blurb:
     "Three SKUs sharing one line. Cycle times + defect rates vary by product; changeovers between SKUs cost real time. Demonstrates per-product KPIs and the cost of variety.",
   highlight: "per-product cycles + asymmetric changeovers",
+  tags: ["multi-product", "job-shop"],
   graph: {
     nodes: [
       station("src", "Source", "input", 60, 160, { cycleDistribution: constant(40) }),
@@ -333,6 +369,7 @@ const PHARMA_PACKAGING: Preset = {
   blurb:
     "Validation-required workers on the QC stations; only certified staff can sign off batches. Shows how skill restrictions become the constraint when staffing is tight.",
   highlight: "skill-restricted assignment + double QC",
+  tags: ["pharma", "workers"],
   graph: {
     nodes: [
       station("src", "Source", "input", 60, 160, { cycleDistribution: constant(30) }),
@@ -383,6 +420,7 @@ const BAKERY: Preset = {
   blurb:
     "Mixer → Shape → Proof → Oven (capacity 4, slow cycle) → Cool → Pack. The oven runs four trays in parallel — shifts the bottleneck from cycle to dough handling.",
   highlight: "batch oven via capacity > 1",
+  tags: ["bakery", "batch"],
   graph: {
     nodes: [
       station("mix", "Mixer", "input", 60, 160, { cycleDistribution: constant(120) }),
@@ -414,6 +452,7 @@ const ELECTRONICS: Preset = {
   blurb:
     "Pick-and-place → reflow oven (cap 3, 400ms) → AOI inspection (15% defects route back to rework) → functional test → pack. Watch the rework loop bunch up at the inspector.",
   highlight: "rework loop + parallel reflow",
+  tags: ["electronics", "parallel"],
   graph: {
     nodes: [
       station("src", "Source", "input", 60, 160, { cycleDistribution: constant(40) }),
@@ -455,6 +494,7 @@ const BEVERAGE_CANNING: Preset = {
   blurb:
     "Filler → seamer → labeller → tray packer with breakdowns on the seamer. Demonstrates how a moderately-failing station drags the entire line.",
   highlight: "breakdowns on a critical station",
+  tags: ["beverage", "reliability"],
   graph: {
     nodes: [
       station("src", "Source", "input", 60, 200, { cycleDistribution: constant(60) }),
@@ -484,6 +524,7 @@ const ASSEMBLY_CELL: Preset = {
   blurb:
     "Manual sub-assembly → automated press → manual final assembly. The two manual cells starve the press; shows how worker pacing shapes throughput.",
   highlight: "manual + automated mix",
+  tags: ["workers"],
   graph: {
     nodes: [
       station("src", "Source", "input", 60, 200, { cycleDistribution: constant(120) }),
@@ -529,6 +570,7 @@ const SHAMPOO_LINE: Preset = {
   blurb:
     "Unilever-style FMCG line: mix → fill (BOM: 2 caps/cycle) → cap → label (split by SKU) → pack → palletise. Autoclave tool pool shared between mix + cap (capacity 1) creates serialised contention. Stochastic cycle times + Filler/Capper breakdowns.",
   highlight: "BOM + tool pool + per-SKU + stochastic",
+  tags: ["shampoo", "multi-product"],
   graph: {
     nodes: [
       station("src", "Bulk in", "input", 40, 200, { cycleDistribution: tri(50, 60, 75) }),
@@ -610,6 +652,7 @@ const CONVEYOR_LINE: Preset = {
   blurb:
     "Filler → 10m conveyor at 2 m/s → Capper → out. The conveyor adds a real 5-second residence time between the two stations; watch the first part appear at the Capper only after the conveyor fills.",
   highlight: "transport / residence-time conveyor",
+  tags: ["conveyor"],
   graph: {
     nodes: [
       station("src", "Source", "input", 40, 200, { cycleDistribution: constant(80) }),
@@ -644,6 +687,7 @@ const DAIRY_LINE: Preset = {
   blurb:
     "Bulk-fluid processing line: raw milk → pasteurizer → separator → homogenizer → filler. Every station declares unit='kg' AND unitsPerPart=0.5, so 1000 parts/h displays as 500 kg/h — the first preset that exercises both UoM v1 (label) and v2 (ratio).",
   highlight: "unit-of-measure: kg / hour at 0.5 kg/part",
+  tags: ["dairy"],
   graph: {
     nodes: [
       station("src", "Raw milk", "input", 40, 200, {
@@ -699,6 +743,7 @@ const PRINT_BATCH_LINE: Preset = {
   blurb:
     "Additive workflow: parts queue up at the printer until a 10-piece build plate is full, then one 20-second print cycle emits all 10 together. Post-process drains them. Throughput is set by the plate fill rate + print time, not the slowest individual cycle.",
   highlight: "batch-fire / build-plate",
+  tags: ["batch"],
   graph: {
     nodes: [
       station("src", "Source", "input", 40, 200, { cycleDistribution: constant(80) }),
@@ -731,6 +776,7 @@ const PRINT_MULTI_LINE: Preset = {
   blurb:
     "3 dental printers each running a 10-part build plate. capacity=3 + batchSize=10 puts up to 30 parts in-flight at the printer station. Compare against the single-plate '3D-print batch' preset to see the throughput swing from adding plates.",
   highlight: "multi-plate batch-fire (capacity × batchSize)",
+  tags: ["batch", "multi-plate"],
   graph: {
     nodes: [
       station("src", "Source", "input", 40, 200, { cycleDistribution: constant(80) }),
@@ -763,6 +809,7 @@ const SUSTAINABLE_LINE: Preset = {
   blurb:
     "Bottling line annotated with per-cycle energy (J), water (L), and CO₂-equivalent (g) at each station. Surfaces totals and per-unit intensity in the new Sustainability card. Useful for trading off throughput against environmental footprint.",
   highlight: "energy / water / CO₂e per unit",
+  tags: ["sustainability"],
   graph: {
     nodes: [
       station("src", "Inlet", "input", 40, 200, {

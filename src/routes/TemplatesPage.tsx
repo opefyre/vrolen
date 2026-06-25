@@ -38,6 +38,20 @@ function matchesFilter(preset: Preset, query: string): boolean {
   return haystack.includes(query);
 }
 
+// VROL-1023 — collected tag vocabulary across all presets, sorted by
+// frequency so the busiest categories appear first.
+function collectTags(presets: readonly Preset[]): readonly string[] {
+  const counts = new Map<string, number>();
+  for (const p of presets) {
+    for (const t of p.tags ?? []) {
+      counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([t]) => t);
+}
+
 function PresetRow({ preset }: { readonly preset: Preset }) {
   return (
     <Card>
@@ -69,9 +83,18 @@ function PresetRow({ preset }: { readonly preset: Preset }) {
 
 export default function TemplatesPage() {
   const [filter, setFilter] = useState<string>("");
+  // VROL-1023 — active tag chip. null = "all".
+  const [activeTag, setActiveTag] = useState<string | null>(null);
   const trimmed = filter.trim().toLowerCase();
 
-  const filtered = useMemo(() => PRESETS.filter((p) => matchesFilter(p, trimmed)), [trimmed]);
+  const tags = useMemo(() => collectTags(PRESETS), []);
+  const filtered = useMemo(
+    () =>
+      PRESETS.filter((p) => matchesFilter(p, trimmed)).filter(
+        (p) => activeTag === null || (p.tags ?? []).includes(activeTag as never),
+      ),
+    [trimmed, activeTag],
+  );
   const hero = filtered.find((p) => p.id === HERO_ID);
   const rest = filtered.filter((p) => p.id !== HERO_ID);
 
@@ -84,7 +107,7 @@ export default function TemplatesPage() {
           run settings with the preset's editable copy.
         </p>
       </div>
-      <div>
+      <div className="space-y-2">
         <label htmlFor="templates-filter" className="sr-only">
           Filter templates
         </label>
@@ -99,6 +122,40 @@ export default function TemplatesPage() {
           autoComplete="off"
           data-testid="templates-filter"
         />
+        {/* VROL-1023 — tag chips. "All" plus each declared tag. */}
+        <div className="flex flex-wrap gap-1.5" data-testid="templates-tag-chips">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTag(null);
+            }}
+            className={`rounded-full border px-2.5 py-0.5 text-[11px] tracking-wide uppercase ${
+              activeTag === null
+                ? "bg-foreground text-background border-foreground"
+                : "border-border text-muted-foreground hover:bg-muted/50"
+            }`}
+            data-testid="templates-tag-all"
+          >
+            All
+          </button>
+          {tags.map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => {
+                setActiveTag(activeTag === t ? null : t);
+              }}
+              className={`rounded-full border px-2.5 py-0.5 text-[11px] tracking-wide uppercase ${
+                activeTag === t
+                  ? "bg-foreground text-background border-foreground"
+                  : "border-border text-muted-foreground hover:bg-muted/50"
+              }`}
+              data-testid={`templates-tag-${t}`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
       </div>
 
       {filtered.length === 0 ? (

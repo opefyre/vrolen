@@ -34,4 +34,24 @@ describe("TemplatesPage filter empty state (VROL-804)", () => {
     });
     expect(screen.queryByText(/No templates match/i)).not.toBeInTheDocument();
   });
+
+  it("VROL-1023 — renders tag chips including All + new feature tags", () => {
+    render(<TemplatesPage />);
+    expect(screen.getByTestId("templates-tag-chips")).toBeInTheDocument();
+    expect(screen.getByTestId("templates-tag-all")).toBeInTheDocument();
+    expect(screen.getByTestId("templates-tag-sustainability")).toBeInTheDocument();
+    expect(screen.getByTestId("templates-tag-conveyor")).toBeInTheDocument();
+    expect(screen.getByTestId("templates-tag-batch")).toBeInTheDocument();
+  });
+
+  it("VROL-1023 — clicking a tag chip narrows the list to matching presets", () => {
+    render(<TemplatesPage />);
+    const sustainabilityChip = screen.getByTestId("templates-tag-sustainability");
+    act(() => {
+      sustainabilityChip.click();
+    });
+    expect(screen.getByText(/Sustainable line/i)).toBeInTheDocument();
+    // A non-matching preset (Bottling) should NOT appear once filtered.
+    expect(screen.queryByText(/Branching \+ rework loop/i)).not.toBeInTheDocument();
+  });
 });
