@@ -33,7 +33,7 @@ export function resultToCsv(result: ChainResult, stationLabels?: readonly string
   lines.push("");
 
   lines.push(
-    "station_idx,label,completed,scrapped,reworked,availability,performance,quality,oee,temp_spec_scrap,tool_blocked_ms,bom_starved,sku_routed",
+    "station_idx,label,completed,scrapped,reworked,availability,performance,quality,oee,temp_spec_scrap,tool_blocked_ms,bom_starved,sku_routed,energy_j,water_l,co2e_g",
   );
   for (let i = 0; i < result.perStationCompleted.length; i++) {
     const label = stationLabels?.[i] ?? result.bottlenecks[i]?.label ?? `s${String(i)}`;
@@ -54,10 +54,33 @@ export function resultToCsv(result: ChainResult, stationLabels?: readonly string
         result.perStationToolBlockedMs?.[i] ?? 0,
         result.perStationBomStarved?.[i] ?? 0,
         result.perStationSkuRouted?.[i] ?? 0,
+        // VROL-1019 — sustainability per-station totals.
+        (result.perStationEnergyJ?.[i] ?? 0).toFixed(2),
+        (result.perStationWaterL?.[i] ?? 0).toFixed(4),
+        (result.perStationCO2eG?.[i] ?? 0).toFixed(2),
       ]),
     );
   }
 
+  return lines.join("\n");
+}
+
+/**
+ * VROL-1019 — sustainability time series. One row per sample with
+ * cumulative line totals for energy / water / CO₂e. Header-only when
+ * the run has no samples or no station declared sustainability inputs.
+ */
+export function sustainabilityTimeseriesToCsv(result: ChainResult): string {
+  const lines: string[] = ["t_ms,energy_j,water_l,co2e_g"];
+  if (result.totalEnergyJ <= 0 && result.totalWaterL <= 0 && result.totalCO2eG <= 0) {
+    return lines.join("\n");
+  }
+  for (const s of result.samples) {
+    const e = s.perStationEnergyJ.reduce((a, v) => a + v, 0);
+    const w = s.perStationWaterL.reduce((a, v) => a + v, 0);
+    const c = s.perStationCO2eG.reduce((a, v) => a + v, 0);
+    lines.push(row([s.tMs, e.toFixed(2), w.toFixed(4), c.toFixed(2)]));
+  }
   return lines.join("\n");
 }
 
@@ -188,6 +211,15 @@ export function allInOneToCsv(
     parts.push("");
     parts.push("# section: Constraint history");
     parts.push(constraintHistoryToCsv(constraintIntervals));
+  }
+  // VROL-1019 — sustainability time series (only when at least one
+  // station declared inputs and the sampler ran).
+  if (result.totalEnergyJ > 0 || result.totalWaterL > 0 || result.totalCO2eG > 0) {
+    if (result.samples.length > 0) {
+      parts.push("");
+      parts.push("# section: Sustainability timeseries");
+      parts.push(sustainabilityTimeseriesToCsv(result));
+    }
   }
   return parts.join("\n");
 }
