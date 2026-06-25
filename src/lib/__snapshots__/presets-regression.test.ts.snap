@@ -44,6 +44,17 @@ exports[`preset regression (VROL-472) > preset "bottling-line" KPI summary match
 }
 `;
 
+exports[`preset regression (VROL-472) > preset "conveyor-line" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 13086,
+  "bottleneckLabel": "Filler",
+  "bottleneckReason": "starvation",
+  "completed": 190,
+  "lineOee": 0.991304,
+  "throughputPartsPerHour": 5948,
+}
+`;
+
 exports[`preset regression (VROL-472) > preset "electronics-smt" KPI summary matches snapshot 1`] = `
 {
   "avgTimeInSystemMs": 3655,

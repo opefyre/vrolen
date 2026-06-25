@@ -599,6 +599,39 @@ const SHAMPOO_LINE: Preset = {
   },
 };
 
+// VROL-1005 — conveyor showcase. 5-station bottling layout with a real
+// conveyor between Filler and Capper. The conveyor's lengthM/speedMps
+// flow through graph-to-chain into ChainOptions.bufferDelayMs[],
+// modeling a 5s transit between the two stations. Demonstrates the
+// Sprint 112-115 conveyor work end-to-end in a realistic scenario.
+const CONVEYOR_LINE: Preset = {
+  id: "conveyor-line",
+  title: "Conveyor between stations",
+  blurb:
+    "Filler → 10m conveyor at 2 m/s → Capper → out. The conveyor adds a real 5-second residence time between the two stations; watch the first part appear at the Capper only after the conveyor fills.",
+  highlight: "transport / residence-time conveyor",
+  graph: {
+    nodes: [
+      station("src", "Source", "input", 40, 200, { cycleDistribution: constant(80) }),
+      station("filler", "Filler", "machine", 220, 200, { cycleDistribution: constant(600) }),
+      station("conv", "Conveyor", "transport", 400, 200, {
+        cycleDistribution: constant(1),
+        lengthM: 10,
+        speedMps: 2,
+      }),
+      station("capper", "Capper", "machine", 580, 200, { cycleDistribution: constant(600) }),
+      station("out", "Done", "output", 760, 200, { cycleDistribution: constant(30) }),
+    ],
+    edges: [
+      edge("e1", "src", "filler"),
+      edge("e2", "filler", "conv"),
+      edge("e3", "conv", "capper"),
+      edge("e4", "capper", "out"),
+    ],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 120_000 },
+};
+
 export const PRESETS: readonly Preset[] = [
   BOTTLING_LINE,
   MULTI_PRODUCT_CHANGEOVER,
@@ -614,6 +647,7 @@ export const PRESETS: readonly Preset[] = [
   BEVERAGE_CANNING,
   ASSEMBLY_CELL,
   SHAMPOO_LINE,
+  CONVEYOR_LINE,
 ];
 
 export function getPreset(id: string): Preset | undefined {
