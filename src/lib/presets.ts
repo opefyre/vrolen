@@ -720,6 +720,63 @@ const PRINT_BATCH_LINE: Preset = {
   settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 180_000 },
 };
 
+// VROL-1014 — sustainability-aware line. Every station declares energy
+// + water + CO₂e per cycle so the new Sustainability card has data to
+// render. Mirrors the dairy line topology so users can compare with /
+// without sustainability inputs.
+const SUSTAINABLE_LINE: Preset = {
+  id: "sustainable-line",
+  title: "Sustainable line (J / L / CO₂e)",
+  blurb:
+    "Bottling line annotated with per-cycle energy (J), water (L), and CO₂-equivalent (g) at each station. Surfaces totals and per-unit intensity in the new Sustainability card. Useful for trading off throughput against environmental footprint.",
+  highlight: "energy / water / CO₂e per unit",
+  graph: {
+    nodes: [
+      station("src", "Inlet", "input", 40, 200, {
+        cycleDistribution: constant(80),
+        energyPerCycleJ: 5,
+        waterPerCycleL: 0.01,
+        co2ePerCycleG: 0.3,
+      }),
+      station("filler", "Filler", "machine", 220, 200, {
+        cycleDistribution: constant(600),
+        energyPerCycleJ: 1_200,
+        waterPerCycleL: 0.5,
+        co2ePerCycleG: 18,
+      }),
+      station("capper", "Capper", "machine", 400, 200, {
+        cycleDistribution: constant(450),
+        energyPerCycleJ: 350,
+        waterPerCycleL: 0,
+        co2ePerCycleG: 5,
+      }),
+      station("labeler", "Labeler", "machine", 580, 200, {
+        cycleDistribution: constant(500),
+        energyPerCycleJ: 200,
+        waterPerCycleL: 0,
+        co2ePerCycleG: 3,
+      }),
+      station("packer", "Packer", "machine", 760, 200, {
+        cycleDistribution: constant(700),
+        energyPerCycleJ: 800,
+        waterPerCycleL: 0.05,
+        co2ePerCycleG: 12,
+      }),
+      station("out", "Done", "output", 940, 200, {
+        cycleDistribution: constant(50),
+      }),
+    ],
+    edges: [
+      edge("e1", "src", "filler"),
+      edge("e2", "filler", "capper"),
+      edge("e3", "capper", "labeler"),
+      edge("e4", "labeler", "packer"),
+      edge("e5", "packer", "out"),
+    ],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 120_000 },
+};
+
 export const PRESETS: readonly Preset[] = [
   BOTTLING_LINE,
   MULTI_PRODUCT_CHANGEOVER,
@@ -738,6 +795,7 @@ export const PRESETS: readonly Preset[] = [
   CONVEYOR_LINE,
   DAIRY_LINE,
   PRINT_BATCH_LINE,
+  SUSTAINABLE_LINE,
 ];
 
 export function getPreset(id: string): Preset | undefined {

@@ -334,6 +334,15 @@ export interface ChainResult {
   readonly totalWaterL: number;
   readonly totalCO2eG: number;
   /**
+   * VROL-1014 — per-station sustainability totals (cycles × per-cycle
+   * input). Aligned with perStationCompleted. All zeros when no
+   * station declared the input. The Sustainability card renders only
+   * when at least one entry is non-zero.
+   */
+  readonly perStationEnergyJ: readonly number[];
+  readonly perStationWaterL: readonly number[];
+  readonly perStationCO2eG: readonly number[];
+  /**
    * VROL-882 — per-station completion counts split by quality grade.
    * Index aligned with perStationCompleted. Sum of values per station
    * equals perStationCompleted[i] (modulo rounding).
@@ -2774,6 +2783,21 @@ function* simulationStream(
       const cycles = e.completed / (topology.unitsPerCycle[i] ?? 1);
       return s + cycles * (topology.co2ePerCycleG[i] ?? 0);
     }, 0),
+    // VROL-1014 — per-station sustainability breakdown. Same math as
+    // the line totals above, just kept per-station for the
+    // SustainabilityCard's stacked bars.
+    perStationEnergyJ: executors.map((e, i) => {
+      const cycles = e.completed / (topology.unitsPerCycle[i] ?? 1);
+      return cycles * (topology.energyPerCycleJ[i] ?? 0);
+    }),
+    perStationWaterL: executors.map((e, i) => {
+      const cycles = e.completed / (topology.unitsPerCycle[i] ?? 1);
+      return cycles * (topology.waterPerCycleL[i] ?? 0);
+    }),
+    perStationCO2eG: executors.map((e, i) => {
+      const cycles = e.completed / (topology.unitsPerCycle[i] ?? 1);
+      return cycles * (topology.co2ePerCycleG[i] ?? 0);
+    }),
     // VROL-882 — per-station grade counts. Multinomial expectation: each
     // station's completed × pct(grade). The engine doesn't sample per part
     // for grades — it bulk-attributes the count proportionally at finalize

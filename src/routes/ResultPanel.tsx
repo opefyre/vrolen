@@ -44,6 +44,7 @@ import { OeeBreakdown } from "./OeeBreakdown";
 import { ConstraintHistoryChart } from "@/components/results/constraint-history-chart";
 import { ActionCard } from "@/components/results/action-card";
 import { SixLossBreakdown } from "@/components/results/six-loss-bar";
+import { SustainabilityCard } from "@/components/results/sustainability-card";
 import { StationGantt } from "@/components/results/station-gantt";
 import { GlossaryTerm } from "@/components/ui/glossary-term";
 import { QualityLosses } from "./QualityLosses";
@@ -1642,6 +1643,17 @@ export function ResultPanel({
                 : {})}
             />
             <OeeBreakdown result={result} replicationSummary={replicationSummary} />
+            <SustainabilityCard
+              result={result}
+              stationLabels={runMeta.stationLabels}
+              throughputUnit={(() => {
+                const arr = runMeta.perStationUnit;
+                if (!arr || arr.length === 0) return "parts";
+                const last = arr[arr.length - 1];
+                return last && last.length > 0 ? last : "parts";
+              })()}
+              unitsPerPart={unitsPerPart}
+            />
             <SixLossBreakdown result={result} />
             <StationGantt result={result} />
             <ConstraintHistoryChart result={result} />
