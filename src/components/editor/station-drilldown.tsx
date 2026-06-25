@@ -545,6 +545,56 @@ export function StationDrilldown({
               );
             })()}
 
+            {/* VROL-1033 — per-station sustainability section. Renders
+                when the station has any non-zero energy / water /
+                CO₂e. Sparklines come from per-tick samples (cumulative
+                across the run). */}
+            {haveData &&
+              (() => {
+                const e = result.perStationEnergyJ?.[stationIdx] ?? 0;
+                const w = result.perStationWaterL?.[stationIdx] ?? 0;
+                const c = result.perStationCO2eG?.[stationIdx] ?? 0;
+                if (e === 0 && w === 0 && c === 0) return null;
+                const eSeries = samples.map((sa) => sa.perStationEnergyJ?.[stationIdx] ?? 0);
+                const wSeries = samples.map((sa) => sa.perStationWaterL?.[stationIdx] ?? 0);
+                const cSeries = samples.map((sa) => sa.perStationCO2eG?.[stationIdx] ?? 0);
+                const fmtE = (j: number): string =>
+                  j >= 1_000_000
+                    ? `${(j / 1_000_000).toFixed(2)} MJ`
+                    : j >= 1_000
+                      ? `${(j / 1_000).toFixed(0)} kJ`
+                      : `${j.toFixed(0)} J`;
+                const row = (label: string, value: string, series: number[], unit: string) => (
+                  <div className="space-y-0.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-muted-foreground text-[10px]">{label}</span>
+                      <span className="font-mono tabular-nums">{value}</span>
+                    </div>
+                    {series.length > 1 ? (
+                      <Sparkline series={series} width={240} height={20} unit={unit} />
+                    ) : null}
+                  </div>
+                );
+                return (
+                  <section className="space-y-1.5" data-testid="drilldown-sustainability">
+                    <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+                      Sustainability
+                    </div>
+                    <div className="text-foreground/80 space-y-2 text-xs">
+                      {e > 0 ? row("Energy", fmtE(e), eSeries, "J") : null}
+                      {w > 0 ? row("Water", `${w.toFixed(1)} L`, wSeries, "L") : null}
+                      {c > 0
+                        ? row(
+                            "CO₂e",
+                            c >= 1000 ? `${(c / 1000).toFixed(2)} kg` : `${c.toFixed(0)} g`,
+                            cSeries,
+                            "g",
+                          )
+                        : null}
+                    </div>
+                  </section>
+                );
+              })()}
             {recommendation ? (
               <section className="space-y-1.5">
                 <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">

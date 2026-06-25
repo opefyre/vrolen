@@ -194,4 +194,45 @@ describe("StationDrilldown (VROL-894)", () => {
     expect(screen.queryByText(/Cumulative over time/i)).toBeNull();
     expect(screen.queryByText(/Utilisation over time/i)).toBeNull();
   });
+
+  // ─── VROL-1033 — per-station sustainability section ──────────────────
+  it("VROL-1033 — renders Sustainability section when station has non-zero totals", () => {
+    const withSus = {
+      ...makeResult(),
+      perStationEnergyJ: [50_000],
+      perStationWaterL: [3.5],
+      perStationCO2eG: [120],
+    } as unknown as Parameters<typeof StationDrilldown>[0]["result"];
+    render(
+      <StationDrilldown
+        open
+        onOpenChange={() => {}}
+        nodeId="node-1"
+        nodeLabel="Filler"
+        nodeTypeLabel="machine"
+        result={withSus}
+        chainNodeIds={["node-1"]}
+        edges={[]}
+      />,
+    );
+    expect(screen.getByTestId("drilldown-sustainability")).toBeTruthy();
+    expect(screen.getByText(/Sustainability/i)).toBeTruthy();
+    expect(screen.getByText(/50 kJ/)).toBeTruthy();
+  });
+
+  it("VROL-1033 — Sustainability section hidden when all three totals are zero", () => {
+    render(
+      <StationDrilldown
+        open
+        onOpenChange={() => {}}
+        nodeId="node-1"
+        nodeLabel="Filler"
+        nodeTypeLabel="machine"
+        result={makeResult()}
+        chainNodeIds={["node-1"]}
+        edges={[]}
+      />,
+    );
+    expect(screen.queryByTestId("drilldown-sustainability")).toBeNull();
+  });
 });
