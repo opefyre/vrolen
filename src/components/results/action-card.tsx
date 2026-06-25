@@ -2,6 +2,9 @@
  * VROL-948 — single "next thing to do" card derived from the latest run.
  * Sits above the OEE breakdown so the reader gets the action before the
  * decomposed table.
+ *
+ * VROL-1010 — accepts optional perStationBatchSize so the card can fire
+ * batch-fire-specific advice when a batchSize > 1 station is starving.
  */
 
 import type { ChainResult } from "@/engine";
@@ -11,10 +14,11 @@ import { Button } from "@/components/ui/button";
 interface Props {
   readonly result: ChainResult;
   readonly onApply?: (payload: ActionApplyPayload) => void;
+  readonly perStationBatchSize?: readonly number[];
 }
 
-export function ActionCard({ result, onApply }: Props) {
-  const card = deriveActionCard(result);
+export function ActionCard({ result, onApply, perStationBatchSize }: Props) {
+  const card = deriveActionCard(result, perStationBatchSize ? { perStationBatchSize } : {});
   if (!card) return null;
   const toneClass =
     card.tone === "primary"

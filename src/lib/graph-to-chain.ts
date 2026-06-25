@@ -74,6 +74,14 @@ export interface GraphToChainResult {
    * set; display callers treat empty as "parts".
    */
   readonly perStationUnit: readonly string[];
+  /**
+   * VROL-1010 — per-station batchSize aligned with chainNodeIds.
+   * 1 (no batching) is the default for any station that doesn't
+   * declare data.batchSize > 1. Consumed by deriveActionCard so the
+   * card can surface batch-fire-specific advice when those stations
+   * are starving.
+   */
+  readonly perStationBatchSize: readonly number[];
   /** Set when the graph can't be turned into a chain at all. */
   readonly error: string | null;
 }
@@ -430,6 +438,7 @@ export function graphToChainOptions(
     maintenanceWindows: [],
     bufferDelayMs: [],
     perStationUnit: [],
+    perStationBatchSize: [],
     error: null,
   };
   // Decorative nodes (sticky notes, section frames) never participate
@@ -565,6 +574,8 @@ export function graphToChainOptions(
       });
       // VROL-867 v1 — per-station unit label.
       const perStationUnit = topoOrder.map((id) => unitOf(nodeById.get(id)!));
+      // VROL-1010 — per-station batch-fire size (default 1).
+      const perStationBatchSize = topoOrder.map((id) => batchSizeOf(nodeById.get(id)!) ?? 1);
 
       return {
         chainNodeIds: topoOrder,
@@ -577,6 +588,7 @@ export function graphToChainOptions(
         maintenanceWindows,
         bufferDelayMs,
         perStationUnit,
+        perStationBatchSize,
         error: null,
       };
     }
@@ -634,6 +646,7 @@ export function graphToChainOptions(
   });
   // VROL-867 v1 — per-station unit label (fallback path).
   const fallbackPerStationUnit = bestChain.map((id) => unitOf(nodeById.get(id)!));
+  const fallbackPerStationBatchSize = bestChain.map((id) => batchSizeOf(nodeById.get(id)!) ?? 1);
 
   return {
     chainNodeIds: bestChain,
@@ -646,6 +659,7 @@ export function graphToChainOptions(
     maintenanceWindows,
     bufferDelayMs,
     perStationUnit: fallbackPerStationUnit,
+    perStationBatchSize: fallbackPerStationBatchSize,
     error: null,
   };
 }

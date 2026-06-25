@@ -41,7 +41,20 @@ export interface ActionCard {
   readonly apply?: ActionApplyPayload;
 }
 
-export function deriveActionCard(result: ChainResult): ActionCard | null {
+/**
+ * VROL-1010 — optional per-station inputs the engine doesn't carry on
+ * ChainResult. perStationBatchSize is aligned with result.perStationOee
+ * (and result.perStationLabels) and unlocks the batch-fire rule below.
+ * Empty / missing → existing rules behave unchanged.
+ */
+export interface ActionCardOpts {
+  readonly perStationBatchSize?: readonly number[];
+}
+
+export function deriveActionCard(
+  result: ChainResult,
+  opts: ActionCardOpts = {},
+): ActionCard | null {
   if (result.perStationOee.length === 0) return null;
   const labels = result.perStationLabels ?? [];
   const top = result.bottlenecks[0];
@@ -74,6 +87,25 @@ export function deriveActionCard(result: ChainResult): ActionCard | null {
         tone: "warn",
         apply: { kind: "reliability:flag", stationLabel: topLabel },
       };
+    }
+  }
+
+  // VROL-1010 — Batch-fire starvation. When the bottleneck is a
+  // batch-fire station (batchSize > 1) AND its starved share is high,
+  // the plate isn't filling fast enough. Two specific levers: raise
+  // upstream rate OR shrink the batch.
+  if (top && opts.perStationBatchSize) {
+    const idx = labels.findIndex((l) => l === top.label);
+    const bs = idx >= 0 ? (opts.perStationBatchSize[idx] ?? 1) : 1;
+    if (bs > 1) {
+      const starvedShare = top.breakdown.find((b) => b.state === "Starved")?.pct ?? 0;
+      if (starvedShare > 0.3) {
+        return {
+          title: `${topLabel} is waiting on a partial batch`,
+          body: `${topLabel} fires a cycle only when ${String(bs)} parts are queued, and it spent ${Math.round(starvedShare * 100)} % of the run Starved waiting for the plate to fill. Two levers: speed up the upstream station that feeds it, or shrink batchSize (smaller plates fire more often).`,
+          tone: "warn",
+        };
+      }
     }
   }
 

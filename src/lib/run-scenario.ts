@@ -42,6 +42,12 @@ export interface ScenarioRunMeta {
    * chemistry, etc.) read as kg/h, L/h, doses/h instead of parts/h.
    */
   perStationUnit: string[];
+  /**
+   * VROL-1010 — per-station batch-fire size aligned with chainNodeIds.
+   * 1 = no batching (the common case). Consumed by the action card to
+   * surface batch-fire-specific advice.
+   */
+  perStationBatchSize: number[];
 }
 
 export interface ScenarioRunOutcome {
@@ -248,6 +254,11 @@ export function runScenario(
         perStationUnit: translation.perStationUnit
           ? [...translation.perStationUnit]
           : translation.chainNodeIds.map(() => ""),
+        // VROL-1010 — per-station batch-fire size; defaults to 1 for
+        // older callers that mock the translation without the field.
+        perStationBatchSize: translation.perStationBatchSize
+          ? [...translation.perStationBatchSize]
+          : translation.chainNodeIds.map(() => 1),
       },
       skippedNodeIds: translation.skippedNodeIds,
     };

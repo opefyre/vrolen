@@ -86,6 +86,11 @@ interface ResultPanelRunMeta {
    * hour"). Optional so older callers stay valid.
    */
   readonly perStationUnit?: readonly string[];
+  /**
+   * VROL-1010 — per-station batch-fire size aligned with chainNodeIds.
+   * Drives the batch-fire starvation rule in the ActionCard.
+   */
+  readonly perStationBatchSize?: readonly number[];
 }
 
 interface ResultPanelProps {
@@ -1593,6 +1598,9 @@ export function ResultPanel({
             <ActionCard
               result={result}
               {...(onApplyActionCard ? { onApply: onApplyActionCard } : {})}
+              {...(runMeta.perStationBatchSize
+                ? { perStationBatchSize: runMeta.perStationBatchSize }
+                : {})}
             />
             <OeeBreakdown result={result} replicationSummary={replicationSummary} />
             <SixLossBreakdown result={result} />

@@ -152,4 +152,66 @@ describe("deriveActionCard (VROL-948 / VROL-959)", () => {
     // all 1.0). Title surfaces "slim factor" wording.
     expect(card.title.toLowerCase()).toMatch(/slim|healthy/);
   });
+
+  it("VROL-1010 — batch-fire bottleneck with high starved share fires the partial-batch rule", () => {
+    const r = baseResult({
+      bottlenecks: [
+        {
+          stationId: "s1" as ChainResult["bottlenecks"][number]["stationId"],
+          label: "Filler",
+          runningPct: 0.3,
+          bindingScore: 0.3,
+          primaryReason: "starved",
+          breakdown: [
+            { state: "Running", pct: 0.3 },
+            { state: "Starved", pct: 0.5 },
+          ],
+        },
+      ],
+    });
+    const card = deriveActionCard(r, { perStationBatchSize: [10, 1, 1] })!;
+    expect(card.tone).toBe("warn");
+    expect(card.title.toLowerCase()).toContain("partial batch");
+    expect(card.body).toMatch(/upstream|shrink batchSize/);
+  });
+
+  it("VROL-1010 — batchSize=1 bottleneck does NOT fire the partial-batch rule", () => {
+    const r = baseResult({
+      bottlenecks: [
+        {
+          stationId: "s1" as ChainResult["bottlenecks"][number]["stationId"],
+          label: "Filler",
+          runningPct: 0.3,
+          bindingScore: 0.3,
+          primaryReason: "starved",
+          breakdown: [
+            { state: "Running", pct: 0.3 },
+            { state: "Starved", pct: 0.5 },
+          ],
+        },
+      ],
+    });
+    const card = deriveActionCard(r, { perStationBatchSize: [1, 1, 1] })!;
+    expect(card.title.toLowerCase()).not.toContain("partial batch");
+  });
+
+  it("VROL-1010 — without opts, partial-batch rule never fires", () => {
+    const r = baseResult({
+      bottlenecks: [
+        {
+          stationId: "s1" as ChainResult["bottlenecks"][number]["stationId"],
+          label: "Filler",
+          runningPct: 0.3,
+          bindingScore: 0.3,
+          primaryReason: "starved",
+          breakdown: [
+            { state: "Running", pct: 0.3 },
+            { state: "Starved", pct: 0.5 },
+          ],
+        },
+      ],
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).not.toContain("partial batch");
+  });
 });
