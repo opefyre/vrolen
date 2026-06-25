@@ -35,4 +35,10 @@ describe("glossary registry", () => {
     expect(lookupGlossary("unit-of-measure")?.body).toContain("kg");
     expect(lookupGlossary("stability")?.body).toContain("CV");
   });
+
+  it("VROL-1009 — batch-fire entry from Sprint 121 is registered", () => {
+    const entry = lookupGlossary("batch-fire");
+    expect(entry?.title).toContain("Batch-fire");
+    expect(entry?.body).toMatch(/batchSize|build plate/i);
+  });
 });

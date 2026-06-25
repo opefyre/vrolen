@@ -107,6 +107,10 @@ export const GLOSSARY: Readonly<Record<string, GlossaryEntry>> = {
     title: "Stability (replication CV)",
     body: "Coefficient of variation = stddev / mean of throughput across replications. CV < 5 % is Stable (the model is decisive). 5–10 % is some variance (more reps would tighten the answer). ≥ 10 % means a single run could mislead — run more replications.",
   },
+  "batch-fire": {
+    title: "Batch-fire station",
+    body: "Station waits for batchSize parts in its upstream before starting a cycle; consumes all N at start; emits all N at completion. Models 3D-print build plates, autoclave loads, oven batches, kilns. Distinct from capacity (parallel cycles) and edge bundleSize (per-edge grouping). A defective or down-during-cycle batch scraps the whole load.",
+  },
 };
 
 export function lookupGlossary(key: string): GlossaryEntry | undefined {
