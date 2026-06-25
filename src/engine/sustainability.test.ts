@@ -61,4 +61,28 @@ describe("per-station sustainability arrays (VROL-1014)", () => {
     expect(r.perStationEnergyJ[0]).toBeGreaterThan(0);
     expect(r.perStationCO2eG[0]).toBe(0);
   });
+
+  it("VROL-1018 — sampler emits per-tick perStationEnergyJ etc.", () => {
+    const r = runChain({ ...buildOpts(), sampler: { intervalMs: 5_000 } });
+    expect(r.samples.length).toBeGreaterThan(1);
+    // Every sample carries the new arrays (aligned with stations).
+    for (const s of r.samples) {
+      expect(s.perStationEnergyJ.length).toBe(3);
+      expect(s.perStationWaterL.length).toBe(3);
+      expect(s.perStationCO2eG.length).toBe(3);
+    }
+    // Cumulative — last sample's per-station values match the final
+    // result.perStation* arrays (modulo trailing in-flight cycles).
+    const last = r.samples[r.samples.length - 1];
+    expect(last).toBeDefined();
+    expect(last?.perStationEnergyJ[0]).toBeCloseTo(r.perStationEnergyJ[0] ?? 0, 6);
+    expect(last?.perStationWaterL[0]).toBeCloseTo(r.perStationWaterL[0] ?? 0, 6);
+    expect(last?.perStationCO2eG[1]).toBeCloseTo(r.perStationCO2eG[1] ?? 0, 6);
+    // Monotonic: consecutive samples never go down (cumulative).
+    for (let i = 1; i < r.samples.length; i++) {
+      const prev = r.samples[i - 1]?.perStationEnergyJ[1] ?? 0;
+      const cur = r.samples[i]?.perStationEnergyJ[1] ?? 0;
+      expect(cur).toBeGreaterThanOrEqual(prev);
+    }
+  });
 });

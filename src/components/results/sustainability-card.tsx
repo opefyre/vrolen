@@ -11,6 +11,7 @@
 
 import type { ChainResult } from "@/engine";
 import { GlossaryTerm } from "@/components/ui/glossary-term";
+import { Sparkline } from "@/routes/Sparkline";
 
 interface Props {
   readonly result: ChainResult;
@@ -25,6 +26,11 @@ interface Metric {
   readonly label: string;
   readonly total: number;
   readonly perStation: readonly number[];
+  /**
+   * VROL-1018 — line-total series over time, pulled from
+   * result.samples[*].perStation*. Empty when no sampler ran.
+   */
+  readonly series: readonly number[];
   readonly fmt: (n: number) => string;
   readonly unit: string;
 }
@@ -39,12 +45,21 @@ export function SustainabilityCard({
   throughputUnit = "parts",
   unitsPerPart = 1,
 }: Props) {
+  // VROL-1018 — line-total series per metric. Sample carries
+  // perStation*; sum across stations gives the line total at that
+  // tick. Empty series when the sampler wasn't on.
+  const energySeries = result.samples.map((s) =>
+    s.perStationEnergyJ.reduce((sum, v) => sum + v, 0),
+  );
+  const waterSeries = result.samples.map((s) => s.perStationWaterL.reduce((sum, v) => sum + v, 0));
+  const co2eSeries = result.samples.map((s) => s.perStationCO2eG.reduce((sum, v) => sum + v, 0));
   const metrics: readonly Metric[] = [
     {
       key: "energy",
       label: "Energy",
       total: result.totalEnergyJ,
       perStation: result.perStationEnergyJ,
+      series: energySeries,
       fmt: (n) =>
         n >= 1_000_000 ? `${fmtNumber(n / 1_000_000)} MJ` : `${fmtNumber(n / 1_000)} kJ`,
       unit: "J",
@@ -54,6 +69,7 @@ export function SustainabilityCard({
       label: "Water",
       total: result.totalWaterL,
       perStation: result.perStationWaterL,
+      series: waterSeries,
       fmt: (n) => `${fmtNumber(n)} L`,
       unit: "L",
     },
@@ -62,6 +78,7 @@ export function SustainabilityCard({
       label: "CO₂e",
       total: result.totalCO2eG,
       perStation: result.perStationCO2eG,
+      series: co2eSeries,
       fmt: (n) => (n >= 1000 ? `${fmtNumber(n / 1000)} kg` : `${fmtNumber(n)} g`),
       unit: "g",
     },
@@ -96,6 +113,11 @@ export function SustainabilityCard({
             <div className="flex items-baseline justify-between">
               <span className="text-foreground text-xs font-medium">{m.label}</span>
               <div className="flex items-baseline gap-3 text-[11px]">
+                {/* VROL-1018 — line-total over time. Sparkline renders
+                    only when the sampler was on (≥2 samples). */}
+                {m.series.length > 1 ? (
+                  <Sparkline series={m.series} width={80} height={18} unit={m.unit} />
+                ) : null}
                 <span className="text-muted-foreground">
                   total{" "}
                   <strong className="text-foreground font-mono tabular-nums">

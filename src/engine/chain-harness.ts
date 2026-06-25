@@ -221,6 +221,16 @@ export interface TimeseriesSample {
   readonly perStationToolBlockedMs: readonly number[];
   readonly perStationBomStarved: readonly number[];
   readonly perStationSkuRouted: readonly number[];
+  /**
+   * VROL-1018 — per-station cumulative sustainability totals at the
+   * sample instant (cycles-so-far × per-cycle inputs). All aligned
+   * with perStationCompleted. Empty arrays when no sampler. Last
+   * sample equals the corresponding result.perStationEnergyJ etc.
+   * Lets the UI render energy / water / CO₂e over time.
+   */
+  readonly perStationEnergyJ: readonly number[];
+  readonly perStationWaterL: readonly number[];
+  readonly perStationCO2eG: readonly number[];
 }
 
 /**
@@ -2352,6 +2362,22 @@ function* simulationStream(
               : [...perStationToolBlockedMs],
           perStationBomStarved: [...perStationBomStarvedCounts],
           perStationSkuRouted: [...perStationSkuRoutedCounts],
+          // VROL-1018 — per-station sustainability cumulative at this
+          // tick. Same math as the final ChainResult arrays, just
+          // emitted per sample so consumers can chart energy / water /
+          // CO₂e over time.
+          perStationEnergyJ: executors.map((e, i) => {
+            const cycles = e.completed / (topology.unitsPerCycle[i] ?? 1);
+            return cycles * (topology.energyPerCycleJ[i] ?? 0);
+          }),
+          perStationWaterL: executors.map((e, i) => {
+            const cycles = e.completed / (topology.unitsPerCycle[i] ?? 1);
+            return cycles * (topology.waterPerCycleL[i] ?? 0);
+          }),
+          perStationCO2eG: executors.map((e, i) => {
+            const cycles = e.completed / (topology.unitsPerCycle[i] ?? 1);
+            return cycles * (topology.co2ePerCycleG[i] ?? 0);
+          }),
         });
       } else {
         // Pre-warmup: still advance trackers so the snapshot deltas stay
