@@ -115,6 +115,20 @@ export const GLOSSARY: Readonly<Record<string, GlossaryEntry>> = {
     title: "Batch-fire station",
     body: "Station waits for batchSize parts in its upstream before starting a cycle; consumes all N at start; emits all N at completion. Models 3D-print build plates, autoclave loads, oven batches, kilns. Pair with capacity > 1 for multi-plate scheduling (e.g. capacity=3 + batchSize=10 = 3 printers each running 10-part plates in parallel). A defective or down-during-cycle batch scraps the whole load.",
   },
+  // VROL-1024 — terms surfaced by the new action-card rules (S121,
+  // S130, S137).
+  "energy-hotspot": {
+    title: "Energy hotspot",
+    body: "One station that dominates the line's energy budget (> 60 % of total). The action card surfaces it because it's the cheapest sustainability lever — drop energyPerCycleJ on that station (more efficient equipment, lower set-point) or cut its cycle count (less rework / scrap upstream so it fires less). Improving any other station's energy footprint won't move the line total much.",
+  },
+  "partial-batch": {
+    title: "Partial-batch starvation",
+    body: "A batch-fire station can't start its cycle until batchSize parts arrive — so it sits idle when upstream is slow. The action card fires this rule when the bottleneck has batchSize > 1 AND spent > 30 % of horizon Starved. Two levers: feed it faster (upstream cycle / parallelism), or shrink batchSize so it can fire sooner with smaller loads (at the cost of more cycles per output).",
+  },
+  "multi-plate": {
+    title: "Multi-plate batch (capacity × batchSize)",
+    body: "A batch-fire station with capacity > 1 runs N batches in parallel — e.g. capacity=3 + batchSize=10 = three 10-part plates printing concurrently. Throughput scales linearly with capacity until the upstream feed catches up to N × batchSize parts/cycle. Used to model parallel 3D-printer arrays, multi-cavity autoclave racks, or two-deck ovens.",
+  },
 };
 
 export function lookupGlossary(key: string): GlossaryEntry | undefined {

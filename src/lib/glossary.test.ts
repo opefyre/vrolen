@@ -47,4 +47,11 @@ describe("glossary registry", () => {
     expect(entry?.body).toContain("unitsPerPart");
     expect(entry?.body).toMatch(/ratio/i);
   });
+
+  it("VROL-1024 — action-card rule terms are registered", () => {
+    expect(lookupGlossary("energy-hotspot")?.title).toContain("Energy hotspot");
+    expect(lookupGlossary("partial-batch")?.title).toContain("Partial-batch");
+    expect(lookupGlossary("multi-plate")?.title).toMatch(/Multi-plate/i);
+    expect(lookupGlossary("multi-plate")?.body).toMatch(/capacity/i);
+  });
 });
