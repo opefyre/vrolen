@@ -2250,6 +2250,43 @@ export function ComparisonTable({
       higherIsBetter: true,
     });
   }
+  // VROL-1015 — sustainability delta rows. Surface only when at least
+  // one side reports non-zero data. Format consistent with the
+  // SustainabilityCard (J → kJ → MJ; g → kg). Lower is better.
+  const fmtEnergy = (n: number): string =>
+    n >= 1_000_000
+      ? `${fmt(n / 1_000_000)} MJ`
+      : n >= 1_000
+        ? `${fmt(n / 1_000)} kJ`
+        : `${fmt(n)} J`;
+  const fmtCO2e = (n: number): string => (n >= 1000 ? `${fmt(n / 1000)} kg` : `${fmt(n)} g`);
+  if (aResult.totalEnergyJ > 0 || bResult.totalEnergyJ > 0) {
+    rows.push({
+      label: "Energy (total)",
+      a: aResult.totalEnergyJ,
+      b: bResult.totalEnergyJ,
+      fmt: fmtEnergy,
+      higherIsBetter: false,
+    });
+  }
+  if (aResult.totalWaterL > 0 || bResult.totalWaterL > 0) {
+    rows.push({
+      label: "Water (total L)",
+      a: aResult.totalWaterL,
+      b: bResult.totalWaterL,
+      fmt: (n) => `${fmt(n)} L`,
+      higherIsBetter: false,
+    });
+  }
+  if (aResult.totalCO2eG > 0 || bResult.totalCO2eG > 0) {
+    rows.push({
+      label: "CO₂e (total)",
+      a: aResult.totalCO2eG,
+      b: bResult.totalCO2eG,
+      fmt: fmtCO2e,
+      higherIsBetter: false,
+    });
+  }
 
   const aHasSamples = aResult.samples.length > 1;
   const bHasSamples = bResult.samples.length > 1;
