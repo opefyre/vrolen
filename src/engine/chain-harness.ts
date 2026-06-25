@@ -1626,8 +1626,19 @@ function* simulationStream(
       }
       return edgeBuffers[edgeIdx] as CountingTrackedBuffer<TrackedPart>;
     }
+    // VROL-1004 — multi-output fan-out. For each outgoing edge, route
+    // through the conveyor wrapper when that edge has a delay, or
+    // directly to the edge buffer when it doesn't. MultiOutputBuffer
+    // picks the first non-full destination; each destination's push()
+    // handles its own delay semantics so mixed scenarios work.
     return new MultiOutputBuffer<TrackedPart>(
-      outs.map((idx) => edgeBuffers[idx] as CountingTrackedBuffer<TrackedPart>),
+      outs.map((idx) => {
+        const conveyor = edgeConveyors[idx];
+        if (conveyor) {
+          return new ConveyorPushWrapper<TrackedPart>(conveyor, scheduler, idx, nowMs);
+        }
+        return edgeBuffers[idx] as CountingTrackedBuffer<TrackedPart>;
+      }),
     );
   }
   /**
