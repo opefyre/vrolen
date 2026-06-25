@@ -5403,6 +5403,39 @@ function EditorCanvas() {
                           }}
                         />
                       </div>
+                      {/* VROL-889 v1 — batch-fire size. > 1 turns this
+                          station into a build-plate / autoclave / oven
+                          batch: it waits for N parts to accumulate,
+                          fires one long cycle, and emits N at the end. */}
+                      <div className="flex flex-col gap-1">
+                        <label
+                          htmlFor="inspector-batch"
+                          className="text-muted-foreground text-xs font-medium"
+                        >
+                          Batch size (1 = no batching)
+                        </label>
+                        <Input
+                          id="inspector-batch"
+                          type="number"
+                          inputMode="numeric"
+                          min={1}
+                          step={1}
+                          placeholder="1"
+                          value={String(
+                            (selectedNode.data as { batchSize?: number }).batchSize ?? "",
+                          )}
+                          onChange={(e) => {
+                            const v = Number(e.target.value);
+                            updateSelectedNodeData({
+                              batchSize: Number.isInteger(v) && v >= 2 && v <= 1000 ? v : undefined,
+                            });
+                          }}
+                        />
+                        <p className="text-muted-foreground text-[11px]">
+                          Above 1, station waits for N parts then fires one cycle that emits N.
+                          Models 3D-print plates, autoclave loads, oven batches.
+                        </p>
+                      </div>
                       {/* VROL-1003 — Transport station inputs: lengthM +
                           speedMps. Residence time is derived and routed
                           to ChainOptions.bufferDelayMs[] by graph-to-chain. */}

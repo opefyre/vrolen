@@ -132,6 +132,17 @@ exports[`preset regression (VROL-472) > preset "pharma-packaging" KPI summary ma
 }
 `;
 
+exports[`preset regression (VROL-472) > preset "print-batch-line" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 57268,
+  "bottleneckLabel": "3D printer",
+  "bottleneckReason": "starvation",
+  "completed": 80,
+  "lineOee": 1,
+  "throughputPartsPerHour": 1646,
+}
+`;
+
 exports[`preset regression (VROL-472) > preset "shampoo-line" KPI summary matches snapshot 1`] = `
 {
   "avgTimeInSystemMs": 203,

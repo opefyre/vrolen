@@ -212,6 +212,16 @@ function unitsPerCycleOf(node: Node): number | undefined {
   return n;
 }
 
+function batchSizeOf(node: Node): number | undefined {
+  // VROL-889 — batch-fire size. Drop default 1.
+  const raw = (node.data as { batchSize?: unknown } | undefined)?.batchSize;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  const n = Math.floor(raw);
+  if (n < 1 || n > 1000) return undefined;
+  if (n === 1) return undefined;
+  return n;
+}
+
 function nominalCycleTimeMsOf(node: Node): number | undefined {
   // VROL-899 — read the OEM-rated design max if the user set one. Engine
   // drops it silently when >= operating mean (over-rated → no throttle).
@@ -352,6 +362,7 @@ function buildTopologyNode(node: Node, id: string, topoSet: Set<string>): ChainT
   const capacity = capacityOf(node);
   const nominalCycleTimeMs = nominalCycleTimeMsOf(node);
   const unitsPerCycle = unitsPerCycleOf(node);
+  const batchSize = batchSizeOf(node);
   const energyPerCycleJ = nonNegNumOf(node, "energyPerCycleJ");
   const waterPerCycleL = nonNegNumOf(node, "waterPerCycleL");
   const co2ePerCycleG = nonNegNumOf(node, "co2ePerCycleG");
@@ -384,6 +395,7 @@ function buildTopologyNode(node: Node, id: string, topoSet: Set<string>): ChainT
     ...(capacity !== undefined ? { capacity } : {}),
     ...(nominalCycleTimeMs !== undefined ? { nominalCycleTimeMs } : {}),
     ...(unitsPerCycle !== undefined ? { unitsPerCycle } : {}),
+    ...(batchSize !== undefined ? { batchSize } : {}),
     ...(energyPerCycleJ !== undefined ? { energyPerCycleJ } : {}),
     ...(waterPerCycleL !== undefined ? { waterPerCycleL } : {}),
     ...(co2ePerCycleG !== undefined ? { co2ePerCycleG } : {}),

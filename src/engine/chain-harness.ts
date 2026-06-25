@@ -602,6 +602,17 @@ export interface ChainTopologyNode {
    */
   readonly unitsPerCycle?: number;
   /**
+   * VROL-889 — batch-fire (3D-print build plate / autoclave load /
+   * oven batch). When > 1, the station holds off starting a cycle
+   * until its upstream buffer holds at least batchSize parts; pulls
+   * batchSize parts at cycle start; emits batchSize parts at
+   * completion. Distinct from `capacity` (which lets N parts run in
+   * parallel) and from edge `bundleSize` (which groups parts crossing
+   * an edge). Default 1 = current single-part-per-cycle behaviour.
+   * Validated as a positive integer 1..1000 at build time.
+   */
+  readonly batchSize?: number;
+  /**
    * VROL-885 — sustainability accounting. Energy joules / water litres /
    * CO2-equivalent grams consumed per completed cycle. Multiplied by
    * unitsPerCycle when emitting line totals. All optional; line KPIs only
@@ -888,6 +899,12 @@ interface NormalizedTopology {
    * push (the part is the batch handle).
    */
   unitsPerCycle: number[];
+  /**
+   * VROL-889 — per-station batch-fire size (default 1). When > 1, the
+   * station waits for N parts in its upstream buffer before starting
+   * a cycle and emits N parts when the cycle completes.
+   */
+  batchSizes: number[];
   /** VROL-885 — sustainability inputs in per-cycle units, default 0. */
   energyPerCycleJ: number[];
   waterPerCycleL: number[];
@@ -1047,6 +1064,18 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       if (!Number.isInteger(n) || n < 1 || n > 1000) {
         throw new Error(
           `topology: station "${node.id}" unitsPerCycle must be an integer between 1 and 1000 (got ${String(n)})`,
+        );
+      }
+      return n;
+    });
+    // VROL-889 — batch-fire size. Default 1 (single-part-per-cycle).
+    // Validated as positive integer 1..1000 so a typo (e.g. 1000000)
+    // can't make the engine wait forever.
+    const batchSizes: number[] = nodes.map((node) => {
+      const n = node.batchSize ?? 1;
+      if (!Number.isInteger(n) || n < 1 || n > 1000) {
+        throw new Error(
+          `topology: station "${node.id}" batchSize must be an integer between 1 and 1000 (got ${String(n)})`,
         );
       }
       return n;
@@ -1237,6 +1266,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
       capacities,
       nominalCycleTimes,
       unitsPerCycle,
+      batchSizes,
       energyPerCycleJ,
       waterPerCycleL,
       co2ePerCycleG,
@@ -1325,6 +1355,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     capacities: Array.from({ length: n }, () => 1),
     nominalCycleTimes: Array.from({ length: n }, () => undefined),
     unitsPerCycle: Array.from({ length: n }, () => 1),
+    batchSizes: Array.from({ length: n }, () => 1),
     energyPerCycleJ: Array.from({ length: n }, () => 0),
     waterPerCycleL: Array.from({ length: n }, () => 0),
     co2ePerCycleG: Array.from({ length: n }, () => 0),
@@ -1834,6 +1865,8 @@ function* simulationStream(
       // VROL-870 — multi-output station. unitsPerCycle defaults to 1 in
       // normaliseTopology, so legacy lines are unaffected.
       unitsPerCycle: topology.unitsPerCycle[i] ?? 1,
+      // VROL-889 — batch-fire. Default 1 keeps legacy lines unchanged.
+      batchSize: topology.batchSizes[i] ?? 1,
       upstream: upstreamFor(i),
       downstream: downstreamFor(i),
       ...(cycleTimeFor ? { cycleTimeFor } : {}),

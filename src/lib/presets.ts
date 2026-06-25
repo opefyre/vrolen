@@ -682,6 +682,38 @@ const DAIRY_LINE: Preset = {
   settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 120_000 },
 };
 
+// VROL-889 v1 — 3D-print build-plate batching. The "printer" station
+// holds off until 10 parts have queued up, then runs one 20s print
+// cycle that emits 10 parts at completion. The post-process station
+// then drains them one at a time. Demonstrates the batch-fire engine
+// addition end-to-end.
+const PRINT_BATCH_LINE: Preset = {
+  id: "print-batch-line",
+  title: "3D-print batch (build plate)",
+  blurb:
+    "Additive workflow: parts queue up at the printer until a 10-piece build plate is full, then one 20-second print cycle emits all 10 together. Post-process drains them. Throughput is set by the plate fill rate + print time, not the slowest individual cycle.",
+  highlight: "batch-fire / build-plate",
+  graph: {
+    nodes: [
+      station("src", "Source", "input", 40, 200, { cycleDistribution: constant(80) }),
+      station("prep", "Prep tray", "machine", 220, 200, { cycleDistribution: constant(500) }),
+      station("printer", "3D printer", "machine", 400, 200, {
+        cycleDistribution: constant(20_000),
+        batchSize: 10,
+      }),
+      station("post", "Post-process", "machine", 580, 200, { cycleDistribution: constant(300) }),
+      station("out", "Done", "output", 760, 200, { cycleDistribution: constant(30) }),
+    ],
+    edges: [
+      edge("e1", "src", "prep"),
+      edge("e2", "prep", "printer"),
+      edge("e3", "printer", "post"),
+      edge("e4", "post", "out"),
+    ],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 180_000 },
+};
+
 export const PRESETS: readonly Preset[] = [
   BOTTLING_LINE,
   MULTI_PRODUCT_CHANGEOVER,
@@ -699,6 +731,7 @@ export const PRESETS: readonly Preset[] = [
   SHAMPOO_LINE,
   CONVEYOR_LINE,
   DAIRY_LINE,
+  PRINT_BATCH_LINE,
 ];
 
 export function getPreset(id: string): Preset | undefined {

@@ -496,6 +496,40 @@ function checkConstraintsSanity(
       | undefined;
     if (!data) return;
 
+    // VROL-889 — batch-fire sanity. Warn on (a) typo-sized batches
+    // (> 100 is real but rare; flag > 200 as suspicious) and (b) the
+    // semantics conflict between batchSize > 1 and capacity > 1
+    // (which would mean "wait for N parts and process them in
+    // parallel, N at a time" — well-defined but almost never what
+    // the user means).
+    {
+      const dataAny = n.data as { batchSize?: unknown; capacity?: unknown };
+      const batchSize = typeof dataAny.batchSize === "number" ? dataAny.batchSize : 1;
+      const capacity = typeof dataAny.capacity === "number" ? dataAny.capacity : 1;
+      if (typeof dataAny.batchSize === "number" && batchSize > 200) {
+        out.push({
+          code: "BATCH_SIZE_SUSPICIOUS",
+          severity: "warning",
+          category: "topology",
+          message: `Station "${n.id}" batchSize=${String(batchSize)} is unusually large`,
+          fix: "Real build plates / autoclave loads top out around 100-200 parts. Double-check the value before running.",
+          nodeId: n.id,
+          path: `nodes[${String(i)}].data.batchSize`,
+        });
+      }
+      if (batchSize > 1 && capacity > 1) {
+        out.push({
+          code: "BATCH_CAPACITY_CONFLICT",
+          severity: "warning",
+          category: "topology",
+          message: `Station "${n.id}" sets both batchSize=${String(batchSize)} AND capacity=${String(capacity)} — unusual combination`,
+          fix: "Pick one: batchSize > 1 = wait for N parts then fire one cycle; capacity > 1 = run N cycles in parallel. Combining both works but rarely matches a real station.",
+          nodeId: n.id,
+          path: `nodes[${String(i)}].data.batchSize`,
+        });
+      }
+    }
+
     // VROL-1003 — Transport stations need both lengthM and speedMps
     // for the conveyor delay to apply. Surface a soft warning when
     // either is missing or zero so the user isn't surprised that

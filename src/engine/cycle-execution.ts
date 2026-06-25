@@ -60,6 +60,17 @@ export interface CycleConfig<P> {
    * positive integer; the topology validator clamps to 1..1000.
    */
   readonly unitsPerCycle?: number;
+  /**
+   * VROL-889 — batch-fire size (default 1). When > 1, attemptStart
+   * holds off until the upstream buffer has at least batchSize parts
+   * available; the cycle pulls batchSize parts at start and pushes
+   * batchSize parts to downstream at completion. Models 3D-print
+   * build plates, autoclave loads, oven batches, kilns. Distinct
+   * from unitsPerCycle (which is a KPI multiplier on one cycle) and
+   * from capacity (which is parallel-cycle count). Must be a
+   * positive integer.
+   */
+  readonly batchSize?: number;
   readonly upstream: Buffer<P>;
   readonly downstream: Buffer<P>;
   /**
@@ -175,6 +186,14 @@ export type CompletionListener<P> = (event: CompletionEvent<P>) => void;
 interface InFlightEntry<P> {
   readonly partIdx: number;
   readonly part: P;
+  /**
+   * VROL-889 — when batchSize > 1, the cycle pulled multiple parts at
+   * start. `part` is the head of the batch (the "batch handle" used
+   * for KPIs); `batchTail` holds the remaining N-1 parts that need to
+   * be pushed downstream at completion. Undefined for single-part
+   * cycles (the common case).
+   */
+  readonly batchTail?: readonly P[];
   readonly workerId: import("./ids").ResourceId | null;
   readonly heldTool: boolean;
   scheduledAt: number;
@@ -247,6 +266,16 @@ export class CycleExecutor<P> {
       if (this.inProgress_ >= this.config.capacity) return;
 
       if (this.config.upstream.isEmpty) {
+        if (state === "Idle" || state === "Running") {
+          this.stateMachine.transition("Starved", "starved-upstream", timeMs);
+        }
+        return;
+      }
+      // VROL-889 — batch-fire stations need batchSize parts in their
+      // upstream before they'll start a cycle. Treat a partial batch
+      // as starvation; the next pushPart upstream will re-attempt.
+      const batchSize = this.config.batchSize ?? 1;
+      if (batchSize > 1 && this.config.upstream.size < batchSize) {
         if (state === "Idle" || state === "Running") {
           this.stateMachine.transition("Starved", "starved-upstream", timeMs);
         }
@@ -327,6 +356,19 @@ export class CycleExecutor<P> {
         return;
       }
 
+      // VROL-889 — batch-fire: pull the remaining N-1 parts so the
+      // entire batch is taken off upstream at once. The head `part`
+      // serves as the batch handle; tail parts ride along.
+      let batchTail: P[] | undefined;
+      if (batchSize > 1) {
+        batchTail = [];
+        for (let bi = 1; bi < batchSize; bi++) {
+          const extra = this.config.upstream.pull();
+          if (extra === undefined) break;
+          batchTail.push(extra);
+        }
+      }
+
       const partIdx = this.nextPartIdx_++;
       this.inProgress_ += 1;
 
@@ -354,6 +396,7 @@ export class CycleExecutor<P> {
       this.inFlight.push({
         partIdx,
         part,
+        ...(batchTail && batchTail.length > 0 ? { batchTail } : {}),
         workerId: assignedWorkerId ?? null,
         heldTool,
         scheduledAt: completeAt,
@@ -452,6 +495,19 @@ export class CycleExecutor<P> {
     if (state === "Down" || state === "Maintenance") {
       this.scrapped_ += 1;
       this.notifyCompletion({ stationId: this.config.stationId, part, timeMs, defective: true });
+      // VROL-889 — batch scrap on down/maintenance: same as the
+      // defective path. The whole load is lost.
+      if (entry.batchTail) {
+        for (const tailPart of entry.batchTail) {
+          this.scrapped_ += 1;
+          this.notifyCompletion({
+            stationId: this.config.stationId,
+            part: tailPart,
+            timeMs,
+            defective: true,
+          });
+        }
+      }
       return;
     }
 
@@ -465,11 +521,42 @@ export class CycleExecutor<P> {
       if (this.config.reworkRouter && this.config.reworkRouter(part)) {
         this.reworked_ += 1;
         this.notifyCompletion({ stationId: this.config.stationId, part, timeMs, defective: true });
+        // VROL-889 — batch defect: route every part in the batch to
+        // rework (same logic as the head). If the rework target rejects
+        // any tail part, scrap it instead.
+        if (entry.batchTail) {
+          for (const tailPart of entry.batchTail) {
+            if (this.config.reworkRouter && this.config.reworkRouter(tailPart)) {
+              this.reworked_ += 1;
+            } else {
+              this.scrapped_ += 1;
+            }
+            this.notifyCompletion({
+              stationId: this.config.stationId,
+              part: tailPart,
+              timeMs,
+              defective: true,
+            });
+          }
+        }
         this.attemptStart(timeMs);
         return;
       }
       this.scrapped_ += 1;
       this.notifyCompletion({ stationId: this.config.stationId, part, timeMs, defective: true });
+      // VROL-889 — batch defect (no rework): every part in the batch
+      // is scrapped together.
+      if (entry.batchTail) {
+        for (const tailPart of entry.batchTail) {
+          this.scrapped_ += 1;
+          this.notifyCompletion({
+            stationId: this.config.stationId,
+            part: tailPart,
+            timeMs,
+            defective: true,
+          });
+        }
+      }
       this.attemptStart(timeMs);
       return;
     }
@@ -486,12 +573,44 @@ export class CycleExecutor<P> {
       // VROL-870 — multi-output station: one cycle ⇒ N units produced.
       this.completed_ += this.config.unitsPerCycle ?? 1;
       this.notifyCompletion({ stationId: this.config.stationId, part, timeMs, defective: false });
+      // VROL-889 — batch-fire: push the remaining N-1 parts from the
+      // same cycle. Each one tries the same per-part routing; if any
+      // push fails the part lands in pendingPush and downstream
+      // pressure surfaces via BlockedOut on the next attempt.
+      if (entry.batchTail && entry.batchTail.length > 0) {
+        for (const tailPart of entry.batchTail) {
+          const tailCustom = this.config.pushPartFor?.(tailPart);
+          const tailPushed =
+            tailCustom !== undefined
+              ? tailCustom
+              : (this.config.downstreamFor?.(tailPart) ?? this.config.downstream).push(tailPart);
+          if (tailPushed) {
+            this.completed_ += this.config.unitsPerCycle ?? 1;
+            this.notifyCompletion({
+              stationId: this.config.stationId,
+              part: tailPart,
+              timeMs,
+              defective: false,
+            });
+          } else {
+            this.pendingPush.push(tailPart);
+            if (this.stateMachine.state !== "BlockedOut") {
+              this.stateMachine.transition("BlockedOut", "blocked-downstream", timeMs);
+            }
+          }
+        }
+      }
       this.attemptStart(timeMs);
       return;
     }
 
-    // Downstream full → BlockedOut.
+    // Downstream full → BlockedOut. Head failed; batchTail (if any)
+    // joins it in pendingPush so drainPending can flush the whole
+    // batch together when downstream clears.
     this.pendingPush.push(part);
+    if (entry.batchTail) {
+      for (const tailPart of entry.batchTail) this.pendingPush.push(tailPart);
+    }
     if (this.stateMachine.state !== "BlockedOut") {
       this.stateMachine.transition("BlockedOut", "blocked-downstream", timeMs);
     }
