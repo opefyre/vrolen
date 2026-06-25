@@ -101,7 +101,7 @@ export const GLOSSARY: Readonly<Record<string, GlossaryEntry>> = {
   },
   "unit-of-measure": {
     title: "Unit of measure (UoM)",
-    body: "Per-station label that describes what 'one part' counts as in this line (parts, kg, L, doses…). The sink's unit drives the throughput display so a dairy line reads in kg / hour, a pharmaceutical line in doses / hour. v1 is display-only; the engine still counts integer parts.",
+    body: "Two per-station fields drive the throughput display. unit is the label (parts, kg, L, doses…). unitsPerPart is the ratio — how many of the declared unit does one part represent. The sink's values multiply throughput so a dairy line at 1000 parts/h × 0.5 kg/part reads as 500 kg/h. Engine still counts integer parts; v1+v2 are both display-only.",
   },
   stability: {
     title: "Stability (replication CV)",

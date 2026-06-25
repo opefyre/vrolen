@@ -19,10 +19,13 @@ interface Props {
   readonly stationCycleDistributions: readonly Distribution[];
   readonly stationLabels: readonly string[];
   readonly oneWaySummary: SensitivitySummary | null;
-}
-
-function fmt(n: number): string {
-  return Math.round(n).toLocaleString();
+  /**
+   * VROL-1013 — sink unit + ratio for UoM-aware display (parallels
+   * VROL-869 on the one-way card). Defaults to "parts" / 1 so legacy
+   * scenarios are unaffected.
+   */
+  readonly throughputUnit?: string;
+  readonly unitsPerPart?: number;
 }
 
 export function TwoWayInteractionsCard({
@@ -33,7 +36,13 @@ export function TwoWayInteractionsCard({
   stationCycleDistributions,
   stationLabels,
   oneWaySummary,
+  throughputUnit = "parts",
+  unitsPerPart = 1,
 }: Props) {
+  // VROL-1013 — UoM display: multiply per-hour values by sink ratio,
+  // swap the /h label for <unit>/h.
+  const fmt = (n: number): string => Math.round(n * unitsPerPart).toLocaleString();
+  const unitLabel = throughputUnit && throughputUnit.length > 0 ? throughputUnit : "parts";
   const summary: TwoWaySummary | null = useMemo(() => {
     if (!oneWaySummary || oneWaySummary.rows.length < 2) return null;
     return runTwoWaySensitivity({
@@ -77,7 +86,7 @@ export function TwoWayInteractionsCard({
             <div className="text-muted-foreground">
               best corner{" "}
               <span className="text-foreground font-mono tabular-nums">
-                {fmt(p.bestCornerPerHour)}/h
+                {fmt(p.bestCornerPerHour)} {unitLabel}/h
               </span>{" "}
               ({p.bestCornerMultipliers[0].toFixed(1)}x · {p.bestCornerMultipliers[1].toFixed(1)}x)
             </div>
@@ -89,7 +98,7 @@ export function TwoWayInteractionsCard({
               }
             >
               {p.interactionStrength > 0 ? "+" : ""}
-              {fmt(p.interactionStrength)}/h vs OAT-sum
+              {fmt(p.interactionStrength)} {unitLabel}/h vs OAT-sum
             </div>
           </div>
         ))}

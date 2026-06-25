@@ -41,4 +41,10 @@ describe("glossary registry", () => {
     expect(entry?.title).toContain("Batch-fire");
     expect(entry?.body).toMatch(/batchSize|build plate/i);
   });
+
+  it("VROL-1013 — UoM entry covers both v1 (label) and v2 (ratio)", () => {
+    const entry = lookupGlossary("unit-of-measure");
+    expect(entry?.body).toContain("unitsPerPart");
+    expect(entry?.body).toMatch(/ratio/i);
+  });
 });

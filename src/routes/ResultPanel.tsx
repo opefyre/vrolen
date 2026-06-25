@@ -1556,7 +1556,14 @@ export function ResultPanel({
                     <div className="text-muted-foreground">
                       best{" "}
                       <span className="text-foreground font-mono tabular-nums">
-                        {Math.round(p.bestCornerPerHour).toLocaleString()}/h
+                        {Math.round(p.bestCornerPerHour * unitsPerPart).toLocaleString()}{" "}
+                        {(() => {
+                          const arr = runMeta.perStationUnit;
+                          if (!arr || arr.length === 0) return "parts";
+                          const last = arr[arr.length - 1];
+                          return last && last.length > 0 ? last : "parts";
+                        })()}
+                        /h
                       </span>{" "}
                       ({p.bestCornerMultipliers[0].toFixed(1)}x ·{" "}
                       {p.bestCornerMultipliers[1].toFixed(1)}x)
@@ -1569,7 +1576,14 @@ export function ResultPanel({
                       }
                     >
                       {p.interactionStrength > 0 ? "+" : ""}
-                      {Math.round(p.interactionStrength).toLocaleString()}/h vs OAT-sum
+                      {Math.round(p.interactionStrength * unitsPerPart).toLocaleString()}{" "}
+                      {(() => {
+                        const arr = runMeta.perStationUnit;
+                        if (!arr || arr.length === 0) return "parts";
+                        const last = arr[arr.length - 1];
+                        return last && last.length > 0 ? last : "parts";
+                      })()}
+                      /h vs OAT-sum
                     </div>
                   </div>
                 ))}
