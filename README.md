@@ -23,6 +23,9 @@ Browser-based discrete-event simulator for industrial production lines. Sketch y
 - **Shared resources**: tool pools with capacity. Stations holding the same pool serialise; wait time accrues to perStationToolBlockedMs.
 - **Temperature / spec**: parts carry a temperatureC field; stations apply per-step deltas; out-of-spec parts at downstream stations are scrapped and counted.
 - **Sustainability**: per-cycle energy (J), water (L), CO₂e (g) — line totals reported.
+- **Conveyors / residence-time edges**: stations of type Transport carry _lengthM_ + _speedMps_; the inter-station buffer becomes a delay-line that holds parts for `lengthM / speedMps` seconds before the downstream station can pull. Multiple parts ride simultaneously, capped by the buffer capacity. See the **Conveyor between stations** preset.
+- **Batch-fire stations**: a station with _batchSize > 1_ waits for N parts in its upstream, runs one cycle, and emits N at completion. Models 3D-print build plates, autoclave loads, oven batches. Defects scrap the whole load. See the **3D-print batch** preset.
+- **Unit of measure (display)**: each station carries an optional `unit` label ("kg", "doses", "L"…); the sink's unit drives the result-panel throughput display so a dairy line reads in kg / hour. See the **Dairy line (kg)** preset.
 
 ### Insight surfaces
 
