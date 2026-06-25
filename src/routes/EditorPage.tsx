@@ -4981,8 +4981,17 @@ function EditorCanvas() {
                 totalSkuRouted: result
                   ? (result.perStationSkuRouted ?? []).reduce((s, v) => s + v, 0)
                   : 0,
+                // VROL-1030 — null = draft, never saved; coach surfaces
+                // the "save as scenario" tip to unlock the run-history
+                // strip.
+                activeScenarioName,
               },
-              { runNow: handleRun },
+              {
+                runNow: handleRun,
+                saveScenario: () => {
+                  setSaveNameDialogOpen(true);
+                },
+              },
             )}
           />
           {/* Live simulation playback overlay — sits above the canvas, below

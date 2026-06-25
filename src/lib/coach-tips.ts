@@ -23,11 +23,19 @@ export interface CoachTipDeps {
   readonly totalBomStarved?: number;
   readonly toolBlockedFraction?: number;
   readonly totalSkuRouted?: number;
+  /**
+   * VROL-1030 — name of the active scenario, or null when the user is
+   * working on an unsaved draft. Used to suggest saving so the
+   * run-history strip becomes useful.
+   */
+  readonly activeScenarioName?: string | null;
 }
 
 export interface CoachTipCallbacks {
   /** Invoked by the "Run now" CTA on the `run-it` tip. */
   readonly runNow: () => void;
+  /** VROL-1030 — Optional save-scenario opener. */
+  readonly saveScenario?: () => void;
 }
 
 export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks): CoachTip[] {
@@ -81,6 +89,21 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
       title: "Per-SKU routing fired",
       body: "Some parts followed the perSkuRouting overrides you configured. Check the SKU-routed counter in OEE breakdown or the drilldown Constraints tab to confirm the split looks right.",
       whenVisible: () => hasRun && (deps.totalSkuRouted ?? 0) > 0,
+    },
+    // VROL-1030 — fires after a run when nothing's been saved yet.
+    // Save unlocks the run-history strip + the run-history → compare
+    // shortcut, so it's the lever for "what changed between runs".
+    {
+      id: "save-as-scenario",
+      title: "Save this as a scenario",
+      body: "You've run the simulation but haven't saved the draft. Save it as a scenario so the last-5-runs strip starts tracking changes — useful for spotting deltas as you iterate.",
+      whenVisible: () =>
+        hasRun &&
+        stationCount >= 2 &&
+        (deps.activeScenarioName === null || deps.activeScenarioName === undefined),
+      ...(callbacks.saveScenario
+        ? { action: { label: "Save", onClick: callbacks.saveScenario } }
+        : {}),
     },
   ];
 }
