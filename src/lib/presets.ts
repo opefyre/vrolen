@@ -720,6 +720,39 @@ const PRINT_BATCH_LINE: Preset = {
   settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 180_000 },
 };
 
+// VROL-1017 — multi-plate batch-fire showcase. 3 dental printers
+// each running a 10-part build plate. capacity=3 + batchSize=10 =
+// up to 30 parts in-flight at the printer station simultaneously.
+// Pair with the single-plate PRINT_BATCH_LINE to see the
+// throughput swing from adding more plates.
+const PRINT_MULTI_LINE: Preset = {
+  id: "print-multi-line",
+  title: "Multi-print line (3 plates)",
+  blurb:
+    "3 dental printers each running a 10-part build plate. capacity=3 + batchSize=10 puts up to 30 parts in-flight at the printer station. Compare against the single-plate '3D-print batch' preset to see the throughput swing from adding plates.",
+  highlight: "multi-plate batch-fire (capacity × batchSize)",
+  graph: {
+    nodes: [
+      station("src", "Source", "input", 40, 200, { cycleDistribution: constant(80) }),
+      station("prep", "Prep tray", "machine", 220, 200, { cycleDistribution: constant(500) }),
+      station("printer", "3D printer (×3)", "machine", 400, 200, {
+        cycleDistribution: constant(20_000),
+        batchSize: 10,
+        capacity: 3,
+      }),
+      station("post", "Post-process", "machine", 580, 200, { cycleDistribution: constant(300) }),
+      station("out", "Done", "output", 760, 200, { cycleDistribution: constant(30) }),
+    ],
+    edges: [
+      edge("e1", "src", "prep"),
+      edge("e2", "prep", "printer"),
+      edge("e3", "printer", "post"),
+      edge("e4", "post", "out"),
+    ],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 180_000 },
+};
+
 // VROL-1014 — sustainability-aware line. Every station declares energy
 // + water + CO₂e per cycle so the new Sustainability card has data to
 // render. Mirrors the dairy line topology so users can compare with /
@@ -795,6 +828,7 @@ export const PRESETS: readonly Preset[] = [
   CONVEYOR_LINE,
   DAIRY_LINE,
   PRINT_BATCH_LINE,
+  PRINT_MULTI_LINE,
   SUSTAINABLE_LINE,
 ];
 
