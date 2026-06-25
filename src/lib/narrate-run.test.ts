@@ -269,4 +269,47 @@ describe("narrateRun (VROL-640)", () => {
     const sentences = narrateRun(fakeResult({ bottlenecks: [] }));
     expect(sentences).toEqual([]);
   });
+
+  // ─── VROL-1034 — sustainability sentence ────────────────────────────
+  it("VROL-1034 — appends an energy-intensity sentence when sustainability is declared", () => {
+    const sentences = narrateRun(
+      fakeResult({
+        totalEnergyJ: 1_000_000,
+        perStationEnergyJ: [200_000, 800_000],
+        perStationLabels: ["Filler", "Capper"],
+      }),
+    );
+    const sus = sentences.find((s) => s.toLowerCase().includes("energy intensity"));
+    expect(sus).toBeDefined();
+    // 1 MJ / 100 parts = 10 kJ/part.
+    expect(sus).toContain("10.0 kJ/part");
+    // Capper carries 80 % of the total — narration names it.
+    expect(sus).toContain("Capper");
+    expect(sus).toContain("80 %");
+  });
+
+  it("VROL-1034 — silent when no sustainability data is present", () => {
+    const sentences = narrateRun(fakeResult());
+    const sus = sentences.find((s) => s.toLowerCase().includes("energy intensity"));
+    expect(sus).toBeUndefined();
+  });
+
+  it("VROL-1034 — silent below 1 kJ total energy floor", () => {
+    const sentences = narrateRun(fakeResult({ totalEnergyJ: 500, perStationEnergyJ: [500, 0] }));
+    expect(sentences.find((s) => s.toLowerCase().includes("energy intensity"))).toBeUndefined();
+  });
+
+  it("VROL-1034 — when distribution is balanced, names no dominant station", () => {
+    const sentences = narrateRun(
+      fakeResult({
+        totalEnergyJ: 1_000_000,
+        perStationEnergyJ: [350_000, 350_000, 300_000],
+        perStationLabels: ["A", "B", "C"],
+      }),
+    );
+    const sus = sentences.find((s) => s.toLowerCase().includes("energy intensity"));
+    expect(sus).toBeDefined();
+    // Highest share = 35 %, below the 40 % threshold → no station name.
+    expect(sus).not.toMatch(/carries/);
+  });
 });

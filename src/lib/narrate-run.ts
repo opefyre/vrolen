@@ -149,6 +149,41 @@ function sourceRateHint(result: ChainResult): string | undefined {
   return "Source rate is the gate — shorten the inter-arrival or raise batch size.";
 }
 
+/**
+ * VROL-1034 — sustainability sentence. Fires only when the line
+ * declared energy inputs (> 1 kJ total). Calls out the intensity per
+ * unit (J/kg, J/dose…) and, when one station carries > 40 % of the
+ * total, names it. Lands at the END of the paragraph so the
+ * throughput-first ordering of the existing sentences is preserved.
+ */
+function sustainabilitySentence(result: ChainResult): string | undefined {
+  if (!(result.totalEnergyJ > 1000) || result.completed <= 0) return undefined;
+  const intensityJ = result.totalEnergyJ / result.completed;
+  const fmtIntensity =
+    intensityJ >= 1_000_000
+      ? `${(intensityJ / 1_000_000).toFixed(1)} MJ/part`
+      : intensityJ >= 1_000
+        ? `${(intensityJ / 1_000).toFixed(1)} kJ/part`
+        : `${intensityJ.toFixed(0)} J/part`;
+  const perStation = result.perStationEnergyJ ?? [];
+  const labels = result.perStationLabels ?? [];
+  let maxIdx = -1;
+  let maxJ = 0;
+  for (let i = 0; i < perStation.length; i++) {
+    const v = perStation[i] ?? 0;
+    if (v > maxJ) {
+      maxJ = v;
+      maxIdx = i;
+    }
+  }
+  const dominantShare = result.totalEnergyJ > 0 ? maxJ / result.totalEnergyJ : 0;
+  if (maxIdx >= 0 && dominantShare > 0.4) {
+    const label = labels[maxIdx] ?? `Station ${String(maxIdx + 1)}`;
+    return `Energy intensity ${fmtIntensity}; ${label} carries ${String(Math.round(dominantShare * 100))} % of the total.`;
+  }
+  return `Energy intensity ${fmtIntensity}.`;
+}
+
 export function narrateRun(result: ChainResult): readonly string[] {
   const out: string[] = [];
   const bottleneck = bottleneckSentence(result);
@@ -172,5 +207,9 @@ export function narrateRun(result: ChainResult): readonly string[] {
     const band = oeeBandSentence(result);
     if (band) out.push(band);
   }
+  // VROL-1034 — sustainability lands last so it never displaces a
+  // throughput-improvement signal.
+  const sustainability = sustainabilitySentence(result);
+  if (sustainability) out.push(sustainability);
   return out;
 }
