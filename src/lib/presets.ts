@@ -632,6 +632,56 @@ const CONVEYOR_LINE: Preset = {
   settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 120_000 },
 };
 
+// VROL-1006 — UoM-aware dairy line showcasing the per-station unit
+// label from VROL-867 v1. Every station declares unit="kg" so the
+// result-panel throughput chip reads "X kg / hour" instead of the
+// default "parts / hour". A reasonable approximation of a fluid-
+// processing line: raw milk arrives, passes through pasteurization
+// + separation + homogenization + filling, and exits.
+const DAIRY_LINE: Preset = {
+  id: "dairy-line",
+  title: "Dairy line (kg)",
+  blurb:
+    "Bulk-fluid processing line: raw milk → pasteurizer → separator → homogenizer → filler. Every station declares unit='kg' so the throughput KPI reports in kg / hour instead of parts / hour — the first preset that exercises UoM-aware display.",
+  highlight: "unit-of-measure: kg / hour",
+  graph: {
+    nodes: [
+      station("src", "Raw milk", "input", 40, 200, {
+        cycleDistribution: constant(200),
+        unit: "kg",
+      }),
+      station("pasteurizer", "Pasteurizer", "machine", 220, 200, {
+        cycleDistribution: constant(900),
+        unit: "kg",
+      }),
+      station("separator", "Separator", "machine", 400, 200, {
+        cycleDistribution: constant(450),
+        unit: "kg",
+      }),
+      station("homogenizer", "Homogenizer", "machine", 580, 200, {
+        cycleDistribution: constant(400),
+        unit: "kg",
+      }),
+      station("filler", "Filler", "machine", 760, 200, {
+        cycleDistribution: constant(350),
+        unit: "kg",
+      }),
+      station("out", "Done", "output", 940, 200, {
+        cycleDistribution: constant(50),
+        unit: "kg",
+      }),
+    ],
+    edges: [
+      edge("e1", "src", "pasteurizer"),
+      edge("e2", "pasteurizer", "separator"),
+      edge("e3", "separator", "homogenizer"),
+      edge("e4", "homogenizer", "filler"),
+      edge("e5", "filler", "out"),
+    ],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 120_000 },
+};
+
 export const PRESETS: readonly Preset[] = [
   BOTTLING_LINE,
   MULTI_PRODUCT_CHANGEOVER,
@@ -648,6 +698,7 @@ export const PRESETS: readonly Preset[] = [
   ASSEMBLY_CELL,
   SHAMPOO_LINE,
   CONVEYOR_LINE,
+  DAIRY_LINE,
 ];
 
 export function getPreset(id: string): Preset | undefined {
