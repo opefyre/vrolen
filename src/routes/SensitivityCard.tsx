@@ -27,6 +27,14 @@ interface SensitivityCardProps {
   readonly onClickRow?: (row: SensitivityRow) => void;
   /** VROL-896 — open the chart-level drilldown for the full tornado. */
   readonly onViewDetails?: () => void;
+  /**
+   * VROL-869 — sink unit label + unitsPerPart so the tornado reads in
+   * the user's declared unit (kg/h, doses/h, etc.) instead of parts/h.
+   * Optional; defaults to "parts" / 1 so existing scenarios are
+   * unaffected.
+   */
+  readonly throughputUnit?: string;
+  readonly unitsPerPart?: number;
 }
 
 export function SensitivityCard({
@@ -36,6 +44,8 @@ export function SensitivityCard({
   errorMessage,
   onClickRow,
   onViewDetails,
+  throughputUnit,
+  unitsPerPart,
 }: SensitivityCardProps) {
   const status = errorMessage
     ? ("error" as const)
@@ -74,6 +84,10 @@ export function SensitivityCard({
           summary={summary}
           {...(onClickRow ? { onClickRow } : {})}
           {...(onViewDetails ? { onViewDetails } : {})}
+          {...(throughputUnit && throughputUnit.length > 0 ? { throughputUnit } : {})}
+          {...(typeof unitsPerPart === "number" && unitsPerPart > 0 && unitsPerPart !== 1
+            ? { unitsPerPart }
+            : {})}
         />
       )}
     </AnalyticsCardShell>
@@ -84,10 +98,15 @@ export function SensitivityBody({
   summary,
   onClickRow,
   onViewDetails,
+  throughputUnit = "parts",
+  unitsPerPart = 1,
 }: {
   readonly summary: SensitivitySummary;
   readonly onClickRow?: (row: SensitivityRow) => void;
   readonly onViewDetails?: () => void;
+  /** VROL-869 — sink unit + ratio for display-only conversion. */
+  readonly throughputUnit?: string;
+  readonly unitsPerPart?: number;
 }) {
   if (summary.rows.length === 0) {
     return (
@@ -96,12 +115,16 @@ export function SensitivityBody({
       </p>
     );
   }
-  const fmt = (n: number) => Math.round(n).toLocaleString();
+  // VROL-869 — UoM-aware display: multiply per-hour values by sink's
+  // unitsPerPart so a dairy line tornado reads in kg/h. Default 1 +
+  // "parts" keeps existing scenarios unchanged.
+  const fmt = (n: number) => Math.round(n * unitsPerPart).toLocaleString();
   // Find the widest swing absolute; that defines the bar scale.
   const maxSwing = summary.rows.reduce((m, r) => Math.max(m, r.swingPerHour), 0);
   // For each row the bar runs from (low - center) to (high - center)
   // expressed as a fraction of (maxSwing). Center = baselinePerHour.
   const base = summary.baselinePerHour;
+  const unitLabel = throughputUnit && throughputUnit.length > 0 ? throughputUnit : "parts";
   const halfBarWidthPct = 45; // bar can span 45% on each side of center
   // VROL-793 — sort by absolute magnitude descending so noise-floor bars
   // sink to the bottom. The sweep already sorts that way, but sorting here
@@ -112,7 +135,9 @@ export function SensitivityBody({
       <div className="text-muted-foreground flex items-center justify-between gap-2 text-[11px]">
         <span>
           Baseline ={" "}
-          <strong className="text-foreground font-mono tabular-nums">{fmt(base)} /h</strong>
+          <strong className="text-foreground font-mono tabular-nums">
+            {fmt(base)} {unitLabel}/h
+          </strong>
         </span>
         <div className="flex items-center gap-2">
           <span>

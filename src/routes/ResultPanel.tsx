@@ -1516,6 +1516,13 @@ export function ResultPanel({
               onRun={onRunSensitivity}
               onClickRow={(row) => setSensitivityRow(row)}
               onViewDetails={() => setChartDrilldown("sensitivity-tornado")}
+              throughputUnit={(() => {
+                const arr = runMeta.perStationUnit;
+                if (!arr || arr.length === 0) return "parts";
+                const last = arr[arr.length - 1];
+                return last && last.length > 0 ? last : "parts";
+              })()}
+              unitsPerPart={unitsPerPart}
             />
           ) : null}
           {/* VROL-990 — Two-way interactions card. Renders when the
