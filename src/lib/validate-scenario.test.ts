@@ -396,4 +396,47 @@ describe("validateScenario (VROL-86)", () => {
     );
     expect(r.warnings.find((w) => w.code === "UOM_MISMATCH")).toBeUndefined();
   });
+
+  // ─── 9. VROL-1012 v2 — UoM ratios ───────────────────────────────────────────
+  it("UOM_RATIO_MISSING: unit declared but unitsPerPart not set fires a warning", () => {
+    const r = validateScenario(
+      [node("src", { unit: "kg" }), node("sink", { unit: "kg" })],
+      [edge("e1", "src", "sink")],
+      settings(),
+    );
+    const missing = r.warnings.find((w) => w.code === "UOM_RATIO_MISSING");
+    expect(missing).toBeDefined();
+    expect(missing?.message).toContain("kg");
+  });
+
+  it("UOM_RATIO_MISSING: unit='parts' does not fire the warning", () => {
+    const r = validateScenario(
+      [node("src", { unit: "parts" }), node("sink", { unit: "parts" })],
+      [edge("e1", "src", "sink")],
+      settings(),
+    );
+    expect(r.warnings.find((w) => w.code === "UOM_RATIO_MISSING")).toBeUndefined();
+  });
+
+  it("UOM_RATIO_WITHOUT_UNIT: ratio set but no unit fires the inverse warning", () => {
+    const r = validateScenario(
+      [node("src", { unitsPerPart: 0.5 }), node("sink")],
+      [edge("e1", "src", "sink")],
+      settings(),
+    );
+    expect(r.warnings.find((w) => w.code === "UOM_RATIO_WITHOUT_UNIT")).toBeDefined();
+  });
+
+  it("UoM v2: unit + unitsPerPart both set is the clean path (no warnings)", () => {
+    const r = validateScenario(
+      [
+        node("src", { unit: "kg", unitsPerPart: 0.5 }),
+        node("sink", { unit: "kg", unitsPerPart: 0.5 }),
+      ],
+      [edge("e1", "src", "sink")],
+      settings(),
+    );
+    expect(r.warnings.find((w) => w.code === "UOM_RATIO_MISSING")).toBeUndefined();
+    expect(r.warnings.find((w) => w.code === "UOM_RATIO_WITHOUT_UNIT")).toBeUndefined();
+  });
 });

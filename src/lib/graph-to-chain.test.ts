@@ -354,4 +354,47 @@ describe("graphToChainOptions", () => {
     expect(r.error).toBeNull();
     expect(r.perStationUnit).toEqual(["", ""]);
   });
+
+  it("VROL-1012 v2 — perStationUnitsPerPart captures the per-station ratio (defaults to 1)", () => {
+    const nodes: Node[] = [
+      {
+        id: "src",
+        position: { x: 0, y: 0 },
+        data: { label: "src", cycleMs: 100, unit: "kg", unitsPerPart: 0.5 },
+      },
+      {
+        id: "sink",
+        position: { x: 0, y: 0 },
+        data: { label: "sink", cycleMs: 100, unit: "kg", unitsPerPart: 0.5 },
+      },
+    ];
+    const edges = [edge("src", "sink")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.perStationUnitsPerPart).toEqual([0.5, 0.5]);
+  });
+
+  it("VROL-1012 v2 — invalid ratios fall back to 1", () => {
+    const nodes: Node[] = [
+      {
+        id: "a",
+        position: { x: 0, y: 0 },
+        data: { label: "a", cycleMs: 100, unitsPerPart: 0 },
+      },
+      {
+        id: "b",
+        position: { x: 0, y: 0 },
+        data: { label: "b", cycleMs: 100, unitsPerPart: -1 },
+      },
+      {
+        id: "c",
+        position: { x: 0, y: 0 },
+        data: { label: "c", cycleMs: 100 },
+      },
+    ];
+    const edges = [edge("a", "b"), edge("b", "c")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.perStationUnitsPerPart).toEqual([1, 1, 1]);
+  });
 });

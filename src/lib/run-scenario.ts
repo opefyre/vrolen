@@ -48,6 +48,12 @@ export interface ScenarioRunMeta {
    * surface batch-fire-specific advice.
    */
   perStationBatchSize: number[];
+  /**
+   * VROL-1012 — per-station unitsPerPart display ratio aligned with
+   * chainNodeIds. The sink's value multiplies the displayed throughput
+   * (1000 parts/h × 0.5 kg/part = 500 kg/h).
+   */
+  perStationUnitsPerPart: number[];
 }
 
 export interface ScenarioRunOutcome {
@@ -258,6 +264,11 @@ export function runScenario(
         // older callers that mock the translation without the field.
         perStationBatchSize: translation.perStationBatchSize
           ? [...translation.perStationBatchSize]
+          : translation.chainNodeIds.map(() => 1),
+        // VROL-1012 — display-ratio multiplier; defaults to 1 per
+        // station when translation doesn't carry the field.
+        perStationUnitsPerPart: translation.perStationUnitsPerPart
+          ? [...translation.perStationUnitsPerPart]
           : translation.chainNodeIds.map(() => 1),
       },
       skippedNodeIds: translation.skippedNodeIds,

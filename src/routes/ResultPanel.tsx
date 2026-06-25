@@ -91,6 +91,12 @@ interface ResultPanelRunMeta {
    * Drives the batch-fire starvation rule in the ActionCard.
    */
   readonly perStationBatchSize?: readonly number[];
+  /**
+   * VROL-1012 — per-station unitsPerPart aligned with chainNodeIds.
+   * Sink's value multiplies the displayed throughput (1000 parts/h ×
+   * 0.5 kg/part = 500 kg/h).
+   */
+  readonly perStationUnitsPerPart?: readonly number[];
 }
 
 interface ResultPanelProps {
@@ -1047,7 +1053,18 @@ export function ResultPanel({
       </button>
     );
   };
-  const throughputPerHour = result.throughputLambda * 3_600_000;
+  // VROL-1012 (UoM v2) — sink's unitsPerPart converts parts/h into the
+  // declared unit/h for DISPLAY ONLY. Defaults to 1 so legacy scenarios
+  // are unaffected. Engine cycle math (realisedCycleMs etc.) still
+  // works in parts.
+  const unitsPerPart = (() => {
+    const arr = runMeta.perStationUnitsPerPart;
+    if (!arr || arr.length === 0) return 1;
+    const last = arr[arr.length - 1];
+    return typeof last === "number" && Number.isFinite(last) && last > 0 ? last : 1;
+  })();
+  const partsPerHour = result.throughputLambda * 3_600_000;
+  const throughputPerHour = partsPerHour * unitsPerPart;
   const fmt = (n: number, digits = 1) =>
     n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
   const totalScrapped = result.perStationScrapped.reduce((a, b) => a + b, 0);
@@ -1088,7 +1105,8 @@ export function ResultPanel({
     const cycles = result.perStationOee.map((o) => o.idealCycleTimeMs).filter((n) => n > 0);
     return cycles.length > 0 ? Math.max(...cycles) : 0;
   })();
-  const realisedCycleMs = throughputPerHour > 0 ? 60_000 / throughputPerHour : Infinity;
+  // Cycle math stays in parts (engine semantics) regardless of UoM v2.
+  const realisedCycleMs = partsPerHour > 0 ? 60_000 / partsPerHour : Infinity;
   const cycleStrip = (() => {
     if (!Number.isFinite(realisedCycleMs) || idealCycleMs <= 0) return null;
     const ratio = realisedCycleMs / idealCycleMs;

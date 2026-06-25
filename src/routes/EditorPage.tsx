@@ -5403,6 +5403,35 @@ function EditorCanvas() {
                           }}
                         />
                       </div>
+                      {/* VROL-1012 v2 — unitsPerPart ratio. When the
+                          sink's value != 1, the result-panel multiplies
+                          the displayed throughput so a 0.5 kg/part
+                          dairy line at 1000 parts/h reads as 500 kg/h. */}
+                      <div className="flex flex-col gap-1">
+                        <label
+                          htmlFor="inspector-units-per-part"
+                          className="text-muted-foreground text-xs font-medium"
+                        >
+                          Units per part (display ratio; default 1)
+                        </label>
+                        <Input
+                          id="inspector-units-per-part"
+                          type="number"
+                          inputMode="decimal"
+                          min={0}
+                          step={0.01}
+                          placeholder="1"
+                          value={String(
+                            (selectedNode.data as { unitsPerPart?: number }).unitsPerPart ?? "",
+                          )}
+                          onChange={(e) => {
+                            const v = Number(e.target.value);
+                            updateSelectedNodeData({
+                              unitsPerPart: Number.isFinite(v) && v > 0 && v !== 1 ? v : undefined,
+                            });
+                          }}
+                        />
+                      </div>
                       {/* VROL-889 v1 — batch-fire size. > 1 turns this
                           station into a build-plate / autoclave / oven
                           batch: it waits for N parts to accumulate,

@@ -82,6 +82,15 @@ export interface GraphToChainResult {
    * are starving.
    */
   readonly perStationBatchSize: readonly number[];
+  /**
+   * VROL-1012 (UoM v2) — per-station unitsPerPart multiplier aligned
+   * with chainNodeIds. Defaults to 1 = "one part is one unit." When
+   * the sink's value differs from 1, the result-panel multiplies the
+   * displayed throughput by it (so a dairy line that processes 1000
+   * parts/h × 0.5 kg/part reads as 500 kg/h). Engine internals
+   * unchanged — this is a display ratio.
+   */
+  readonly perStationUnitsPerPart: readonly number[];
   /** Set when the graph can't be turned into a chain at all. */
   readonly error: string | null;
 }
@@ -218,6 +227,14 @@ function unitsPerCycleOf(node: Node): number | undefined {
   if (n < 1 || n > 1000) return undefined;
   if (n === 1) return undefined;
   return n;
+}
+
+function unitsPerPartOf(node: Node): number {
+  // VROL-1012 — display ratio. Default 1 = "one part is one unit."
+  // Accepts any positive finite number (kg, L, doses can be fractional).
+  const raw = (node.data as { unitsPerPart?: unknown } | undefined)?.unitsPerPart;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return 1;
+  return raw;
 }
 
 function batchSizeOf(node: Node): number | undefined {
@@ -439,6 +456,7 @@ export function graphToChainOptions(
     bufferDelayMs: [],
     perStationUnit: [],
     perStationBatchSize: [],
+    perStationUnitsPerPart: [],
     error: null,
   };
   // Decorative nodes (sticky notes, section frames) never participate
@@ -576,6 +594,8 @@ export function graphToChainOptions(
       const perStationUnit = topoOrder.map((id) => unitOf(nodeById.get(id)!));
       // VROL-1010 — per-station batch-fire size (default 1).
       const perStationBatchSize = topoOrder.map((id) => batchSizeOf(nodeById.get(id)!) ?? 1);
+      // VROL-1012 — per-station unitsPerPart (default 1).
+      const perStationUnitsPerPart = topoOrder.map((id) => unitsPerPartOf(nodeById.get(id)!));
 
       return {
         chainNodeIds: topoOrder,
@@ -589,6 +609,7 @@ export function graphToChainOptions(
         bufferDelayMs,
         perStationUnit,
         perStationBatchSize,
+        perStationUnitsPerPart,
         error: null,
       };
     }
@@ -647,6 +668,7 @@ export function graphToChainOptions(
   // VROL-867 v1 — per-station unit label (fallback path).
   const fallbackPerStationUnit = bestChain.map((id) => unitOf(nodeById.get(id)!));
   const fallbackPerStationBatchSize = bestChain.map((id) => batchSizeOf(nodeById.get(id)!) ?? 1);
+  const fallbackPerStationUnitsPerPart = bestChain.map((id) => unitsPerPartOf(nodeById.get(id)!));
 
   return {
     chainNodeIds: bestChain,
@@ -660,6 +682,7 @@ export function graphToChainOptions(
     bufferDelayMs,
     perStationUnit: fallbackPerStationUnit,
     perStationBatchSize: fallbackPerStationBatchSize,
+    perStationUnitsPerPart: fallbackPerStationUnitsPerPart,
     error: null,
   };
 }

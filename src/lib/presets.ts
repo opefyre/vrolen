@@ -642,33 +642,39 @@ const DAIRY_LINE: Preset = {
   id: "dairy-line",
   title: "Dairy line (kg)",
   blurb:
-    "Bulk-fluid processing line: raw milk → pasteurizer → separator → homogenizer → filler. Every station declares unit='kg' so the throughput KPI reports in kg / hour instead of parts / hour — the first preset that exercises UoM-aware display.",
-  highlight: "unit-of-measure: kg / hour",
+    "Bulk-fluid processing line: raw milk → pasteurizer → separator → homogenizer → filler. Every station declares unit='kg' AND unitsPerPart=0.5, so 1000 parts/h displays as 500 kg/h — the first preset that exercises both UoM v1 (label) and v2 (ratio).",
+  highlight: "unit-of-measure: kg / hour at 0.5 kg/part",
   graph: {
     nodes: [
       station("src", "Raw milk", "input", 40, 200, {
         cycleDistribution: constant(200),
         unit: "kg",
+        unitsPerPart: 0.5,
       }),
       station("pasteurizer", "Pasteurizer", "machine", 220, 200, {
         cycleDistribution: constant(900),
         unit: "kg",
+        unitsPerPart: 0.5,
       }),
       station("separator", "Separator", "machine", 400, 200, {
         cycleDistribution: constant(450),
         unit: "kg",
+        unitsPerPart: 0.5,
       }),
       station("homogenizer", "Homogenizer", "machine", 580, 200, {
         cycleDistribution: constant(400),
         unit: "kg",
+        unitsPerPart: 0.5,
       }),
       station("filler", "Filler", "machine", 760, 200, {
         cycleDistribution: constant(350),
         unit: "kg",
+        unitsPerPart: 0.5,
       }),
       station("out", "Done", "output", 940, 200, {
         cycleDistribution: constant(50),
         unit: "kg",
+        unitsPerPart: 0.5,
       }),
     ],
     edges: [

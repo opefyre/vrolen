@@ -683,6 +683,40 @@ function checkUomConsistency(
     const u = d && typeof d.unit === "string" ? d.unit.trim() : "";
     unitByNodeId.set(n.id, u);
   }
+  // VROL-1012 — surface stations that declared a unit but not a ratio
+  // (the throughput display will silently use 1 part = 1 unit, which
+  // is often wrong for bulk lines). Also flag the inverse: a non-1
+  // ratio without a unit reads as "X / hour" with no unit context.
+  nodes.forEach((n, i) => {
+    const d = n.data as { unit?: unknown; unitsPerPart?: unknown } | undefined;
+    if (!d) return;
+    const unit = typeof d.unit === "string" ? d.unit.trim() : "";
+    const ratio =
+      typeof d.unitsPerPart === "number" && Number.isFinite(d.unitsPerPart) && d.unitsPerPart > 0
+        ? d.unitsPerPart
+        : 1;
+    if (unit.length > 0 && unit !== "parts" && ratio === 1) {
+      out.push({
+        code: "UOM_RATIO_MISSING",
+        severity: "warning",
+        category: "reference",
+        message: `Station "${n.id}" declares unit "${unit}" but no unitsPerPart — display will use 1 part = 1 ${unit}`,
+        fix: `Set unitsPerPart on this station if 1 part doesn't equal 1 ${unit}. Skip the warning by leaving unit unset.`,
+        nodeId: n.id,
+        path: `nodes[${String(i)}].data.unitsPerPart`,
+      });
+    } else if (unit.length === 0 && ratio !== 1) {
+      out.push({
+        code: "UOM_RATIO_WITHOUT_UNIT",
+        severity: "warning",
+        category: "reference",
+        message: `Station "${n.id}" has unitsPerPart=${String(ratio)} but no declared unit`,
+        fix: `Add a unit label (kg, L, doses…) on this station so the throughput display has context.`,
+        nodeId: n.id,
+        path: `nodes[${String(i)}].data.unit`,
+      });
+    }
+  });
   edges.forEach((e, i) => {
     const a = unitByNodeId.get(e.source);
     const b = unitByNodeId.get(e.target);
