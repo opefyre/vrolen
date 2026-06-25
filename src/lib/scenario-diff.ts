@@ -90,6 +90,69 @@ export function diffScenarios(a: ScenarioInput, b: ScenarioInput): DiffRow[] {
         bValue: String(cB),
       });
     }
+    // VROL-1035 — batch-fire / UoM / sustainability fields. Same diff
+    // pattern as cycle / defect / capacity; each fires only when the
+    // value differs between A and B.
+    const bsA = num((na?.data as { batchSize?: unknown } | undefined)?.batchSize, 1);
+    const bsB = num((nb?.data as { batchSize?: unknown } | undefined)?.batchSize, 1);
+    if (bsA !== bsB) {
+      rows.push({
+        category: "Station",
+        label: `${labelA} · batchSize`,
+        aValue: String(bsA),
+        bValue: String(bsB),
+      });
+    }
+    const uA = String((na?.data as { unit?: unknown } | undefined)?.unit ?? "");
+    const uB = String((nb?.data as { unit?: unknown } | undefined)?.unit ?? "");
+    if (uA !== uB) {
+      rows.push({
+        category: "Station",
+        label: `${labelA} · unit`,
+        aValue: uA || "—",
+        bValue: uB || "—",
+      });
+    }
+    const uppA = num((na?.data as { unitsPerPart?: unknown } | undefined)?.unitsPerPart, 1);
+    const uppB = num((nb?.data as { unitsPerPart?: unknown } | undefined)?.unitsPerPart, 1);
+    if (Math.abs(uppA - uppB) > 1e-9) {
+      rows.push({
+        category: "Station",
+        label: `${labelA} · unitsPerPart`,
+        aValue: fmt(uppA, 3),
+        bValue: fmt(uppB, 3),
+      });
+    }
+    const eA = num((na?.data as { energyPerCycleJ?: unknown } | undefined)?.energyPerCycleJ);
+    const eB = num((nb?.data as { energyPerCycleJ?: unknown } | undefined)?.energyPerCycleJ);
+    if (Math.abs(eA - eB) > 1e-9) {
+      rows.push({
+        category: "Station",
+        label: `${labelA} · energy/cycle (J)`,
+        aValue: fmt(eA, 0),
+        bValue: fmt(eB, 0),
+      });
+    }
+    const wA = num((na?.data as { waterPerCycleL?: unknown } | undefined)?.waterPerCycleL);
+    const wB = num((nb?.data as { waterPerCycleL?: unknown } | undefined)?.waterPerCycleL);
+    if (Math.abs(wA - wB) > 1e-9) {
+      rows.push({
+        category: "Station",
+        label: `${labelA} · water/cycle (L)`,
+        aValue: fmt(wA, 3),
+        bValue: fmt(wB, 3),
+      });
+    }
+    const co2A = num((na?.data as { co2ePerCycleG?: unknown } | undefined)?.co2ePerCycleG);
+    const co2B = num((nb?.data as { co2ePerCycleG?: unknown } | undefined)?.co2ePerCycleG);
+    if (Math.abs(co2A - co2B) > 1e-9) {
+      rows.push({
+        category: "Station",
+        label: `${labelA} · CO₂e/cycle (g)`,
+        aValue: fmt(co2A, 1),
+        bValue: fmt(co2B, 1),
+      });
+    }
   }
 
   // Edge count delta (cheap shape check; deep-diff is for a later sprint).
