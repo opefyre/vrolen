@@ -226,6 +226,37 @@ export function StepRealism({
                     />
                   </div>
                 </div>
+                {/* VROL-1029 — optional sustainability inputs. Matches
+                    the station inspector field set (S144). */}
+                <div className="grid grid-cols-3 gap-2">
+                  <NumberField
+                    label="Energy / cycle (J)"
+                    value={s.energyPerCycleJ ?? 0}
+                    onChange={(n) => {
+                      updateStation(idx, { energyPerCycleJ: n > 0 ? n : undefined });
+                    }}
+                    min={0}
+                    step={1}
+                  />
+                  <NumberField
+                    label="Water / cycle (L)"
+                    value={s.waterPerCycleL ?? 0}
+                    onChange={(n) => {
+                      updateStation(idx, { waterPerCycleL: n > 0 ? n : undefined });
+                    }}
+                    min={0}
+                    step={0.1}
+                  />
+                  <NumberField
+                    label="CO₂e / cycle (g)"
+                    value={s.co2ePerCycleG ?? 0}
+                    onChange={(n) => {
+                      updateStation(idx, { co2ePerCycleG: n > 0 ? n : undefined });
+                    }}
+                    min={0}
+                    step={0.1}
+                  />
+                </div>
               </div>
             </details>
           );

@@ -49,6 +49,13 @@ export interface WizardStation {
   readonly reworkTargetId: string | null;
   /** Max rework passes before scrap. */
   readonly reworkPassLimit: number;
+  /**
+   * VROL-1029 — optional sustainability inputs. Mirror what the
+   * station inspector authors (S144). Empty/0 = unset.
+   */
+  readonly energyPerCycleJ?: number;
+  readonly waterPerCycleL?: number;
+  readonly co2ePerCycleG?: number;
 }
 
 export interface WizardConnection {

@@ -102,6 +102,11 @@ export function commitDraft(draft: WizardDraft): WizardCommit {
       if (mapped) dataExtras["reworkTargetNodeId"] = mapped;
       if (s.reworkPassLimit !== 3) dataExtras["reworkPassLimit"] = s.reworkPassLimit;
     }
+    // VROL-1029 — sustainability inputs.
+    if (s.energyPerCycleJ && s.energyPerCycleJ > 0)
+      dataExtras["energyPerCycleJ"] = s.energyPerCycleJ;
+    if (s.waterPerCycleL && s.waterPerCycleL > 0) dataExtras["waterPerCycleL"] = s.waterPerCycleL;
+    if (s.co2ePerCycleG && s.co2ePerCycleG > 0) dataExtras["co2ePerCycleG"] = s.co2ePerCycleG;
     // Per-product cycle overrides — VROL-871.
     if (draft.productsEnabled) {
       const pp = draft.perProductCycles[s.id];
