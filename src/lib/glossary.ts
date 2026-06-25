@@ -113,7 +113,7 @@ export const GLOSSARY: Readonly<Record<string, GlossaryEntry>> = {
   },
   "batch-fire": {
     title: "Batch-fire station",
-    body: "Station waits for batchSize parts in its upstream before starting a cycle; consumes all N at start; emits all N at completion. Models 3D-print build plates, autoclave loads, oven batches, kilns. Distinct from capacity (parallel cycles) and edge bundleSize (per-edge grouping). A defective or down-during-cycle batch scraps the whole load.",
+    body: "Station waits for batchSize parts in its upstream before starting a cycle; consumes all N at start; emits all N at completion. Models 3D-print build plates, autoclave loads, oven batches, kilns. Pair with capacity > 1 for multi-plate scheduling (e.g. capacity=3 + batchSize=10 = 3 printers each running 10-part plates in parallel). A defective or down-during-cycle batch scraps the whole load.",
   },
 };
 

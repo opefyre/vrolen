@@ -517,17 +517,14 @@ function checkConstraintsSanity(
           path: `nodes[${String(i)}].data.batchSize`,
         });
       }
-      if (batchSize > 1 && capacity > 1) {
-        out.push({
-          code: "BATCH_CAPACITY_CONFLICT",
-          severity: "warning",
-          category: "topology",
-          message: `Station "${n.id}" sets both batchSize=${String(batchSize)} AND capacity=${String(capacity)} — unusual combination`,
-          fix: "Pick one: batchSize > 1 = wait for N parts then fire one cycle; capacity > 1 = run N cycles in parallel. Combining both works but rarely matches a real station.",
-          nodeId: n.id,
-          path: `nodes[${String(i)}].data.batchSize`,
-        });
-      }
+      // VROL-1016 — BATCH_CAPACITY_CONFLICT (Sprint 121) used to flag
+      // batchSize > 1 AND capacity > 1 as suspicious. Turns out that's
+      // exactly how multi-plate batch-fire is modelled (e.g. 3 printers
+      // each running a 10-part plate = capacity=3 + batchSize=10). The
+      // engine handles it correctly, so this warning was over-eager and
+      // is removed. BATCH_SIZE_SUSPICIOUS still catches the >200 typo
+      // case; capacity itself is bounded 1..10 at build time.
+      void capacity;
     }
 
     // VROL-1003 — Transport stations need both lengthM and speedMps

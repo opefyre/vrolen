@@ -97,6 +97,56 @@ describe("batch-fire stations (VROL-889 v1)", () => {
     expect(printerCompleted % BATCH_SIZE).toBe(0);
   });
 
+  it("VROL-1016 — multi-plate: capacity > 1 + batchSize > 1 yields N parallel plates", () => {
+    // Capacity 3 + batchSize 5 = up to 3 plates running in parallel,
+    // each consuming 5 parts at start. Each cycle yields 5 parts.
+    // Over a 60s window with cycle=5s, expect ~12 cycles × 5 parts = 60+ each,
+    // limited by the upstream rate. The point: completed-per-cycle remains 5,
+    // multiple cycles can be in-flight simultaneously, and total throughput
+    // exceeds what a single plate could deliver.
+    const singlePlate = runChain({
+      topology: {
+        nodes: [
+          { id: "source", cycleTimeMs: constant(500) },
+          { id: "printer", cycleTimeMs: constant(5_000), batchSize: 5 },
+          { id: "sink", cycleTimeMs: constant(500) },
+        ],
+        edges: [
+          { source: "source", target: "printer" },
+          { source: "printer", target: "sink" },
+        ],
+      },
+      interStationBufferCapacity: 50,
+      horizonMs: HORIZON_MS,
+      warmupMs: WARMUP_MS,
+      prng: new SeededPrng(0xb47ce5),
+    });
+    const multiPlate = runChain({
+      topology: {
+        nodes: [
+          { id: "source", cycleTimeMs: constant(500) },
+          { id: "printer", cycleTimeMs: constant(5_000), batchSize: 5, capacity: 3 },
+          { id: "sink", cycleTimeMs: constant(500) },
+        ],
+        edges: [
+          { source: "source", target: "printer" },
+          { source: "printer", target: "sink" },
+        ],
+      },
+      interStationBufferCapacity: 50,
+      horizonMs: HORIZON_MS,
+      warmupMs: WARMUP_MS,
+      prng: new SeededPrng(0xb47ce5),
+    });
+    // Multi-plate must deliver MORE than single-plate when the upstream
+    // can keep up. The exact ratio depends on the cycle-time interplay,
+    // but multi-plate should be ≥ 1.5x.
+    expect(multiPlate.completed).toBeGreaterThan(singlePlate.completed * 1.5);
+    // Per-cycle output is still batchSize parts in both runs.
+    expect(multiPlate.perStationCompleted[1] ?? 0).toBeGreaterThan(0);
+    expect((multiPlate.perStationCompleted[1] ?? 0) % 5).toBe(0);
+  });
+
   it("batch-fire stalls when fewer than batchSize parts are available", () => {
     // A larger batchSize than the upstream can supply within the run
     // window starves the station entirely. The printer never fires.
