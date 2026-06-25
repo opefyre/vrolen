@@ -27,6 +27,14 @@ export interface RunHistoryEntry {
   readonly bottleneckLabel?: string;
   readonly runAtMs: number;
   /**
+   * VROL-1026 — sustainability totals carried over from ChainResult.
+   * Optional + back-compat with older entries; only meaningful when a
+   * scenario declared per-cycle energy / water / CO₂e inputs.
+   */
+  readonly totalEnergyJ?: number;
+  readonly totalWaterL?: number;
+  readonly totalCO2eG?: number;
+  /**
    * Snapshot of the graph + settings at the moment of this run (VROL-611).
    * Optional for back-compat with entries persisted before this field landed —
    * those entries can be listed but not replayed.

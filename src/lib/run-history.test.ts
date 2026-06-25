@@ -93,4 +93,23 @@ describe("run-history", () => {
     clearRuns("scenA");
     expect(listRuns("scenA")).toEqual([]);
   });
+
+  it("VROL-1026 — sustainability totals round-trip through the store", () => {
+    addRun("scenSus", {
+      ...entry(100),
+      totalEnergyJ: 100_000,
+      totalWaterL: 25,
+      totalCO2eG: 500,
+    });
+    const runs = listRuns("scenSus");
+    expect(runs[0]?.totalEnergyJ).toBe(100_000);
+    expect(runs[0]?.totalWaterL).toBe(25);
+    expect(runs[0]?.totalCO2eG).toBe(500);
+  });
+
+  it("VROL-1026 — sustainability totals are optional (back-compat)", () => {
+    addRun("scenPlain", entry(100));
+    const runs = listRuns("scenPlain");
+    expect(runs[0]?.totalEnergyJ).toBeUndefined();
+  });
 });

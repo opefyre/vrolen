@@ -22,6 +22,14 @@ function fmtPerHr(throughputLambda: number): string {
   return `${Math.round(throughputLambda * 3_600_000).toLocaleString()}/h`;
 }
 
+// VROL-1026 — compact energy formatter (J → kJ / MJ). Used in the
+// strip's tooltip when a run captured sustainability totals.
+function fmtEnergy(j: number): string {
+  if (j >= 1_000_000) return `${(j / 1_000_000).toFixed(1)} MJ`;
+  if (j >= 1_000) return `${(j / 1_000).toFixed(0)} kJ`;
+  return `${j.toFixed(0)} J`;
+}
+
 function tone(curr: number, prev: number, higherIsBetter: boolean): string {
   if (Math.abs(curr - prev) < 1e-9) return "text-muted-foreground";
   const up = curr > prev;
@@ -81,6 +89,17 @@ export function RunHistoryStrip({ scenarioName, onCompare }: Props) {
             {entry.bottleneckLabel ? (
               <div className="text-muted-foreground truncate text-[10px]">
                 bn: {entry.bottleneckLabel}
+              </div>
+            ) : null}
+            {/* VROL-1026 — sustainability footer line. Renders only when
+                the run captured non-zero totals. Compact + uses delta
+                tone vs the previous run so regressions stand out. */}
+            {entry.totalEnergyJ && entry.totalEnergyJ > 0 ? (
+              <div
+                className={`font-mono text-[10px] tabular-nums ${prev?.totalEnergyJ ? tone(entry.totalEnergyJ, prev.totalEnergyJ, false) : "text-muted-foreground"}`}
+                data-testid="run-history-strip-energy"
+              >
+                {fmtEnergy(entry.totalEnergyJ)}
               </div>
             ) : null}
           </Wrapper>

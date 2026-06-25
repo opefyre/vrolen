@@ -2214,6 +2214,11 @@ function EditorCanvas() {
             avgTimeInSystemW: r.avgTimeInSystemW,
             ...(headBn?.label !== undefined ? { bottleneckLabel: headBn.label } : {}),
             runAtMs: Date.now(),
+            // VROL-1026 — surface sustainability totals so the strip
+            // can show environmental cost across recent runs.
+            ...(r.totalEnergyJ > 0 ? { totalEnergyJ: r.totalEnergyJ } : {}),
+            ...(r.totalWaterL > 0 ? { totalWaterL: r.totalWaterL } : {}),
+            ...(r.totalCO2eG > 0 ? { totalCO2eG: r.totalCO2eG } : {}),
             payload: { graph: { nodes, edges }, settings },
           };
           addRunToHistory(activeScenarioName, summary);
