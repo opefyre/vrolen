@@ -188,6 +188,33 @@ export function deriveActionCard(
     }
   }
 
+  // VROL-1021 — sustainability hotspot. When one station carries >60 %
+  // of total line energy AND the line has non-trivial energy
+  // consumption, that station is the lever — drop energyPerCycleJ or
+  // reduce its cycles. Ranks above the line-level six-loss rule
+  // because it's actionable on a specific station.
+  if (result.totalEnergyJ > 1000 && result.perStationEnergyJ?.length) {
+    const perStationE = result.perStationEnergyJ;
+    let maxIdx = -1;
+    let maxJ = 0;
+    for (let i = 0; i < perStationE.length; i++) {
+      const v = perStationE[i] ?? 0;
+      if (v > maxJ) {
+        maxJ = v;
+        maxIdx = i;
+      }
+    }
+    if (maxIdx >= 0 && maxJ / result.totalEnergyJ > 0.6) {
+      const hotspotLabel = labels[maxIdx] ?? `Station ${String(maxIdx + 1)}`;
+      const pct = Math.round((maxJ / result.totalEnergyJ) * 100);
+      return {
+        title: `Energy hotspot at ${hotspotLabel} — ${String(pct)} % of line total`,
+        body: `${hotspotLabel} consumed ${Math.round(maxJ / 1000).toLocaleString()} kJ — the dominant share of the line's energy. Two levers: lower energyPerCycleJ on this station (more efficient equipment, lower set-point), or reduce its cycles (less rework / scrap upstream so the station fires less).`,
+        tone: "warn",
+      };
+    }
+  }
+
   // VROL-995 — six-loss dominant bucket rule. When a single Nakajima
   // loss category exceeds 40 % of total losses across the line, surface
   // it as the next-thing-to-do with its dominant station. Ranks below

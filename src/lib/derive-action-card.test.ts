@@ -195,6 +195,39 @@ describe("deriveActionCard (VROL-948 / VROL-959)", () => {
     expect(card.title.toLowerCase()).not.toContain("partial batch");
   });
 
+  it("VROL-1021 — energy hotspot rule fires when one station > 60 % of total energy", () => {
+    const r = baseResult({
+      totalEnergyJ: 100_000,
+      perStationEnergyJ: [80_000, 10_000, 10_000],
+      perStationLabels: ["Filler", "Capper", "Packer"],
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.tone).toBe("warn");
+    expect(card.title.toLowerCase()).toContain("energy hotspot");
+    expect(card.title).toContain("Filler");
+    expect(card.title).toMatch(/80\s*%/);
+  });
+
+  it("VROL-1021 — distributed energy does NOT fire the hotspot rule", () => {
+    const r = baseResult({
+      totalEnergyJ: 100_000,
+      perStationEnergyJ: [35_000, 35_000, 30_000],
+      perStationLabels: ["Filler", "Capper", "Packer"],
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).not.toContain("energy hotspot");
+  });
+
+  it("VROL-1021 — trivial total energy does NOT fire the hotspot rule", () => {
+    const r = baseResult({
+      totalEnergyJ: 500,
+      perStationEnergyJ: [500, 0, 0],
+      perStationLabels: ["Filler", "Capper", "Packer"],
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).not.toContain("energy hotspot");
+  });
+
   it("VROL-1010 — without opts, partial-batch rule never fires", () => {
     const r = baseResult({
       bottlenecks: [
