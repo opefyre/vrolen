@@ -729,4 +729,29 @@ function checkUomConsistency(
       path: `edges[${String(i)}]`,
     });
   });
+  // VROL-1025 — sustainability inputs declared but no UoM. The
+  // SustainabilityCard intensity figure would read "X / parts", which
+  // is uninformative. Flag once line-level (not per-station) since the
+  // fix is to declare a unit on the sink.
+  const anySustainability = nodes.some((n) => {
+    const d = n.data as
+      | { energyPerCycleJ?: unknown; waterPerCycleL?: unknown; co2ePerCycleG?: unknown }
+      | undefined;
+    if (!d) return false;
+    const e = typeof d.energyPerCycleJ === "number" ? d.energyPerCycleJ : 0;
+    const w = typeof d.waterPerCycleL === "number" ? d.waterPerCycleL : 0;
+    const c = typeof d.co2ePerCycleG === "number" ? d.co2ePerCycleG : 0;
+    return e > 0 || w > 0 || c > 0;
+  });
+  const anyUnit = Array.from(unitByNodeId.values()).some((u) => u.length > 0);
+  if (anySustainability && !anyUnit) {
+    out.push({
+      code: "SUSTAINABILITY_NO_UOM",
+      severity: "warning",
+      category: "reference",
+      message:
+        "Stations declare sustainability inputs (energy / water / CO₂e per cycle) but no station declares a unit",
+      fix: "Declare a unit (kg, L, doses…) on the sink station so the intensity figure reads 'J / kg' instead of 'J / parts'.",
+    });
+  }
 }

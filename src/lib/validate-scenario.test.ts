@@ -439,4 +439,35 @@ describe("validateScenario (VROL-86)", () => {
     expect(r.warnings.find((w) => w.code === "UOM_RATIO_MISSING")).toBeUndefined();
     expect(r.warnings.find((w) => w.code === "UOM_RATIO_WITHOUT_UNIT")).toBeUndefined();
   });
+
+  // ─── 10. VROL-1025 — sustainability without UoM ─────────────────────────────
+  it("SUSTAINABILITY_NO_UOM: energy inputs without any unit declaration fires", () => {
+    const r = validateScenario(
+      [node("src", { energyPerCycleJ: 100 }), node("sink")],
+      [edge("e1", "src", "sink")],
+      settings(),
+    );
+    expect(r.warnings.find((w) => w.code === "SUSTAINABILITY_NO_UOM")).toBeDefined();
+  });
+
+  it("SUSTAINABILITY_NO_UOM: with a unit declared, the warning is silent", () => {
+    const r = validateScenario(
+      [
+        node("src", { energyPerCycleJ: 100, unit: "kg", unitsPerPart: 0.5 }),
+        node("sink", { unit: "kg", unitsPerPart: 0.5 }),
+      ],
+      [edge("e1", "src", "sink")],
+      settings(),
+    );
+    expect(r.warnings.find((w) => w.code === "SUSTAINABILITY_NO_UOM")).toBeUndefined();
+  });
+
+  it("SUSTAINABILITY_NO_UOM: no sustainability inputs = silent even without a unit", () => {
+    const r = validateScenario(
+      [node("src"), node("sink")],
+      [edge("e1", "src", "sink")],
+      settings(),
+    );
+    expect(r.warnings.find((w) => w.code === "SUSTAINABILITY_NO_UOM")).toBeUndefined();
+  });
 });
