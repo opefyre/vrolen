@@ -2779,6 +2779,22 @@ function EditorCanvas() {
           toast.success(`Every tool pool capacity +${String(payload.delta)}. Re-running…`);
           setApplyAndRunTick((x) => x + 1);
           break;
+        case "energy:scale":
+          // VROL-1032 — multiply this station's energyPerCycleJ by the
+          // payload multiplier. Rounds to nearest J. Doesn't touch
+          // water / CO₂e because the action card scopes its
+          // recommendation to energy specifically.
+          patchStation(payload.stationLabel, (data) => {
+            const e = typeof data.energyPerCycleJ === "number" ? data.energyPerCycleJ : 0;
+            if (e <= 0) return data;
+            const next = Math.max(0, Math.round(e * payload.multiplier));
+            return next > 0 ? { ...data, energyPerCycleJ: next } : data;
+          });
+          toast.success(
+            `Scaled ${payload.stationLabel}'s energy by ${payload.multiplier.toFixed(2)}x. Re-running…`,
+          );
+          setApplyAndRunTick((x) => x + 1);
+          break;
       }
     },
     [setNodes],

@@ -32,7 +32,10 @@ export type ActionApplyPayload =
   | { kind: "cycle:scaleAll"; multiplier: number }
   // VROL-998 — additive bump to every named tool pool's capacity.
   // Distinct from tool-pool:grow which targets a single named pool.
-  | { kind: "tool-pool:scaleAll"; delta: number };
+  | { kind: "tool-pool:scaleAll"; delta: number }
+  // VROL-1032 — multiplicative scale on energyPerCycleJ for a single
+  // station. Lets the energy-hotspot action card move a real lever.
+  | { kind: "energy:scale"; stationLabel: string; multiplier: number };
 
 export interface ActionCard {
   readonly title: string;
@@ -211,6 +214,10 @@ export function deriveActionCard(
         title: `Energy hotspot at ${hotspotLabel} — ${String(pct)} % of line total`,
         body: `${hotspotLabel} consumed ${Math.round(maxJ / 1000).toLocaleString()} kJ — the dominant share of the line's energy. Two levers: lower energyPerCycleJ on this station (more efficient equipment, lower set-point), or reduce its cycles (less rework / scrap upstream so the station fires less).`,
         tone: "warn",
+        // VROL-1032 — 25 % cut on this station's energy is the
+        // canonical first try; the apply handler rounds to nearest
+        // integer J when persisting back to station.data.
+        apply: { kind: "energy:scale", stationLabel: hotspotLabel, multiplier: 0.75 },
       };
     }
   }

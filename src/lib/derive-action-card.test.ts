@@ -208,6 +208,20 @@ describe("deriveActionCard (VROL-948 / VROL-959)", () => {
     expect(card.title).toMatch(/80\s*%/);
   });
 
+  it("VROL-1032 — energy hotspot carries an energy:scale apply payload", () => {
+    const r = baseResult({
+      totalEnergyJ: 100_000,
+      perStationEnergyJ: [80_000, 10_000, 10_000],
+      perStationLabels: ["Filler", "Capper", "Packer"],
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.apply?.kind).toBe("energy:scale");
+    if (card.apply?.kind === "energy:scale") {
+      expect(card.apply.stationLabel).toBe("Filler");
+      expect(card.apply.multiplier).toBe(0.75);
+    }
+  });
+
   it("VROL-1021 — distributed energy does NOT fire the hotspot rule", () => {
     const r = baseResult({
       totalEnergyJ: 100_000,
