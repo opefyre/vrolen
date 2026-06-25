@@ -341,7 +341,15 @@
   .print-scope [data-testid="oee-breakdown"],
   .print-scope [data-testid="six-loss-row"],
   .print-scope [data-testid="station-gantt"],
-  .print-scope [data-testid="constraint-history"] {
+  .print-scope [data-testid="constraint-history"],
+  /* VROL-1028 — cards added since VROL-985 wired page-breaks.
+   * SensitivityCard wraps via AnalyticsCardShell (id="sensitivity");
+   * the rest carry stable data-testid roots. */
+  .print-scope [data-testid="sustainability-card"],
+  .print-scope [data-testid="goal-mode-card"],
+  .print-scope [data-testid="run-history-strip"],
+  .print-scope [data-testid="two-way-card"],
+  .print-scope #sensitivity {
     break-inside: avoid;
     page-break-inside: avoid;
   }
