@@ -5481,6 +5481,99 @@ function EditorCanvas() {
                           Models 3D-print plates, autoclave loads, oven batches.
                         </p>
                       </div>
+                      {/* VROL-1027 — sustainability inputs. Empty / 0 =
+                          undefined (removes the field) so the
+                          SustainabilityCard only renders when data is
+                          really present. */}
+                      <div className="border-border bg-card/40 space-y-2 rounded-md border p-2">
+                        <div className="text-foreground text-xs font-medium">
+                          Sustainability per cycle
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="flex flex-col gap-1">
+                            <label
+                              htmlFor="inspector-energy"
+                              className="text-muted-foreground text-[11px]"
+                            >
+                              Energy (J)
+                            </label>
+                            <Input
+                              id="inspector-energy"
+                              type="number"
+                              inputMode="decimal"
+                              min={0}
+                              step={1}
+                              placeholder="0"
+                              value={String(
+                                (selectedNode.data as { energyPerCycleJ?: number })
+                                  .energyPerCycleJ ?? "",
+                              )}
+                              onChange={(e) => {
+                                const v = Number(e.target.value);
+                                updateSelectedNodeData({
+                                  energyPerCycleJ: Number.isFinite(v) && v > 0 ? v : undefined,
+                                });
+                              }}
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label
+                              htmlFor="inspector-water"
+                              className="text-muted-foreground text-[11px]"
+                            >
+                              Water (L)
+                            </label>
+                            <Input
+                              id="inspector-water"
+                              type="number"
+                              inputMode="decimal"
+                              min={0}
+                              step={0.1}
+                              placeholder="0"
+                              value={String(
+                                (selectedNode.data as { waterPerCycleL?: number }).waterPerCycleL ??
+                                  "",
+                              )}
+                              onChange={(e) => {
+                                const v = Number(e.target.value);
+                                updateSelectedNodeData({
+                                  waterPerCycleL: Number.isFinite(v) && v > 0 ? v : undefined,
+                                });
+                              }}
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label
+                              htmlFor="inspector-co2e"
+                              className="text-muted-foreground text-[11px]"
+                            >
+                              CO₂e (g)
+                            </label>
+                            <Input
+                              id="inspector-co2e"
+                              type="number"
+                              inputMode="decimal"
+                              min={0}
+                              step={0.1}
+                              placeholder="0"
+                              value={String(
+                                (selectedNode.data as { co2ePerCycleG?: number }).co2ePerCycleG ??
+                                  "",
+                              )}
+                              onChange={(e) => {
+                                const v = Number(e.target.value);
+                                updateSelectedNodeData({
+                                  co2ePerCycleG: Number.isFinite(v) && v > 0 ? v : undefined,
+                                });
+                              }}
+                            />
+                          </div>
+                        </div>
+                        <p className="text-muted-foreground text-[11px]">
+                          Per-cycle resource use. Aggregates into line totals + per-station
+                          breakdown on the result panel.
+                        </p>
+                      </div>
                       {/* VROL-1003 — Transport station inputs: lengthM +
                           speedMps. Residence time is derived and routed
                           to ChainOptions.bufferDelayMs[] by graph-to-chain. */}
