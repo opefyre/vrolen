@@ -813,9 +813,41 @@ function HeroResultCard({
         <div className="text-muted-foreground flex items-center justify-between text-[11px] font-medium tracking-wide uppercase">
           <span>Throughput</span>
           {throughputRepKpi && throughputRepKpi.values.length > 1 ? (
-            <span className="font-mono text-[10px] normal-case">
-              n = {throughputRepKpi.values.length} replications
-            </span>
+            <div className="flex items-center gap-2">
+              {/* VROL-1007 — stability chip from throughput CV across
+                  replications. Gives a one-glance answer to "how
+                  confident is this number?" without making the user
+                  open the replications drilldown. */}
+              {(() => {
+                const mean = throughputRepKpi.mean;
+                if (mean <= 0) return null;
+                const cv = throughputRepKpi.stddev / mean;
+                let label: string;
+                let tone: string;
+                if (cv < 0.05) {
+                  label = "Stable";
+                  tone = "bg-sim-running/15 text-sim-running-foreground";
+                } else if (cv < 0.1) {
+                  label = "Some variance";
+                  tone = "bg-sim-setup/15 text-sim-setup-foreground";
+                } else {
+                  label = "High variance — run more reps";
+                  tone = "bg-sim-down/15 text-sim-down-foreground";
+                }
+                return (
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium normal-case ${tone}`}
+                    title={`Coefficient of variation = ${(cv * 100).toFixed(1)} % across ${String(throughputRepKpi.values.length)} replications`}
+                    data-testid="stability-chip"
+                  >
+                    {label} · CV {(cv * 100).toFixed(1)} %
+                  </span>
+                );
+              })()}
+              <span className="font-mono text-[10px] normal-case">
+                n = {throughputRepKpi.values.length} replications
+              </span>
+            </div>
           ) : null}
         </div>
         <button
