@@ -16,6 +16,7 @@ import type { ActionApplyPayload } from "@/lib/derive-action-card";
 interface Props {
   readonly baselinePerHour: number;
   readonly running: boolean;
+  /** onRun receives the target in PARTS/h (engine units), not display units. */
   readonly onRun: (targetPerHour: number) => void;
   /** Single-lever apply (uniform cycle multiplier). */
   readonly onApply: (multiplier: number) => void;
@@ -24,6 +25,14 @@ interface Props {
   readonly multiResult?: MultiResult | null;
   /** VROL-998 — multi-lever per-lever apply. EditorPage routes the payload. */
   readonly onApplyMulti?: (payload: ActionApplyPayload) => void;
+  /**
+   * VROL-1020 — sink unit + ratio. Displayed values multiply by
+   * unitsPerPart; the target input is treated as display units and
+   * converted back to parts/h before calling onRun. Defaults to
+   * "parts" / 1 (legacy behaviour).
+   */
+  readonly throughputUnit?: string;
+  readonly unitsPerPart?: number;
 }
 
 export function GoalModeCard({
@@ -34,8 +43,17 @@ export function GoalModeCard({
   result,
   multiResult,
   onApplyMulti,
+  throughputUnit = "parts",
+  unitsPerPart = 1,
 }: Props) {
-  const [target, setTarget] = useState<number>(Math.round(baselinePerHour * 1.2));
+  const unitLabel = throughputUnit && throughputUnit.length > 0 ? throughputUnit : "parts";
+  // VROL-1020 — initial target is 120 % of baseline IN DISPLAY UNITS.
+  // The engine still runs in parts/h, but the user types/sees the
+  // declared unit.
+  const baselineDisplay = baselinePerHour * unitsPerPart;
+  const [target, setTarget] = useState<number>(Math.round(baselineDisplay * 1.2));
+  const fmt = (partsPerHour: number): string =>
+    Math.round(partsPerHour * unitsPerPart).toLocaleString();
   const multiBest = multiResult?.best ?? null;
   // Show the multi-lever block when it found a candidate that beats
   // single-lever on cost OR uses non-cycle levers (buffer / pool).
@@ -64,15 +82,17 @@ export function GoalModeCard({
             setTarget(Math.max(0, Math.floor(Number(e.target.value) || 0)));
           }}
           className="border-input bg-background w-32 rounded-md border px-2 py-1.5 font-mono text-sm tabular-nums"
-          aria-label="Target parts per hour"
+          aria-label={`Target ${unitLabel} per hour`}
         />
-        <span className="text-muted-foreground text-xs">parts / h</span>
+        <span className="text-muted-foreground text-xs">{unitLabel} / h</span>
         <Button
           variant="outline"
           size="sm"
           disabled={running || target <= 0}
           onClick={() => {
-            onRun(target);
+            // VROL-1020 — engine works in parts/h. Convert display
+            // units back via /unitsPerPart before invoking onRun.
+            onRun(target / unitsPerPart);
           }}
         >
           {running ? "Searching…" : "Find cheapest"}
@@ -83,22 +103,17 @@ export function GoalModeCard({
           {result.capped ? (
             <p className="text-sim-down-foreground">
               Even at maximum speed-up (0.5x cycle time), the line tops out at{" "}
-              <strong className="font-mono tabular-nums">
-                {Math.round(result.achievedPerHour).toLocaleString()}
-              </strong>{" "}
-              parts/h — short of the target.
+              <strong className="font-mono tabular-nums">{fmt(result.achievedPerHour)}</strong>{" "}
+              {unitLabel}/h — short of the target.
             </p>
           ) : (
             <p>
               <strong>Single lever:</strong> cycle scale{" "}
               <strong className="font-mono tabular-nums">{result.multiplier.toFixed(2)}x</strong>{" "}
-              hits{" "}
-              <strong className="font-mono tabular-nums">
-                {Math.round(result.achievedPerHour).toLocaleString()}
-              </strong>{" "}
-              parts/h (baseline{" "}
+              hits <strong className="font-mono tabular-nums">{fmt(result.achievedPerHour)}</strong>{" "}
+              {unitLabel}/h (baseline{" "}
               <span className="text-muted-foreground font-mono tabular-nums">
-                {Math.round(result.baselinePerHour).toLocaleString()}
+                {fmt(result.baselinePerHour)}
               </span>
               ).
             </p>
@@ -141,11 +156,9 @@ export function GoalModeCard({
                 <span className="font-mono tabular-nums">+{String(multiBest.toolPoolDelta)}</span>
               </>
             ) : null}{" "}
-            hits{" "}
-            <strong className="font-mono tabular-nums">
-              {Math.round(multiBest.perHour).toLocaleString()}
-            </strong>{" "}
-            /h. Cost <span className="font-mono tabular-nums">{multiBest.cost.toFixed(1)}</span>.
+            hits <strong className="font-mono tabular-nums">{fmt(multiBest.perHour)}</strong>{" "}
+            {unitLabel}/h. Cost{" "}
+            <span className="font-mono tabular-nums">{multiBest.cost.toFixed(1)}</span>.
           </p>
           {onApplyMulti ? (
             <div className="flex flex-wrap gap-1.5">

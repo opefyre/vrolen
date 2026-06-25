@@ -347,6 +347,10 @@ interface RunMeta {
   stationKeys: string[];
   /** "sourceNodeId arrow targetNodeId" keys, in the order the engine returned them. */
   edgeKeys: string[];
+  /** VROL-1020 — per-station UoM (aligned with chainNodeIds). */
+  perStationUnit?: string[];
+  /** VROL-1020 — per-station unitsPerPart (aligned with chainNodeIds). */
+  perStationUnitsPerPart?: number[];
 }
 
 interface StationNodeData {
@@ -2014,6 +2018,13 @@ function EditorCanvas() {
         : translation.chainNodeIds
             .slice(0, -1)
             .map((id, i) => `${id}→${String(translation.chainNodeIds[i + 1])}`),
+      // VROL-1020 — UoM threading so GoalModeCard reads in the
+      // declared unit (parallels the same plumbing in run-scenario.ts
+      // for the result panel).
+      perStationUnit: translation.perStationUnit ? [...translation.perStationUnit] : undefined,
+      perStationUnitsPerPart: translation.perStationUnitsPerPart
+        ? [...translation.perStationUnitsPerPart]
+        : undefined,
     });
     if (translation.skippedNodeIds.length > 0) {
       toast.warning(
@@ -6267,7 +6278,8 @@ function EditorCanvas() {
               scenarioName={activeScenarioName ?? null}
               onCompare={handleCompareWithHistoryEntry}
             />
-            {/* VROL-958 / VROL-998 — goal mode card (single + multi lever). */}
+            {/* VROL-958 / VROL-998 — goal mode card (single + multi lever).
+                VROL-1020 — UoM-aware display. */}
             <GoalModeCard
               baselinePerHour={result.throughputLambda * 3_600_000}
               running={goalRunning}
@@ -6276,6 +6288,19 @@ function EditorCanvas() {
               result={goalResult}
               multiResult={goalMultiResult}
               onApplyMulti={handleApplyActionCard}
+              {...(runMeta?.perStationUnit && runMeta.perStationUnit.length > 0
+                ? {
+                    throughputUnit:
+                      runMeta.perStationUnit[runMeta.perStationUnit.length - 1] || "parts",
+                  }
+                : {})}
+              {...(runMeta?.perStationUnitsPerPart && runMeta.perStationUnitsPerPart.length > 0
+                ? {
+                    unitsPerPart:
+                      runMeta.perStationUnitsPerPart[runMeta.perStationUnitsPerPart.length - 1] ??
+                      1,
+                  }
+                : {})}
             />
           </div>
           <Suspense
