@@ -334,4 +334,24 @@ describe("graphToChainOptions", () => {
     expect(r.error).toBeNull();
     expect(r.bufferDelayMs).toEqual([0, 0]);
   });
+
+  it("VROL-867 v1 — perStationUnit captures the per-station unit label in chain order", () => {
+    const nodes: Node[] = [
+      { id: "src", position: { x: 0, y: 0 }, data: { label: "src", cycleMs: 100, unit: "kg" } },
+      { id: "mid", position: { x: 0, y: 0 }, data: { label: "mid", cycleMs: 100, unit: "kg" } },
+      { id: "sink", position: { x: 0, y: 0 }, data: { label: "sink", cycleMs: 100, unit: "kg" } },
+    ];
+    const edges = [edge("src", "mid"), edge("mid", "sink")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.perStationUnit).toEqual(["kg", "kg", "kg"]);
+  });
+
+  it("VROL-867 v1 — missing unit fields default to empty strings", () => {
+    const nodes = [node("a", { cycleMs: 100 }), node("b", { cycleMs: 100 })];
+    const edges = [edge("a", "b")];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.perStationUnit).toEqual(["", ""]);
+  });
 });

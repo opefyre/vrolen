@@ -89,6 +89,7 @@ export function validateScenario(
   checkScheduleSanity(settings, issues);
   checkRecipeCoverage(settings, issues);
   checkConstraintsSanity(nodes, settings, issues);
+  checkUomConsistency(nodes, edges, issues);
   const errors = issues.filter((i) => i.severity === "error");
   const warnings = issues.filter((i) => i.severity === "warning");
   return { errors, warnings };
@@ -630,4 +631,37 @@ function checkRecipeCoverage(settings: RunSettings, out: ValidationIssue[]): voi
       });
     }
   }
+}
+
+// ─── 8. VROL-867 v1 — UoM consistency ────────────────────────────────────────
+// Edges that connect two stations with declared-but-different units
+// warn the user. v1 doesn't do unit conversion; downstream display
+// reads the sink's unit. Empty = default = treated as "parts"; one
+// side empty is silent.
+function checkUomConsistency(
+  nodes: readonly Node[],
+  edges: readonly Edge[],
+  out: ValidationIssue[],
+): void {
+  const unitByNodeId = new Map<string, string>();
+  for (const n of nodes) {
+    const d = n.data as { unit?: unknown } | undefined;
+    const u = d && typeof d.unit === "string" ? d.unit.trim() : "";
+    unitByNodeId.set(n.id, u);
+  }
+  edges.forEach((e, i) => {
+    const a = unitByNodeId.get(e.source);
+    const b = unitByNodeId.get(e.target);
+    if (a === undefined || b === undefined) return;
+    if (a.length === 0 || b.length === 0) return;
+    if (a === b) return;
+    out.push({
+      code: "UOM_MISMATCH",
+      severity: "warning",
+      category: "reference",
+      message: `Edge ${e.source} → ${e.target} crosses unit boundary "${a}" → "${b}"`,
+      fix: "Either align the two stations' units, or accept that the throughput display will use the sink's unit. UoM conversion is a future feature.",
+      path: `edges[${String(i)}]`,
+    });
+  });
 }

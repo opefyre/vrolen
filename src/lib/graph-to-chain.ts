@@ -68,6 +68,12 @@ export interface GraphToChainResult {
    * i → i+1 edges; in DAG mode it's aligned to topology.edges.
    */
   readonly bufferDelayMs: readonly number[];
+  /**
+   * VROL-867 v1 — per-station unit-of-measure label aligned with
+   * chainNodeIds. Empty string when the station's data.unit isn't
+   * set; display callers treat empty as "parts".
+   */
+  readonly perStationUnit: readonly string[];
   /** Set when the graph can't be turned into a chain at all. */
   readonly error: string | null;
 }
@@ -79,6 +85,11 @@ const DEFAULT_CYCLE_MS = 100;
  * from data.lengthM / data.speedMps. Returns 0 when the node is not
  * a Transport or either field is missing / zero / negative.
  */
+function unitOf(node: Node): string {
+  const d = node.data as { unit?: unknown };
+  return typeof d.unit === "string" ? d.unit.trim() : "";
+}
+
 function transportResidenceMs(node: Node): number {
   const d = node.data as { stationType?: string; lengthM?: number; speedMps?: number };
   if (d.stationType !== "transport") return 0;
@@ -406,6 +417,7 @@ export function graphToChainOptions(
     topology: null,
     maintenanceWindows: [],
     bufferDelayMs: [],
+    perStationUnit: [],
     error: null,
   };
   // Decorative nodes (sticky notes, section frames) never participate
@@ -539,6 +551,8 @@ export function graphToChainOptions(
         const sourceNode = nodeById.get(e.source);
         return sourceNode ? transportResidenceMs(sourceNode) : 0;
       });
+      // VROL-867 v1 — per-station unit label.
+      const perStationUnit = topoOrder.map((id) => unitOf(nodeById.get(id)!));
 
       return {
         chainNodeIds: topoOrder,
@@ -550,6 +564,7 @@ export function graphToChainOptions(
         topology: { nodes: topoNodes, edges: topoEdges },
         maintenanceWindows,
         bufferDelayMs,
+        perStationUnit,
         error: null,
       };
     }
@@ -605,6 +620,8 @@ export function graphToChainOptions(
     const sourceNode = nodeById.get(e.source);
     return sourceNode ? transportResidenceMs(sourceNode) : 0;
   });
+  // VROL-867 v1 — per-station unit label (fallback path).
+  const fallbackPerStationUnit = bestChain.map((id) => unitOf(nodeById.get(id)!));
 
   return {
     chainNodeIds: bestChain,
@@ -616,6 +633,7 @@ export function graphToChainOptions(
     topology: { nodes: fallbackTopoNodes, edges: fallbackTopoEdges },
     maintenanceWindows,
     bufferDelayMs,
+    perStationUnit: fallbackPerStationUnit,
     error: null,
   };
 }

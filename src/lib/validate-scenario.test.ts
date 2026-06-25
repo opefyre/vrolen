@@ -365,4 +365,35 @@ describe("validateScenario (VROL-86)", () => {
     expect(r.errors).toEqual([]);
     expect(r.warnings).toEqual([]);
   });
+
+  // ─── 8. VROL-867 v1 — UoM consistency ───────────────────────────────────────
+  it("UOM_MISMATCH: edge crossing kg → L warns", () => {
+    const r = validateScenario(
+      [node("src", { unit: "kg" }), node("sink", { unit: "L" })],
+      [edge("e1", "src", "sink")],
+      settings(),
+    );
+    const mismatch = r.warnings.find((w) => w.code === "UOM_MISMATCH");
+    expect(mismatch).toBeDefined();
+    expect(mismatch?.message).toContain("kg");
+    expect(mismatch?.message).toContain("L");
+  });
+
+  it("UOM_MISMATCH: same units on both ends stay clean", () => {
+    const r = validateScenario(
+      [node("src", { unit: "kg" }), node("sink", { unit: "kg" })],
+      [edge("e1", "src", "sink")],
+      settings(),
+    );
+    expect(r.warnings.find((w) => w.code === "UOM_MISMATCH")).toBeUndefined();
+  });
+
+  it("UOM_MISMATCH: empty unit on either side is silent (default = parts)", () => {
+    const r = validateScenario(
+      [node("src", { unit: "kg" }), node("sink")],
+      [edge("e1", "src", "sink")],
+      settings(),
+    );
+    expect(r.warnings.find((w) => w.code === "UOM_MISMATCH")).toBeUndefined();
+  });
 });

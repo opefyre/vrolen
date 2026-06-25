@@ -79,6 +79,13 @@ interface ResultPanelRunMeta {
   readonly chainNodeIds?: readonly string[];
   /** "sourceNodeId→targetNodeId" keys in engine edge order (VROL-792). */
   readonly edgeKeys?: readonly string[];
+  /**
+   * VROL-867 v1 — per-station UoM label aligned with chainNodeIds.
+   * When the sink's entry is non-empty it drives the throughput
+   * display unit ("X kg / hour" instead of the default "parts /
+   * hour"). Optional so older callers stay valid.
+   */
+  readonly perStationUnit?: readonly string[];
 }
 
 interface ResultPanelProps {
@@ -779,12 +786,15 @@ function KpiCiBand({ kpi }: { readonly kpi: import("@/lib/replications").Replica
  */
 function HeroResultCard({
   throughputFormatted,
+  throughputUnit,
   throughputRepKpi,
   onThroughputDrilldown,
   bottleneck,
   onFocusBottleneck,
 }: {
   readonly throughputFormatted: string;
+  /** VROL-867 v1 — UoM label rendered next to the throughput value. */
+  readonly throughputUnit: string;
   readonly throughputRepKpi: import("@/lib/replications").ReplicationKpi | null;
   readonly onThroughputDrilldown: (() => void) | null;
   readonly bottleneck: {
@@ -825,7 +835,7 @@ function HeroResultCard({
             <span className="font-heading font-mono text-5xl font-bold tracking-tight tabular-nums">
               {throughputFormatted}
             </span>
-            <span className="text-muted-foreground text-sm">parts / hour</span>
+            <span className="text-muted-foreground text-sm">{throughputUnit} / hour</span>
             {throughputClickable ? (
               <ArrowUpRight
                 className="text-muted-foreground group-hover:text-primary ml-auto h-4 w-4 transition-colors"
@@ -1085,6 +1095,14 @@ export function ResultPanel({
           that gave the user no visual hierarchy. */}
       <HeroResultCard
         throughputFormatted={fmt(throughputPerHour, 0)}
+        throughputUnit={(() => {
+          // VROL-867 v1 — sink unit drives the throughput label. Falls
+          // back to "parts" when the scenario doesn't declare a unit.
+          const units = runMeta.perStationUnit;
+          if (!units || units.length === 0) return "parts";
+          const last = units[units.length - 1];
+          return last && last.length > 0 ? last : "parts";
+        })()}
         throughputRepKpi={replicationKpiFor("Throughput")}
         onThroughputDrilldown={
           replicationKpiFor("Throughput")

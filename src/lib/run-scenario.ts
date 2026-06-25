@@ -34,6 +34,14 @@ export interface ScenarioRunMeta {
   stationKeys: string[];
   /** "sourceNodeId→targetNodeId" keys, in the order the engine returned them. */
   edgeKeys: string[];
+  /**
+   * VROL-867 v1 — per-station unit-of-measure label, aligned with
+   * chainNodeIds. Empty string when the station has no explicit unit
+   * (treated as "parts" by display callers). The sink's value drives
+   * the result-panel throughput label so non-discrete lines (dairy,
+   * chemistry, etc.) read as kg/h, L/h, doses/h instead of parts/h.
+   */
+  perStationUnit: string[];
 }
 
 export interface ScenarioRunOutcome {
@@ -233,6 +241,13 @@ export function runScenario(
           : translation.chainNodeIds
               .slice(0, -1)
               .map((id, i) => `${id}→${String(translation.chainNodeIds[i + 1])}`),
+        // VROL-867 v1 — per-station UoM label aligned with chainNodeIds.
+        // Defensive read: older callers using a mocked translation
+        // without this field fall through to an empty array (treated as
+        // "parts" by display callers).
+        perStationUnit: translation.perStationUnit
+          ? [...translation.perStationUnit]
+          : translation.chainNodeIds.map(() => ""),
       },
       skippedNodeIds: translation.skippedNodeIds,
     };

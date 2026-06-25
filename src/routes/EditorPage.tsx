@@ -5381,6 +5381,28 @@ function EditorCanvas() {
                           🧪 Fit from real data…
                         </button>
                       </div>
+                      {/* VROL-867 v1 — per-station UoM label. The sink's
+                          value drives the result-panel throughput display
+                          (X kg/h, X doses/h, etc.). Empty = "parts". */}
+                      <div className="flex flex-col gap-1">
+                        <label
+                          htmlFor="inspector-unit"
+                          className="text-muted-foreground text-xs font-medium"
+                        >
+                          Unit (e.g. parts, kg, L, doses)
+                        </label>
+                        <Input
+                          id="inspector-unit"
+                          type="text"
+                          placeholder="parts"
+                          value={String((selectedNode.data as { unit?: unknown }).unit ?? "")}
+                          onChange={(e) => {
+                            updateSelectedNodeData({
+                              unit: e.target.value.trim().length > 0 ? e.target.value : undefined,
+                            });
+                          }}
+                        />
+                      </div>
                       {/* VROL-1003 — Transport station inputs: lengthM +
                           speedMps. Residence time is derived and routed
                           to ChainOptions.bufferDelayMs[] by graph-to-chain. */}
