@@ -159,6 +159,15 @@ describe("OptimizationCard (VROL-842)", () => {
     expect(screen.getByText("Minimize energy / part")).toBeTruthy();
   });
 
+  it("VROL-1038 — Pareto plot X axis defaults to time-in-system", () => {
+    const summary = makeSummary();
+    render(<OptimizationCard summary={summary} running={false} onRun={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "Pareto" }));
+    // Caption + axis label both reference time-in-system before the
+    // objective is changed.
+    expect(screen.getAllByText(/time-in-system/i).length).toBeGreaterThan(0);
+  });
+
   it("toggles between heatmap and Pareto views via the segmented control", () => {
     const summary = makeSummary();
     const { container } = render(

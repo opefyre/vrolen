@@ -298,6 +298,7 @@ function OptimizationBody({
           summary={summary}
           winner={winner}
           feasibleSet={feasibleSet}
+          objective={objective}
           onDotClick={(c) => setCellDetail(c)}
         />
       )}
@@ -652,13 +653,29 @@ function ParetoView({
   summary,
   winner,
   feasibleSet,
+  objective,
   onDotClick,
 }: {
   readonly summary: OptimizationSummary;
   readonly winner: OptimizationCandidate;
   readonly feasibleSet: ReadonlySet<OptimizationCandidate>;
+  readonly objective: ObjectiveSpec;
   readonly onDotClick: (c: OptimizationCandidate) => void;
 }) {
+  // VROL-1038 — X axis follows the active "minimize" objective so the
+  // plot meaningfully visualises throughput-vs-cost. TIS is the
+  // default (matches the original VROL-842 design); energy-min swaps
+  // to J/part. Y always stays throughput so dots higher up = more
+  // parts.
+  const xExtract: (c: OptimizationCandidate) => number =
+    objective.value === "energy-min"
+      ? (c) => c.meanEnergyIntensityJPerPart
+      : (c) => c.meanTimeInSystemMs;
+  const xAxisLabel = objective.value === "energy-min" ? "energy / part (J)" : "time-in-system (ms)";
+  const formatX: (v: number) => string =
+    objective.value === "energy-min"
+      ? (v) => `${Math.round(v).toLocaleString()} J`
+      : (v) => `${Math.round(v).toLocaleString()} ms`;
   const {
     containerRef: svgRef,
     width: measuredW,
@@ -673,7 +690,7 @@ function ParetoView({
   );
 
   const candidates = summary.candidates;
-  const xs = candidates.map((c) => c.meanTimeInSystemMs);
+  const xs = candidates.map((c) => xExtract(c));
   const ys = candidates.map((c) => c.meanThroughputPerHour);
   const minX = xs.length > 0 ? Math.min(...xs) : 0;
   const maxX = xs.length > 0 ? Math.max(...xs) : 1;
@@ -698,7 +715,7 @@ function ParetoView({
   return (
     <div className="space-y-2">
       <div className="text-muted-foreground text-[11px]">
-        Pareto scatter: X = time-in-system, Y = throughput. Dominating candidates are highlighted in
+        Pareto scatter: X = {xAxisLabel}, Y = throughput. Dominating candidates are highlighted in
         the primary colour; everything else is muted. Click any dot for the combo detail.
       </div>
       <div className="border-border bg-card relative w-full rounded-md border p-2">
@@ -756,7 +773,7 @@ function ParetoView({
             return (
               <g key={`d-${String(i)}`}>
                 <circle
-                  cx={xOf(c.meanTimeInSystemMs)}
+                  cx={xOf(xExtract(c))}
                   cy={yOf(c.meanThroughputPerHour)}
                   r={radius}
                   fill={fill}
@@ -770,7 +787,7 @@ function ParetoView({
                   data-frontier={onF ? "true" : "false"}
                   data-feasible={feasible ? "true" : "false"}
                   data-winner={isWinner ? "true" : "false"}
-                  cx={xOf(c.meanTimeInSystemMs)}
+                  cx={xOf(xExtract(c))}
                   cy={yOf(c.meanThroughputPerHour)}
                   r={Math.max(8, radius + 4)}
                   fill="transparent"
@@ -778,7 +795,7 @@ function ParetoView({
                   onClick={() => onDotClick(c)}
                 >
                   <title>
-                    {`WIP ${String(c.bufferCapacity)} @${c.cycleMultiplier.toFixed(2)}× · ${fmtInt(c.meanThroughputPerHour)} /h · TIS ${fmtMs(c.meanTimeInSystemMs)}${onF ? " · Pareto-optimal" : ""}${feasible ? "" : " · infeasible"}`}
+                    {`WIP ${String(c.bufferCapacity)} @${c.cycleMultiplier.toFixed(2)}× · ${fmtInt(c.meanThroughputPerHour)} /h · ${formatX(xExtract(c))}${onF ? " · Pareto-optimal" : ""}${feasible ? "" : " · infeasible"}`}
                   </title>
                 </circle>
               </g>
@@ -786,7 +803,7 @@ function ParetoView({
           })}
         </svg>
         <div className="text-muted-foreground mt-1 flex items-center justify-between text-[10px]">
-          <span>time-in-system (ms)</span>
+          <span>{xAxisLabel}</span>
           <span>throughput (/h)</span>
         </div>
         <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
