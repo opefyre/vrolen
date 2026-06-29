@@ -343,13 +343,17 @@
   .print-scope [data-testid="station-gantt"],
   .print-scope [data-testid="constraint-history"],
   /* VROL-1028 — cards added since VROL-985 wired page-breaks.
-   * SensitivityCard wraps via AnalyticsCardShell (id="sensitivity");
-   * the rest carry stable data-testid roots. */
+   * SensitivityCard + OptimizationCard wrap via AnalyticsCardShell
+   * (id="sensitivity" / "optimization"); the rest carry stable
+   * data-testid roots. */
   .print-scope [data-testid="sustainability-card"],
   .print-scope [data-testid="goal-mode-card"],
   .print-scope [data-testid="run-history-strip"],
   .print-scope [data-testid="two-way-card"],
-  .print-scope #sensitivity {
+  .print-scope #sensitivity,
+  /* VROL-1042 — OptimizationCard heatmap or Pareto chart can split
+   * across pages without this break-inside rule. */
+  .print-scope #optimization {
     break-inside: avoid;
     page-break-inside: avoid;
   }
