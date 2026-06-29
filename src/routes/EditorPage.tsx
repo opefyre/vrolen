@@ -3870,12 +3870,20 @@ function EditorCanvas() {
     const intervals = computeConstraintHistory(result);
     downloadFile(
       `${stem}-all-in-one.csv`,
-      allInOneToCsv(result, runMeta.stationLabels, sixLoss, intervals),
+      // VROL-1045 — include sensitivity tornado when the user has
+      // actually run a sweep; otherwise the section is skipped.
+      allInOneToCsv(
+        result,
+        runMeta.stationLabels,
+        sixLoss,
+        intervals,
+        sensitivitySummary ?? undefined,
+      ),
       "text/csv",
     );
     toast.success("Downloaded all-in-one CSV");
     setMoreOpen(false);
-  }, [result, runMeta]);
+  }, [result, runMeta, sensitivitySummary]);
 
   // VROL-811 — central editor action registry. All actions (Run, Undo,
   // Save, Duplicate, Auto-layout, Fit view, Open scenarios, …) are defined

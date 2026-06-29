@@ -173,6 +173,64 @@ export function sixLossToCsv(
 }
 
 /**
+ * VROL-1045 — sensitivity tornado → CSV. One section emits per-station
+ * cycle rows (baseline / low / high / swing) and a parallel section
+ * emits the constraint-dimension rows (BOM qty, tool-pool capacity,
+ * station capacity) using their kind discriminator as a column.
+ * Header-only when no sensitivity data is present.
+ */
+export function sensitivityToCsv(summary: {
+  baselinePerHour: number;
+  rows: ReadonlyArray<{
+    stationLabel: string;
+    lowPerHour: number;
+    highPerHour: number;
+    swingPerHour: number;
+    swingPct: number;
+  }>;
+  constraintRows: ReadonlyArray<{
+    kind: string;
+    label: string;
+    lowPerHour: number;
+    highPerHour: number;
+    swingPerHour: number;
+    swingPct: number;
+  }>;
+}): string {
+  const lines: string[] = [];
+  lines.push("# cycle dimension (per-station)");
+  lines.push("station_label,baseline_per_hour,low_per_hour,high_per_hour,swing_per_hour,swing_pct");
+  for (const r of summary.rows) {
+    lines.push(
+      row([
+        r.stationLabel,
+        summary.baselinePerHour.toFixed(2),
+        r.lowPerHour.toFixed(2),
+        r.highPerHour.toFixed(2),
+        r.swingPerHour.toFixed(2),
+        r.swingPct.toFixed(2),
+      ]),
+    );
+  }
+  lines.push("");
+  lines.push("# constraint dimensions (kind = bomQty | toolPoolCap | stationCapacity)");
+  lines.push("kind,label,low_per_hour,high_per_hour,swing_per_hour,swing_pct");
+  for (const r of summary.constraintRows) {
+    lines.push(
+      row([
+        r.kind,
+        r.label,
+        r.lowPerHour.toFixed(2),
+        r.highPerHour.toFixed(2),
+        r.swingPerHour.toFixed(2),
+        r.swingPct.toFixed(2),
+      ]),
+    );
+  }
+  return lines.join("\n");
+}
+
+/**
  * VROL-991 — all-in-one CSV: concatenates KPI summary + station table +
  * six-loss + constraint history with `# section: ...` divider comments.
  * Spreadsheet importers ignore commented rows; humans get a labeled
@@ -195,6 +253,24 @@ export function allInOneToCsv(
     stationLabel: string;
     runningPct: number;
   }>,
+  sensitivitySummary?: {
+    baselinePerHour: number;
+    rows: ReadonlyArray<{
+      stationLabel: string;
+      lowPerHour: number;
+      highPerHour: number;
+      swingPerHour: number;
+      swingPct: number;
+    }>;
+    constraintRows: ReadonlyArray<{
+      kind: string;
+      label: string;
+      lowPerHour: number;
+      highPerHour: number;
+      swingPerHour: number;
+      swingPct: number;
+    }>;
+  },
 ): string {
   const parts: string[] = [];
   parts.push("# section: KPI summary");
@@ -220,6 +296,15 @@ export function allInOneToCsv(
       parts.push("# section: Sustainability timeseries");
       parts.push(sustainabilityTimeseriesToCsv(result));
     }
+  }
+  // VROL-1045 — sensitivity tornado (when the user ran the sweep).
+  if (
+    sensitivitySummary &&
+    sensitivitySummary.rows.length + sensitivitySummary.constraintRows.length > 0
+  ) {
+    parts.push("");
+    parts.push("# section: Sensitivity tornado");
+    parts.push(sensitivityToCsv(sensitivitySummary));
   }
   return parts.join("\n");
 }

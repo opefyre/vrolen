@@ -104,3 +104,45 @@ describe("sustainabilityTimeseriesToCsv (VROL-1019)", () => {
     expect(csv.split("\n").length).toBe(1);
   });
 });
+
+describe("sensitivityToCsv (VROL-1045)", () => {
+  it("emits cycle + constraint sections", async () => {
+    const { sensitivityToCsv } = await import("./result-to-csv");
+    const summary = {
+      baselinePerHour: 1000,
+      rows: [
+        {
+          stationLabel: "Filler",
+          lowPerHour: 900,
+          highPerHour: 1100,
+          swingPerHour: 200,
+          swingPct: 20,
+        },
+      ],
+      constraintRows: [
+        {
+          kind: "stationCapacity",
+          label: "Mid capacity (1 ↔ 2)",
+          lowPerHour: 950,
+          highPerHour: 1900,
+          swingPerHour: 950,
+          swingPct: 95,
+        },
+        {
+          kind: "bomQty",
+          label: "Filler / glass: qtyPerCycle",
+          lowPerHour: 980,
+          highPerHour: 1020,
+          swingPerHour: 40,
+          swingPct: 4,
+        },
+      ],
+    };
+    const csv = sensitivityToCsv(summary);
+    expect(csv).toMatch(/cycle dimension/);
+    expect(csv).toMatch(/constraint dimensions/);
+    expect(csv).toMatch(/Filler,1000\.00,900\.00,1100\.00,200\.00,20\.00/);
+    expect(csv).toMatch(/stationCapacity,Mid capacity/);
+    expect(csv).toMatch(/bomQty,Filler/);
+  });
+});
