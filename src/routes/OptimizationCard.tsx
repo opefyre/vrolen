@@ -49,7 +49,13 @@ interface OptimizationCardProps {
 // Objective + view types — file-local so the consumer surface stays minimal.
 // ──────────────────────────────────────────────────────────────────────────────
 
-type Objective = "throughput-max" | "tis-min" | "oee-max" | "good-parts-max" | "wip-min";
+type Objective =
+  | "throughput-max"
+  | "tis-min"
+  | "oee-max"
+  | "good-parts-max"
+  | "wip-min"
+  | "energy-min";
 
 type ObjectiveDirection = "max" | "min";
 
@@ -107,6 +113,19 @@ const OBJECTIVES: readonly ObjectiveSpec[] = [
     extract: (c) => c.meanAvgWipL,
     format: fmtWip,
     unitTrailing: "parts",
+  },
+  // VROL-1037 — sustainability objective. Pairs with VROL-1036 which
+  // added meanEnergyIntensityJPerPart on each candidate. Stays hidden
+  // for scenarios without sustainability inputs (extractor returns 0
+  // and the heatmap collapses) — but doesn't break anything when
+  // selected on a no-energy scenario.
+  {
+    value: "energy-min",
+    label: "Minimize energy / part",
+    direction: "min",
+    extract: (c) => c.meanEnergyIntensityJPerPart,
+    format: (v) => `${Math.round(v).toLocaleString()} J`,
+    unitTrailing: "/part",
   },
 ];
 

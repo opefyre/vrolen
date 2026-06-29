@@ -18,6 +18,7 @@ function candidate(overrides: Partial<OptimizationCandidate>): OptimizationCandi
   return {
     bufferCapacity: 2,
     cycleMultiplier: 1,
+    toolPoolDelta: 0,
     targetStationIdx: 0,
     meanThroughputPerHour: 1_000,
     meanCompleted: 1_000,
@@ -27,6 +28,9 @@ function candidate(overrides: Partial<OptimizationCandidate>): OptimizationCandi
     meanAvgWipL: 4,
     meanGoodPartsPerHour: 1_000,
     replications: 1,
+    // VROL-1036/1037 — sustainability cost defaults.
+    meanTotalEnergyJ: 0,
+    meanEnergyIntensityJPerPart: 0,
     ...overrides,
   } satisfies OptimizationCandidate;
 }
@@ -143,6 +147,16 @@ describe("OptimizationCard (VROL-842)", () => {
     // And the previously-best cell now reads "infeasible" rather than
     // claiming the crown.
     expect(infeasible.some((el) => (el.textContent ?? "").includes("infeasible"))).toBe(true);
+  });
+
+  it("VROL-1037 — exposes 'Minimize energy / part' as a selectable objective", () => {
+    const summary = makeSummary();
+    render(<OptimizationCard summary={summary} running={false} onRun={() => undefined} />);
+    // Open the objective dropdown — shadcn/Radix Select renders items
+    // into a portal once the trigger fires.
+    const trigger = screen.getByLabelText("Objective");
+    fireEvent.click(trigger);
+    expect(screen.getByText("Minimize energy / part")).toBeTruthy();
   });
 
   it("toggles between heatmap and Pareto views via the segmented control", () => {
