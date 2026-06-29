@@ -15,6 +15,7 @@
 import { Tornado } from "lucide-react";
 
 import { AnalyticsCardShell } from "@/components/results/AnalyticsCardShell";
+import { GlossaryTerm } from "@/components/ui/glossary-term";
 import type { SensitivityRow, SensitivitySummary } from "@/lib/sensitivity-sweep";
 import { classifyTornadoRow } from "@/lib/tornado-classify";
 
@@ -285,8 +286,18 @@ export function SensitivityBody({
                 data-tone={tone}
                 title={`${row.label}: ${fmt(row.lowPerHour)}/h (low) → ${fmt(row.highPerHour)}/h (high)`}
               >
-                <div className="text-foreground/80 w-28 shrink-0 truncate text-right font-medium">
-                  {row.label}
+                <div
+                  className="text-foreground/80 w-28 shrink-0 truncate text-right font-medium"
+                  data-testid={`sensitivity-row-${row.kind}`}
+                >
+                  {/* VROL-1047 — surface the station-capacity glossary
+                      entry on the capacity rows so users can hover to
+                      learn what the lever means. */}
+                  {row.kind === "stationCapacity" ? (
+                    <GlossaryTerm term="station-capacity">{row.label}</GlossaryTerm>
+                  ) : (
+                    row.label
+                  )}
                 </div>
                 <div className="bg-muted/40 relative h-4 flex-1 rounded">
                   <div className="bg-border absolute top-0 bottom-0 left-1/2 w-px" />
