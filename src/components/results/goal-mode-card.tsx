@@ -17,8 +17,12 @@ import { applyLabel } from "./apply-label";
 interface Props {
   readonly baselinePerHour: number;
   readonly running: boolean;
-  /** onRun receives the target in PARTS/h (engine units), not display units. */
-  readonly onRun: (targetPerHour: number) => void;
+  /**
+   * onRun receives the target in PARTS/h (engine units), not display
+   * units. VROL-1056 — optional energy-intensity budget (J/part); the
+   * multi-lever picker constrains to candidates within budget when set.
+   */
+  readonly onRun: (targetPerHour: number, maxEnergyIntensityJPerPart?: number) => void;
   /** Single-lever apply (uniform cycle multiplier). */
   readonly onApply: (multiplier: number) => void;
   readonly result: GoalResult | null;
@@ -53,6 +57,8 @@ export function GoalModeCard({
   // declared unit.
   const baselineDisplay = baselinePerHour * unitsPerPart;
   const [target, setTarget] = useState<number>(Math.round(baselineDisplay * 1.2));
+  // VROL-1056 — optional sustainability budget (J/part). 0 = disabled.
+  const [maxIntensity, setMaxIntensity] = useState<number>(0);
   const fmt = (partsPerHour: number): string =>
     Math.round(partsPerHour * unitsPerPart).toLocaleString();
   const multiBest = multiResult?.best ?? null;
@@ -95,11 +101,29 @@ export function GoalModeCard({
           onClick={() => {
             // VROL-1020 — engine works in parts/h. Convert display
             // units back via /unitsPerPart before invoking onRun.
-            onRun(target / unitsPerPart);
+            // VROL-1056 — pass the optional energy budget through.
+            onRun(target / unitsPerPart, maxIntensity > 0 ? maxIntensity : undefined);
           }}
         >
           {running ? "Searching…" : "Find cheapest"}
         </Button>
+      </div>
+      {/* VROL-1056 — optional sustainability budget. Pairs with the
+          multi-lever picker; 0 disables. */}
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          value={maxIntensity}
+          min={0}
+          step={10}
+          onChange={(e) => {
+            setMaxIntensity(Math.max(0, Math.floor(Number(e.target.value) || 0)));
+          }}
+          className="border-input bg-background w-32 rounded-md border px-2 py-1.5 font-mono text-sm tabular-nums"
+          aria-label="Max energy per part (J)"
+          data-testid="goal-mode-energy-budget"
+        />
+        <span className="text-muted-foreground text-xs">J / part max (0 = off)</span>
       </div>
       {result ? (
         <div className="border-border space-y-1 rounded-md border p-2 text-xs">

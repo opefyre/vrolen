@@ -2344,7 +2344,8 @@ function EditorCanvas() {
 
   // VROL-958 — goal mode search + apply.
   const handleRunGoal = useCallback(
-    (targetPerHour: number): void => {
+    // VROL-1056 — optional energy budget for the multi-lever picker.
+    (targetPerHour: number, maxEnergyIntensityJPerPart?: number): void => {
       const translation = graphToChainOptions(nodes, edges);
       if (translation.error) {
         toast.error("Can't goal-seek", { description: translation.error });
@@ -2385,6 +2386,9 @@ function EditorCanvas() {
               seed: settings.seed,
               buildBaseOptions,
               stationCycleDistributions: translation.cycleDistributions,
+              ...(maxEnergyIntensityJPerPart && maxEnergyIntensityJPerPart > 0
+                ? { maxEnergyIntensityJPerPart }
+                : {}),
             });
             setGoalMultiResult(m);
           } catch {

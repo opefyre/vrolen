@@ -32,6 +32,14 @@ interface MultiOpts {
   readonly seed: number;
   readonly buildBaseOptions: () => ChainOptions;
   readonly stationCycleDistributions: readonly Distribution[];
+  /**
+   * VROL-1056 — optional sustainability constraint. When set, the
+   * picker prefers candidates whose meanEnergyIntensityJPerPart
+   * <= this budget AND meet the throughput target. When no
+   * candidate meets both, falls back to the throughput-only winner.
+   * undefined / 0 = no constraint (existing behaviour preserved).
+   */
+  readonly maxEnergyIntensityJPerPart?: number;
 }
 
 export interface MultiCandidate {
@@ -48,6 +56,16 @@ export interface MultiCandidate {
   readonly perHour: number;
   readonly cost: number;
   readonly meetsTarget: boolean;
+  /**
+   * VROL-1056 — mean energy intensity (J/part) for this candidate.
+   * 0 when no station declared sustainability inputs.
+   */
+  readonly meanEnergyIntensityJPerPart: number;
+  /**
+   * VROL-1056 — true when the candidate respects the optional
+   * energy budget. Always true when no budget was supplied.
+   */
+  readonly meetsEnergyBudget: boolean;
 }
 
 export interface MultiResult {
@@ -141,6 +159,13 @@ export function runMultiLeverGoal(opts: MultiOpts): MultiResult {
             prng: new SeededPrng(opts.seed),
           });
           const perHour = r.throughputLambda * 3_600_000;
+          // VROL-1056 — intensity = totalEnergy / completed when both > 0.
+          const intensity =
+            r.completed > 0 && r.totalEnergyJ > 0 ? r.totalEnergyJ / r.completed : 0;
+          const budgetUnset =
+            opts.maxEnergyIntensityJPerPart === undefined || opts.maxEnergyIntensityJPerPart <= 0;
+          const meetsEnergyBudget =
+            budgetUnset || intensity <= (opts.maxEnergyIntensityJPerPart ?? Infinity);
           candidates.push({
             cycleMultiplier: cycle,
             bufferDelta,
@@ -154,17 +179,26 @@ export function runMultiLeverGoal(opts: MultiOpts): MultiResult {
               capacityDelta,
             }),
             meetsTarget: perHour >= opts.targetPerHour,
+            meanEnergyIntensityJPerPart: intensity,
+            meetsEnergyBudget,
           });
         }
       }
     }
   }
 
-  // Choose the lowest-cost candidate that meets the target. Fall back to
-  // the highest-throughput candidate when none do.
+  // VROL-1056 — pick order:
+  //   1. lowest-cost candidate that meets BOTH throughput target + energy budget.
+  //   2. lowest-cost candidate that meets throughput target alone
+  //      (energy budget infeasible — caller's UI signals it).
+  //   3. highest-throughput candidate (no candidate met the throughput
+  //      target — existing fallback).
   const meeting = candidates.filter((c) => c.meetsTarget);
+  const meetingBoth = meeting.filter((c) => c.meetsEnergyBudget);
   let best: MultiCandidate | null = null;
-  if (meeting.length > 0) {
+  if (meetingBoth.length > 0) {
+    best = meetingBoth.reduce((acc, c) => (c.cost < acc.cost ? c : acc), meetingBoth[0]!);
+  } else if (meeting.length > 0) {
     best = meeting.reduce((acc, c) => (c.cost < acc.cost ? c : acc), meeting[0]!);
   } else if (candidates.length > 0) {
     best = candidates.reduce((acc, c) => (c.perHour > acc.perHour ? c : acc), candidates[0]!);
