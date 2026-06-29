@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import type { GoalResult } from "@/lib/goal-mode";
 import type { MultiResult } from "@/lib/goal-mode-multi";
 import type { ActionApplyPayload } from "@/lib/derive-action-card";
+import { applyLabel } from "./apply-label";
 
 interface Props {
   readonly baselinePerHour: number;
@@ -171,61 +172,84 @@ export function GoalModeCard({
           </p>
           {onApplyMulti ? (
             <div className="flex flex-wrap gap-1.5">
-              {Math.abs(1 - multiBest.cycleMultiplier) > 1e-3 ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    onApplyMulti({
+              {Math.abs(1 - multiBest.cycleMultiplier) > 1e-3
+                ? (() => {
+                    const payload: ActionApplyPayload = {
                       kind: "cycle:scaleAll",
                       multiplier: multiBest.cycleMultiplier,
-                    });
-                  }}
-                >
-                  Apply cycle {multiBest.cycleMultiplier.toFixed(2)}x
-                </Button>
-              ) : null}
-              {multiBest.bufferDelta > 0 ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
+                    };
+                    return (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          onApplyMulti(payload);
+                        }}
+                      >
+                        {applyLabel(payload)}
+                      </Button>
+                    );
+                  })()
+                : null}
+              {multiBest.bufferDelta > 0
+                ? (() => {
                     // Apply via the existing buffer:grow handler — our handler
                     // ignores edgeKey for additive grow.
-                    onApplyMulti({ kind: "buffer:grow", edgeKey: "all" });
-                  }}
-                >
-                  Apply buffer +{String(multiBest.bufferDelta)}
-                </Button>
-              ) : null}
-              {multiBest.toolPoolDelta > 0 ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    onApplyMulti({
+                    const payload: ActionApplyPayload = {
+                      kind: "buffer:grow",
+                      edgeKey: "all",
+                    };
+                    return (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          onApplyMulti(payload);
+                        }}
+                      >
+                        {applyLabel(payload)}
+                      </Button>
+                    );
+                  })()
+                : null}
+              {multiBest.toolPoolDelta > 0
+                ? (() => {
+                    const payload: ActionApplyPayload = {
                       kind: "tool-pool:scaleAll",
                       delta: multiBest.toolPoolDelta,
-                    });
-                  }}
-                >
-                  Apply tool +{String(multiBest.toolPoolDelta)}
-                </Button>
-              ) : null}
-              {(multiBest.capacityDelta ?? 0) > 0 ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    onApplyMulti({
+                    };
+                    return (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          onApplyMulti(payload);
+                        }}
+                      >
+                        {applyLabel(payload)}
+                      </Button>
+                    );
+                  })()
+                : null}
+              {(multiBest.capacityDelta ?? 0) > 0
+                ? (() => {
+                    const payload: ActionApplyPayload = {
                       kind: "capacity:scaleAll",
                       delta: multiBest.capacityDelta,
-                    });
-                  }}
-                >
-                  Apply capacity +{String(multiBest.capacityDelta)}
-                </Button>
-              ) : null}
+                    };
+                    return (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          onApplyMulti(payload);
+                        }}
+                      >
+                        {applyLabel(payload)}
+                      </Button>
+                    );
+                  })()
+                : null}
             </div>
           ) : null}
         </div>
