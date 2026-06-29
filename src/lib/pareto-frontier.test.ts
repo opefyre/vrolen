@@ -31,6 +31,12 @@ function makeCandidate(overrides: {
     meanAvgWipL: 1,
     meanGoodPartsPerHour: overrides.tput,
     replications: 1,
+    // VROL-1036 — default to 0 (no sustainability inputs) for the
+    // pareto frontier fixture; that helper sorts on throughput / WIP,
+    // not energy.
+    meanTotalEnergyJ: 0,
+    meanEnergyIntensityJPerPart: 0,
+    toolPoolDelta: 0,
   } satisfies OptimizationCandidate;
 }
 

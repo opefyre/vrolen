@@ -45,6 +45,16 @@ export interface OptimizationCandidate {
    */
   readonly meanGoodPartsPerHour: number;
   readonly replications: number;
+  /**
+   * VROL-1036 — sustainability cost per candidate. Mean total energy
+   * (J) consumed during the run, averaged across replications. Mean
+   * intensity (J/part) is derived from energy / completed so the UI
+   * can compare candidates on energy footprint and not just
+   * throughput. Both are 0 when no station declared sustainability
+   * inputs.
+   */
+  readonly meanTotalEnergyJ: number;
+  readonly meanEnergyIntensityJPerPart: number;
 }
 
 export interface OptimizationSummary {
@@ -105,6 +115,8 @@ export function runOptimizationSearch(opts: RunOptsLike): OptimizationSummary {
         let sumOee = 0;
         let sumWipL = 0;
         let sumGoodPerHour = 0;
+        let sumEnergyJ = 0;
+        let sumIntensity = 0;
         for (let i = 0; i < reps; i++) {
           const base = opts.buildBaseOptions(mult);
           // VROL-966 — apply toolPoolDelta uniformly to every declared pool.
@@ -135,6 +147,10 @@ export function runOptimizationSearch(opts: RunOptsLike): OptimizationSummary {
           // mean(throughput) × mean(quality) which would over- or
           // under-count when the two correlate inside a single rep.
           sumGoodPerHour += tputPerHour * (1 - r.lineScrapRate);
+          // VROL-1036 — sustainability totals. 0 falls through cleanly
+          // for scenarios that never declared inputs.
+          sumEnergyJ += r.totalEnergyJ ?? 0;
+          sumIntensity += r.completed > 0 ? (r.totalEnergyJ ?? 0) / r.completed : 0;
         }
         candidates.push({
           bufferCapacity: capacity,
@@ -149,6 +165,8 @@ export function runOptimizationSearch(opts: RunOptsLike): OptimizationSummary {
           meanAvgWipL: sumWipL / reps,
           meanGoodPartsPerHour: sumGoodPerHour / reps,
           replications: reps,
+          meanTotalEnergyJ: sumEnergyJ / reps,
+          meanEnergyIntensityJPerPart: sumIntensity / reps,
         });
       }
     }
