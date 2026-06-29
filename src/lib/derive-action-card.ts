@@ -40,7 +40,11 @@ export type ActionApplyPayload =
   // canonical TOC move when a single-server bottleneck is running
   // hot: add a second server (or third). Engine clamps capacity ∈
   // [1, 10], so the apply handler caps at 10.
-  | { kind: "capacity:set"; stationLabel: string; capacity: number };
+  | { kind: "capacity:set"; stationLabel: string; capacity: number }
+  // VROL-1044 — uniform additive bump to every station's capacity.
+  // Used by multi-lever goal mode when capacityDelta > 0 is the
+  // best path to the target. Engine clamps each station's cap at 10.
+  | { kind: "capacity:scaleAll"; delta: number };
 
 export interface ActionCard {
   readonly title: string;

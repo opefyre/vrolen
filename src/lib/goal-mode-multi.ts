@@ -38,6 +38,13 @@ export interface MultiCandidate {
   readonly cycleMultiplier: number;
   readonly bufferDelta: number;
   readonly toolPoolDelta: number;
+  /**
+   * VROL-1044 — uniform integer bump applied to every topology node's
+   * capacity. 0 = no change. Engine clamps capacity ∈ [1, 10] so a
+   * delta of 1 on a station already at 10 is a no-op rather than a
+   * crash.
+   */
+  readonly capacityDelta: number;
   readonly perHour: number;
   readonly cost: number;
   readonly meetsTarget: boolean;
@@ -54,13 +61,30 @@ export interface MultiResult {
 const CYCLES: readonly number[] = [0.5, 0.75, 1.0];
 const BUFFER_DELTAS: readonly number[] = [0, 5, 10];
 const TOOL_DELTAS: readonly number[] = [0, 1];
+// VROL-1044 — capacity dim. Search 0 (no bump) vs +1 (every station
+// with declared capacity gets +1, clamped at 10). Keeps the search
+// 2× rather than blowing up.
+const CAPACITY_DELTAS: readonly number[] = [0, 1];
 
 const ALPHA = 10;
 const BETA = 1;
 const GAMMA = 3;
+// Adding a parallel server is the most expensive lever in the
+// abstraction — heavier weight than tool-pool bumps (γ = 3).
+const DELTA = 15;
 
-function cost(c: { cycleMultiplier: number; bufferDelta: number; toolPoolDelta: number }): number {
-  return ALPHA * Math.abs(1 - c.cycleMultiplier) + BETA * c.bufferDelta + GAMMA * c.toolPoolDelta;
+function cost(c: {
+  cycleMultiplier: number;
+  bufferDelta: number;
+  toolPoolDelta: number;
+  capacityDelta: number;
+}): number {
+  return (
+    ALPHA * Math.abs(1 - c.cycleMultiplier) +
+    BETA * c.bufferDelta +
+    GAMMA * c.toolPoolDelta +
+    DELTA * c.capacityDelta
+  );
 }
 
 export function runMultiLeverGoal(opts: MultiOpts): MultiResult {
@@ -79,45 +103,59 @@ export function runMultiLeverGoal(opts: MultiOpts): MultiResult {
     const scaled = opts.stationCycleDistributions.map((d) => scaleDistribution(d, cycle));
     for (const bufferDelta of BUFFER_DELTAS) {
       for (const toolDelta of TOOL_DELTAS) {
-        const optsForRun = opts.buildBaseOptions();
-        const adjustedToolPools = optsForRun.toolPools
-          ? optsForRun.toolPools.map((p) => ({
-              ...p,
-              capacity: Math.max(1, p.capacity + toolDelta),
-            }))
-          : optsForRun.toolPools;
-        const r = runChain({
-          ...optsForRun,
-          ...(adjustedToolPools ? { toolPools: adjustedToolPools } : {}),
-          ...(optsForRun.topology
+        for (const capacityDelta of CAPACITY_DELTAS) {
+          const optsForRun = opts.buildBaseOptions();
+          const adjustedToolPools = optsForRun.toolPools
+            ? optsForRun.toolPools.map((p) => ({
+                ...p,
+                capacity: Math.max(1, p.capacity + toolDelta),
+              }))
+            : optsForRun.toolPools;
+          // VROL-1044 — bump capacity ONLY on nodes that already
+          // declared one. Source/sink stations frequently leave
+          // capacity unset, and bumping them past their default 1
+          // can drive the state machine into an invalid Starved →
+          // BlockedOut transition. Skip undefined-capacity stations
+          // so the bump targets the real lanes only.
+          const bumpedTopology = optsForRun.topology
             ? {
-                topology: {
-                  ...optsForRun.topology,
-                  nodes: optsForRun.topology.nodes.map((n, i) => ({
-                    ...n,
-                    cycleTime: scaled[i] ?? n.cycleTime,
-                  })),
-                },
+                ...optsForRun.topology,
+                nodes: optsForRun.topology.nodes.map((n, i) => ({
+                  ...n,
+                  cycleTime: scaled[i] ?? n.cycleTime,
+                  ...(capacityDelta > 0 && n.capacity !== undefined
+                    ? {
+                        capacity: Math.min(10, Math.max(1, n.capacity + capacityDelta)),
+                      }
+                    : {}),
+                })),
               }
-            : { stationCycleTimes: scaled }),
-          interStationBufferCapacity: (optsForRun.interStationBufferCapacity ?? 0) + bufferDelta,
-          horizonMs: opts.horizonMs,
-          warmupMs: opts.warmupMs,
-          prng: new SeededPrng(opts.seed),
-        });
-        const perHour = r.throughputLambda * 3_600_000;
-        candidates.push({
-          cycleMultiplier: cycle,
-          bufferDelta,
-          toolPoolDelta: toolDelta,
-          perHour,
-          cost: cost({
+            : null;
+          const r = runChain({
+            ...optsForRun,
+            ...(adjustedToolPools ? { toolPools: adjustedToolPools } : {}),
+            ...(bumpedTopology ? { topology: bumpedTopology } : { stationCycleTimes: scaled }),
+            interStationBufferCapacity: (optsForRun.interStationBufferCapacity ?? 0) + bufferDelta,
+            horizonMs: opts.horizonMs,
+            warmupMs: opts.warmupMs,
+            prng: new SeededPrng(opts.seed),
+          });
+          const perHour = r.throughputLambda * 3_600_000;
+          candidates.push({
             cycleMultiplier: cycle,
             bufferDelta,
             toolPoolDelta: toolDelta,
-          }),
-          meetsTarget: perHour >= opts.targetPerHour,
-        });
+            capacityDelta,
+            perHour,
+            cost: cost({
+              cycleMultiplier: cycle,
+              bufferDelta,
+              toolPoolDelta: toolDelta,
+              capacityDelta,
+            }),
+            meetsTarget: perHour >= opts.targetPerHour,
+          });
+        }
       }
     }
   }

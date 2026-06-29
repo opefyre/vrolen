@@ -2808,6 +2808,30 @@ function EditorCanvas() {
           );
           setApplyAndRunTick((x) => x + 1);
           break;
+        case "capacity:scaleAll":
+          // VROL-1044 — uniform capacity bump on every station that
+          // ALREADY DECLARED a capacity. Source/sink stations that
+          // leave capacity unset can throw an Invalid state-machine
+          // transition (Starved → BlockedOut) when their capacity is
+          // raised, so we skip them. Matches goal-mode-multi.ts.
+          setNodes((ns) =>
+            ns.map((n) => {
+              const data = n.data as { capacity?: unknown };
+              if (typeof data.capacity !== "number") return n;
+              return {
+                ...n,
+                data: {
+                  ...n.data,
+                  capacity: Math.min(10, Math.max(1, data.capacity + payload.delta)),
+                },
+              };
+            }),
+          );
+          toast.success(
+            `Capacity +${String(payload.delta)} on stations that declare it. Re-running…`,
+          );
+          setApplyAndRunTick((x) => x + 1);
+          break;
       }
     },
     [setNodes],

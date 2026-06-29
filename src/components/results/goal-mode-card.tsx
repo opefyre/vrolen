@@ -56,12 +56,14 @@ export function GoalModeCard({
     Math.round(partsPerHour * unitsPerPart).toLocaleString();
   const multiBest = multiResult?.best ?? null;
   // Show the multi-lever block when it found a candidate that beats
-  // single-lever on cost OR uses non-cycle levers (buffer / pool).
+  // single-lever on cost OR uses non-cycle levers (buffer / pool /
+  // capacity).
   const multiBeatsSingle =
     !!multiBest &&
     multiBest.meetsTarget &&
     (multiBest.bufferDelta > 0 ||
       multiBest.toolPoolDelta > 0 ||
+      (multiBest.capacityDelta ?? 0) > 0 ||
       (result && multiBest.cost < 10 * Math.abs(1 - result.multiplier)));
   return (
     <div
@@ -155,6 +157,13 @@ export function GoalModeCard({
                 + tool pools{" "}
                 <span className="font-mono tabular-nums">+{String(multiBest.toolPoolDelta)}</span>
               </>
+            ) : null}
+            {(multiBest.capacityDelta ?? 0) > 0 ? (
+              <>
+                {" "}
+                + capacity{" "}
+                <span className="font-mono tabular-nums">+{String(multiBest.capacityDelta)}</span>
+              </>
             ) : null}{" "}
             hits <strong className="font-mono tabular-nums">{fmt(multiBest.perHour)}</strong>{" "}
             {unitLabel}/h. Cost{" "}
@@ -201,6 +210,20 @@ export function GoalModeCard({
                   }}
                 >
                   Apply tool +{String(multiBest.toolPoolDelta)}
+                </Button>
+              ) : null}
+              {(multiBest.capacityDelta ?? 0) > 0 ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    onApplyMulti({
+                      kind: "capacity:scaleAll",
+                      delta: multiBest.capacityDelta,
+                    });
+                  }}
+                >
+                  Apply capacity +{String(multiBest.capacityDelta)}
                 </Button>
               ) : null}
             </div>
