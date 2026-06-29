@@ -173,7 +173,7 @@ export function runMultiLeverGoal(opts: MultiOpts): MultiResult {
     baselinePerHour,
     best,
     candidates,
-    searchSize: CYCLES.length * BUFFER_DELTAS.length * TOOL_DELTAS.length,
+    searchSize: CYCLES.length * BUFFER_DELTAS.length * TOOL_DELTAS.length * CAPACITY_DELTAS.length,
     elapsedMs: performance.now() - t0,
   };
 }
