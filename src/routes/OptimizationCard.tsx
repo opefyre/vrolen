@@ -144,11 +144,22 @@ interface Constraints {
   readonly maxTimeInSystemMs: number | null;
   /** Upper bound on mean average WIP (parts). null = no constraint. */
   readonly maxAvgWipL: number | null;
+  /**
+   * VROL-1055 — upper bound on mean energy intensity (J / part).
+   * null = no constraint. Lets users ask "max throughput subject to
+   * ≤ X J / part" for sustainability-aware optimization.
+   */
+  readonly maxEnergyIntensityJPerPart: number | null;
 }
 
 function isFeasible(c: OptimizationCandidate, k: Constraints): boolean {
   if (k.maxTimeInSystemMs !== null && c.meanTimeInSystemMs > k.maxTimeInSystemMs) return false;
   if (k.maxAvgWipL !== null && c.meanAvgWipL > k.maxAvgWipL) return false;
+  if (
+    k.maxEnergyIntensityJPerPart !== null &&
+    c.meanEnergyIntensityJPerPart > k.maxEnergyIntensityJPerPart
+  )
+    return false;
   return true;
 }
 
@@ -244,11 +255,14 @@ function OptimizationBody({
   const [view, setView] = useState<ChartView>("heatmap");
   const [maxTisMs, setMaxTisMs] = useState<number>(0);
   const [maxWip, setMaxWip] = useState<number>(0);
+  // VROL-1055 — sustainability constraint. 0 = disabled.
+  const [maxEnergyIntensity, setMaxEnergyIntensity] = useState<number>(0);
 
   const objective = OBJECTIVES.find((o) => o.value === objectiveValue) ?? OBJECTIVES[0]!;
   const constraints: Constraints = {
     maxTimeInSystemMs: maxTisMs > 0 ? maxTisMs : null,
     maxAvgWipL: maxWip > 0 ? maxWip : null,
+    maxEnergyIntensityJPerPart: maxEnergyIntensity > 0 ? maxEnergyIntensity : null,
   };
 
   const feasibleSet = useMemo<ReadonlySet<OptimizationCandidate>>(() => {
@@ -258,7 +272,12 @@ function OptimizationBody({
     }
     return s;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- constraints is a derived object; the primitive deps below are the real inputs.
-  }, [summary.candidates, constraints.maxTimeInSystemMs, constraints.maxAvgWipL]);
+  }, [
+    summary.candidates,
+    constraints.maxTimeInSystemMs,
+    constraints.maxAvgWipL,
+    constraints.maxEnergyIntensityJPerPart,
+  ]);
 
   const { winner, fromFeasible } = useMemo(
     () => pickBest(summary.candidates, objective, feasibleSet),
@@ -278,6 +297,8 @@ function OptimizationBody({
         onMaxTisMsChange={setMaxTisMs}
         maxWip={maxWip}
         onMaxWipChange={setMaxWip}
+        maxEnergyIntensity={maxEnergyIntensity}
+        onMaxEnergyIntensityChange={setMaxEnergyIntensity}
         totalCandidates={summary.candidates.length}
         feasibleCount={feasibleSet.size}
       />
@@ -403,6 +424,8 @@ function ConstraintBar({
   onMaxTisMsChange,
   maxWip,
   onMaxWipChange,
+  maxEnergyIntensity,
+  onMaxEnergyIntensityChange,
   totalCandidates,
   feasibleCount,
 }: {
@@ -410,12 +433,14 @@ function ConstraintBar({
   readonly onMaxTisMsChange: (next: number) => void;
   readonly maxWip: number;
   readonly onMaxWipChange: (next: number) => void;
+  readonly maxEnergyIntensity: number;
+  readonly onMaxEnergyIntensityChange: (next: number) => void;
   readonly totalCandidates: number;
   readonly feasibleCount: number;
 }) {
-  const hasConstraints = maxTisMs > 0 || maxWip > 0;
+  const hasConstraints = maxTisMs > 0 || maxWip > 0 || maxEnergyIntensity > 0;
   return (
-    <div className="border-border bg-muted/30 grid grid-cols-1 gap-3 rounded-md border p-3 sm:grid-cols-[1fr_1fr_auto]">
+    <div className="border-border bg-muted/30 grid grid-cols-1 gap-3 rounded-md border p-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
       <DurationInput
         id="optimization-max-tis"
         label="Max time-in-system"
@@ -432,6 +457,15 @@ function ConstraintBar({
         onChange={onMaxWipChange}
         min={0}
         step={1}
+        helperText="0 disables the constraint."
+      />
+      <NumberField
+        id="optimization-max-energy-intensity"
+        label="Max energy / part (J)"
+        value={maxEnergyIntensity}
+        onChange={onMaxEnergyIntensityChange}
+        min={0}
+        step={10}
         helperText="0 disables the constraint."
       />
       <div className="text-muted-foreground self-end text-xs">

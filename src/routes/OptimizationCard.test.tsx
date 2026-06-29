@@ -149,6 +149,61 @@ describe("OptimizationCard (VROL-842)", () => {
     expect(infeasible.some((el) => (el.textContent ?? "").includes("infeasible"))).toBe(true);
   });
 
+  it("VROL-1055 — renders the max energy / part constraint input", () => {
+    const summary = makeSummary();
+    const { container } = render(
+      <OptimizationCard summary={summary} running={false} onRun={() => undefined} />,
+    );
+    expect(container.querySelector("#optimization-max-energy-intensity")).toBeTruthy();
+  });
+
+  it("VROL-1055 — max energy / part constraint marks high-intensity cells infeasible", () => {
+    // Build a 2-cell summary where cell A has low intensity and cell B
+    // has high — set the constraint and assert B becomes infeasible.
+    const candidates: OptimizationCandidate[] = [
+      candidate({
+        bufferCapacity: 2,
+        cycleMultiplier: 1,
+        meanThroughputPerHour: 1_000,
+        meanEnergyIntensityJPerPart: 100,
+      }),
+      candidate({
+        bufferCapacity: 4,
+        cycleMultiplier: 1,
+        meanThroughputPerHour: 1_400,
+        meanEnergyIntensityJPerPart: 500, // high
+      }),
+    ];
+    const summary: OptimizationSummary = {
+      candidates,
+      best: candidates[1]!,
+      runnerUp: candidates[0]!,
+      currentCapacity: 2,
+      targetStationIdx: 0,
+      targetStationLabel: "Filler",
+      bufferLevels: [2, 4],
+      cycleMultipliers: [1],
+      searchSize: 2,
+      elapsedMs: 12,
+    };
+    const { container } = render(
+      <OptimizationCard summary={summary} running={false} onRun={() => undefined} />,
+    );
+    const input = container.querySelector(
+      "#optimization-max-energy-intensity",
+    ) as HTMLInputElement | null;
+    expect(input).toBeTruthy();
+    fireEvent.change(input!, { target: { value: "200" } });
+    fireEvent.blur(input!);
+    // High-intensity cell B (500 J/part) must be infeasible at the 200
+    // J/part constraint; cell A (100 J/part) stays feasible.
+    const infeasible = container.querySelectorAll(
+      '[data-slot="optimization-cell"][data-feasible="false"]',
+    );
+    expect(infeasible.length).toBe(1);
+    expect(infeasible[0]!.textContent ?? "").toContain("1,400");
+  });
+
   it("VROL-1037 — exposes 'Minimize energy / part' as a selectable objective", () => {
     const summary = makeSummary();
     render(<OptimizationCard summary={summary} running={false} onRun={() => undefined} />);
