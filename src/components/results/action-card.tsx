@@ -10,6 +10,7 @@
 import type { ChainResult } from "@/engine";
 import { deriveActionCard, type ActionApplyPayload } from "@/lib/derive-action-card";
 import { Button } from "@/components/ui/button";
+import { applyLabel } from "./apply-label";
 
 interface Props {
   readonly result: ChainResult;
@@ -39,7 +40,7 @@ export function ActionCard({ result, onApply, perStationBatchSize }: Props) {
               onApply(card.apply!);
             }}
           >
-            Apply
+            {applyLabel(card.apply)}
           </Button>
         </div>
       ) : null}
