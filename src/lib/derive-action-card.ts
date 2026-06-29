@@ -35,7 +35,12 @@ export type ActionApplyPayload =
   | { kind: "tool-pool:scaleAll"; delta: number }
   // VROL-1032 — multiplicative scale on energyPerCycleJ for a single
   // station. Lets the energy-hotspot action card move a real lever.
-  | { kind: "energy:scale"; stationLabel: string; multiplier: number };
+  | { kind: "energy:scale"; stationLabel: string; multiplier: number }
+  // VROL-1041 — set the named station's parallel capacity. The
+  // canonical TOC move when a single-server bottleneck is running
+  // hot: add a second server (or third). Engine clamps capacity ∈
+  // [1, 10], so the apply handler caps at 10.
+  | { kind: "capacity:set"; stationLabel: string; capacity: number };
 
 export interface ActionCard {
   readonly title: string;
@@ -109,6 +114,25 @@ export function deriveActionCard(
           tone: "warn",
         };
       }
+    }
+  }
+
+  // VROL-1041 — capacity bump for a saturated single-server bottleneck.
+  // When the bottleneck is running > 80 % of the window AND has
+  // capacity = 1, the cheapest first-look move is to add a second
+  // server (cap 2). Ranks above subordination because it doesn't
+  // need a nominal-speed-ratio measurement to fire — running-pct is
+  // enough.
+  if (top && top.runningPct > 0.8 && Array.isArray(result.perStationCapacity)) {
+    const idx = labels.findIndex((l) => l === top.label);
+    const cap = idx >= 0 ? (result.perStationCapacity[idx] ?? 1) : 1;
+    if (cap === 1) {
+      return {
+        title: `Add a second ${topLabel}`,
+        body: `${topLabel} is the bottleneck and ran ${Math.round(top.runningPct * 100)} % of the window at capacity 1 — a single server saturated. Adding a parallel cycle (cap 2) roughly doubles the binding constraint's throughput; if you can't physically duplicate, fall back to cycle:halve.`,
+        tone: "primary",
+        apply: { kind: "capacity:set", stationLabel: topLabel, capacity: 2 },
+      };
     }
   }
 

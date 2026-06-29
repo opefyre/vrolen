@@ -2795,6 +2795,19 @@ function EditorCanvas() {
           );
           setApplyAndRunTick((x) => x + 1);
           break;
+        case "capacity:set":
+          // VROL-1041 — set this station's parallel capacity. Engine
+          // accepts integers in [1, 10]; clamp here so a typo can't
+          // make it throw.
+          patchStation(payload.stationLabel, (data) => ({
+            ...data,
+            capacity: Math.min(10, Math.max(1, Math.floor(payload.capacity))),
+          }));
+          toast.success(
+            `Set ${payload.stationLabel} capacity to ${String(payload.capacity)}. Re-running…`,
+          );
+          setApplyAndRunTick((x) => x + 1);
+          break;
       }
     },
     [setNodes],

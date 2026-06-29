@@ -242,6 +242,47 @@ describe("deriveActionCard (VROL-948 / VROL-959)", () => {
     expect(card.title.toLowerCase()).not.toContain("energy hotspot");
   });
 
+  it("VROL-1041 — saturated cap=1 bottleneck fires the capacity:set rule", () => {
+    const r = baseResult({
+      bottlenecks: [
+        {
+          stationId: "s1" as ChainResult["bottlenecks"][number]["stationId"],
+          label: "Filler",
+          runningPct: 0.95,
+          bindingScore: 0.95,
+          primaryReason: "running",
+          breakdown: [{ state: "Running", pct: 0.95 }],
+        },
+      ],
+      perStationCapacity: [1, 1, 1],
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.tone).toBe("primary");
+    expect(card.apply?.kind).toBe("capacity:set");
+    if (card.apply?.kind === "capacity:set") {
+      expect(card.apply.stationLabel).toBe("Filler");
+      expect(card.apply.capacity).toBe(2);
+    }
+  });
+
+  it("VROL-1041 — cap=2 bottleneck does NOT fire the capacity rule", () => {
+    const r = baseResult({
+      bottlenecks: [
+        {
+          stationId: "s1" as ChainResult["bottlenecks"][number]["stationId"],
+          label: "Filler",
+          runningPct: 0.95,
+          bindingScore: 0.95,
+          primaryReason: "running",
+          breakdown: [{ state: "Running", pct: 0.95 }],
+        },
+      ],
+      perStationCapacity: [2, 1, 1],
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.apply?.kind ?? "").not.toBe("capacity:set");
+  });
+
   it("VROL-1010 — without opts, partial-batch rule never fires", () => {
     const r = baseResult({
       bottlenecks: [
