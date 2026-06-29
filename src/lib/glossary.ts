@@ -129,6 +129,16 @@ export const GLOSSARY: Readonly<Record<string, GlossaryEntry>> = {
     title: "Multi-plate batch (capacity × batchSize)",
     body: "A batch-fire station with capacity > 1 runs N batches in parallel — e.g. capacity=3 + batchSize=10 = three 10-part plates printing concurrently. Throughput scales linearly with capacity until the upstream feed catches up to N × batchSize parts/cycle. Used to model parallel 3D-printer arrays, multi-cavity autoclave racks, or two-deck ovens.",
   },
+  // VROL-1046 — TOC vocabulary surfaced by the capacity arc + Pareto
+  // optimization (Sprints 153-161).
+  "station-capacity": {
+    title: "Station capacity (parallel servers)",
+    body: "Number of parts a station can process simultaneously. Capacity 1 = a single server (a part in cycle blocks the next from starting); capacity 2 = two parallel servers (two parts in cycle at once). When a station is the bottleneck AND saturated at capacity 1, doubling capacity roughly doubles its throughput — the canonical TOC 'add a second server' move. Engine accepts integers 1-10; the sensitivity tornado shows the swing of ±1 capacity for every station that declared one.",
+  },
+  "pareto-frontier": {
+    title: "Pareto frontier (multi-objective optimization)",
+    body: "When optimizing two objectives at once (e.g. throughput vs energy/part), the Pareto frontier is the set of candidates where you can't improve one objective without making the other worse. Dominated candidates are strictly beaten by some frontier point on both axes. Vrolen's optimization scatter highlights frontier points in the primary colour; dominated cells are muted — pick the frontier candidate whose tradeoff matches your priority.",
+  },
 };
 
 export function lookupGlossary(key: string): GlossaryEntry | undefined {

@@ -54,4 +54,11 @@ describe("glossary registry", () => {
     expect(lookupGlossary("multi-plate")?.title).toMatch(/Multi-plate/i);
     expect(lookupGlossary("multi-plate")?.body).toMatch(/capacity/i);
   });
+
+  it("VROL-1046 — capacity + Pareto terms are registered", () => {
+    expect(lookupGlossary("station-capacity")?.title).toMatch(/Station capacity/);
+    expect(lookupGlossary("station-capacity")?.body).toMatch(/parallel/i);
+    expect(lookupGlossary("pareto-frontier")?.title).toMatch(/Pareto/);
+    expect(lookupGlossary("pareto-frontier")?.body).toMatch(/dominated/i);
+  });
 });
