@@ -29,6 +29,14 @@ export interface CoachTipDeps {
    * run-history strip becomes useful.
    */
   readonly activeScenarioName?: string | null;
+  /**
+   * VROL-1050 — top constraint row from the most recent sensitivity
+   * sweep, when one ran. Lets the coach surface "capacity is the
+   * lever" when stationCapacity dominates the constraint axis.
+   */
+  readonly topConstraintKind?: string;
+  readonly topConstraintSwingPct?: number;
+  readonly topConstraintLabel?: string;
 }
 
 export interface CoachTipCallbacks {
@@ -89,6 +97,19 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
       title: "Per-SKU routing fired",
       body: "Some parts followed the perSkuRouting overrides you configured. Check the SKU-routed counter in OEE breakdown or the drilldown Constraints tab to confirm the split looks right.",
       whenVisible: () => hasRun && (deps.totalSkuRouted ?? 0) > 0,
+    },
+    // VROL-1050 — sensitivity revealed capacity as the dominant
+    // constraint lever. Fires only after a run when the most recent
+    // sensitivity sweep's top constraint row is stationCapacity with
+    // > 20 % swing.
+    {
+      id: "capacity-high-leverage",
+      title: "Capacity is the lever",
+      body: `Sensitivity sweep shows ${deps.topConstraintLabel ?? "station capacity"} swings throughput by ${(deps.topConstraintSwingPct ?? 0).toFixed(0)} %. Adding a parallel server on that station is your highest-leverage move — try the capacity:set apply on the action card or bump it directly in the inspector.`,
+      whenVisible: () =>
+        hasRun &&
+        deps.topConstraintKind === "stationCapacity" &&
+        (deps.topConstraintSwingPct ?? 0) > 20,
     },
     // VROL-1030 — fires after a run when nothing's been saved yet.
     // Save unlocks the run-history strip + the run-history → compare

@@ -63,4 +63,38 @@ describe("buildCoachTips visibility", () => {
     tip?.action?.onClick();
     expect(cb).toHaveBeenCalledTimes(1);
   });
+
+  it("VROL-1050 — capacity-high-leverage fires when stationCapacity row has > 20% swing", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      topConstraintKind: "stationCapacity",
+      topConstraintSwingPct: 95,
+      topConstraintLabel: "Mid capacity (1 ↔ 2)",
+    });
+    expect(ids).toContain("capacity-high-leverage");
+  });
+
+  it("VROL-1050 — capacity-high-leverage hidden when swing is below threshold", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      topConstraintKind: "stationCapacity",
+      topConstraintSwingPct: 15,
+    });
+    expect(ids).not.toContain("capacity-high-leverage");
+  });
+
+  it("VROL-1050 — capacity-high-leverage hidden when top constraint is a different kind", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      topConstraintKind: "bomQty",
+      topConstraintSwingPct: 50,
+    });
+    expect(ids).not.toContain("capacity-high-leverage");
+  });
 });

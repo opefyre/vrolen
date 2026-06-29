@@ -5046,6 +5046,24 @@ function EditorCanvas() {
                 // the "save as scenario" tip to unlock the run-history
                 // strip.
                 activeScenarioName,
+                // VROL-1050 — pass the top sensitivity constraint row
+                // when one was emitted; coach uses it to surface
+                // "capacity is the lever" when stationCapacity
+                // dominates.
+                ...(sensitivitySummary && sensitivitySummary.constraintRows.length > 0
+                  ? (() => {
+                      const top = [...sensitivitySummary.constraintRows].sort(
+                        (a, b) => b.swingPerHour - a.swingPerHour,
+                      )[0];
+                      return top
+                        ? {
+                            topConstraintKind: top.kind,
+                            topConstraintSwingPct: top.swingPct,
+                            topConstraintLabel: top.label,
+                          }
+                        : {};
+                    })()
+                  : {}),
               },
               {
                 runNow: handleRun,
