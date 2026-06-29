@@ -151,6 +151,31 @@ function heatmapCellToMarkdown(
     `| Time in system | ${ms(candidate.meanTimeInSystemMs)} | ${tisDelta === null ? "—" : `${tisDelta.toFixed(1)}%`} |`,
   );
   lines.push(`| Scrap rate | ${pct(candidate.meanScrapRate)} | — |`);
+  // VROL-1039 — energy + intensity rows. Rendered only when the
+  // scenario actually declared sustainability inputs (meanTotalEnergyJ
+  // > 0); otherwise the rows stay hidden to keep the table compact
+  // for non-sustainability runs.
+  if (candidate.meanTotalEnergyJ > 0) {
+    const e = candidate.meanTotalEnergyJ;
+    const energyStr = e >= 1_000_000 ? `${(e / 1_000_000).toFixed(2)} MJ` : `${fmt(e / 1_000)} kJ`;
+    const eDelta =
+      baseline && baseline.meanTotalEnergyJ > 0
+        ? ((candidate.meanTotalEnergyJ - baseline.meanTotalEnergyJ) / baseline.meanTotalEnergyJ) *
+          100
+        : null;
+    lines.push(
+      `| Energy total | ${energyStr} | ${eDelta === null ? "—" : `${eDelta.toFixed(1)}%`} |`,
+    );
+    const intensityDelta =
+      baseline && baseline.meanEnergyIntensityJPerPart > 0
+        ? ((candidate.meanEnergyIntensityJPerPart - baseline.meanEnergyIntensityJPerPart) /
+            baseline.meanEnergyIntensityJPerPart) *
+          100
+        : null;
+    lines.push(
+      `| Energy intensity | ${fmt(candidate.meanEnergyIntensityJPerPart)} J/part | ${intensityDelta === null ? "—" : `${intensityDelta.toFixed(1)}%`} |`,
+    );
+  }
   lines.push("");
   lines.push(
     `Means averaged across ${String(candidate.replications)} replications; deltas vs current canvas (WIP ${String(summary.currentCapacity)} @1.00×).`,
@@ -713,6 +738,42 @@ function HeatmapCellDrilldownBody({
           delta={null}
           positiveIsGood={false}
         />
+        {/* VROL-1039 — sustainability tiles. Only rendered when this
+            candidate actually carries energy data, so the grid stays
+            compact for non-sustainability scenarios. */}
+        {candidate.meanTotalEnergyJ > 0 ? (
+          <>
+            <StatTile
+              label="Energy total"
+              value={
+                candidate.meanTotalEnergyJ >= 1_000_000
+                  ? `${(candidate.meanTotalEnergyJ / 1_000_000).toFixed(2)} MJ`
+                  : `${fmt(candidate.meanTotalEnergyJ / 1_000)} kJ`
+              }
+              delta={
+                baseline && baseline.meanTotalEnergyJ > 0
+                  ? ((candidate.meanTotalEnergyJ - baseline.meanTotalEnergyJ) /
+                      baseline.meanTotalEnergyJ) *
+                    100
+                  : null
+              }
+              positiveIsGood={false}
+            />
+            <StatTile
+              label="Energy / part"
+              value={`${fmt(candidate.meanEnergyIntensityJPerPart)} J`}
+              delta={
+                baseline && baseline.meanEnergyIntensityJPerPart > 0
+                  ? ((candidate.meanEnergyIntensityJPerPart -
+                      baseline.meanEnergyIntensityJPerPart) /
+                      baseline.meanEnergyIntensityJPerPart) *
+                    100
+                  : null
+              }
+              positiveIsGood={false}
+            />
+          </>
+        ) : null}
       </div>
       <div className="text-muted-foreground text-[10px]">
         Means averaged across {candidate.replications} replications · deltas vs current canvas
