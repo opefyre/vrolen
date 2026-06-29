@@ -29,7 +29,12 @@ export interface SensitivityRow {
  * Same swing/baseline math as SensitivityRow; rendered alongside.
  */
 export interface SensitivityConstraintRow {
-  readonly kind: "bomQty" | "toolPoolCap";
+  /**
+   * VROL-1040 — adds "stationCapacity" alongside the original BOM /
+   * tool-pool branches so the tornado covers all three primary TOC
+   * levers (cycle, capacity, contention).
+   */
+  readonly kind: "bomQty" | "toolPoolCap" | "stationCapacity";
   readonly label: string;
   readonly lowPerHour: number;
   readonly highPerHour: number;
@@ -269,6 +274,54 @@ export function runSensitivitySweep(opts: RunOptsLike): SensitivitySummary {
         swingPct: baselinePerHour > 0 ? (swing / baselinePerHour) * 100 : 0,
       });
     }
+  }
+
+  // VROL-1040 — station parallel-capacity sweep. For each topology
+  // node with capacity ≥ 1, vary cap by ±1 (integer values; min
+  // floor at 1). Skips nodes without a declared capacity field — the
+  // engine's default of 1 isn't worth testing both sides of (low
+  // collapses to 1 vs 1).
+  if (baseOpts.topology) {
+    const topology = baseOpts.topology;
+    topology.nodes.forEach((node, nIdx) => {
+      const cap = typeof node.capacity === "number" && node.capacity >= 1 ? node.capacity : 0;
+      if (cap < 1) return;
+      const lowCap = Math.max(1, cap - 1);
+      const highCap = cap + 1;
+      // Skip when low + high collapse onto the same value (capacity=1
+      // and we'd be comparing 1 vs 1 against 1 vs 2).
+      if (lowCap === highCap) return;
+      const patch = (newCap: number): typeof topology => ({
+        ...topology,
+        nodes: topology.nodes.map((n, i) => (i === nIdx ? { ...n, capacity: newCap } : n)),
+      });
+      const lowRun = runChain({
+        ...baseOpts,
+        topology: patch(lowCap),
+        horizonMs: opts.horizonMs,
+        warmupMs: opts.warmupMs,
+        prng: new SeededPrng(opts.seed),
+      });
+      const highRun = runChain({
+        ...baseOpts,
+        topology: patch(highCap),
+        horizonMs: opts.horizonMs,
+        warmupMs: opts.warmupMs,
+        prng: new SeededPrng(opts.seed),
+      });
+      const lp = lowRun.throughputLambda * 3_600_000;
+      const hp = highRun.throughputLambda * 3_600_000;
+      const swing = Math.abs(hp - lp);
+      const stationLabel = node.label ?? `Station ${String(nIdx + 1)}`;
+      constraintRows.push({
+        kind: "stationCapacity",
+        label: `${stationLabel} capacity (${String(lowCap)} ↔ ${String(highCap)})`,
+        lowPerHour: lp,
+        highPerHour: hp,
+        swingPerHour: swing,
+        swingPct: baselinePerHour > 0 ? (swing / baselinePerHour) * 100 : 0,
+      });
+    });
   }
   constraintRows.sort((a, b) => b.swingPerHour - a.swingPerHour);
 
