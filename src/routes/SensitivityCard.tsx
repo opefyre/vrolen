@@ -109,10 +109,13 @@ export function SensitivityBody({
   readonly throughputUnit?: string;
   readonly unitsPerPart?: number;
 }) {
-  if (summary.rows.length === 0) {
+  // VROL-1048 — empty state should consider constraint dims too. If
+  // a scenario has constant-cycle stations but has BOM / tool-pool /
+  // station-capacity rows, the user should still see those.
+  if (summary.rows.length === 0 && summary.constraintRows.length === 0) {
     return (
       <p className="text-muted-foreground text-sm">
-        No varying-cycle-time stations available to sweep.
+        No varying-cycle-time stations or constraint dimensions available to sweep.
       </p>
     );
   }

@@ -146,4 +146,48 @@ describe("SensitivityCard tornado rendering (VROL-793)", () => {
     expect(container.textContent).toContain("Slow down = less");
     expect(container.textContent).toContain("Below noise floor");
   });
+
+  it("VROL-1048 — renders constraint section when rows is empty but constraintRows has data", () => {
+    const summary: SensitivitySummary = {
+      baselinePerHour: 1_000,
+      rows: [],
+      constraintRows: [
+        {
+          kind: "stationCapacity",
+          label: "Mid capacity (1 ↔ 2)",
+          lowPerHour: 1_000,
+          highPerHour: 1_950,
+          swingPerHour: 950,
+          swingPct: 95,
+        },
+      ],
+      lowMultiplier: 0.8,
+      highMultiplier: 1.2,
+      elapsedMs: 42,
+    };
+    const { container } = render(
+      <SensitivityCard summary={summary} running={false} onRun={() => undefined} />,
+    );
+    expect(container.textContent).not.toContain(
+      "No varying-cycle-time stations or constraint dimensions",
+    );
+    expect(container.textContent).toContain("Mid capacity");
+  });
+
+  it("VROL-1048 — empty state fires when BOTH groups are empty", () => {
+    const summary: SensitivitySummary = {
+      baselinePerHour: 1_000,
+      rows: [],
+      constraintRows: [],
+      lowMultiplier: 0.8,
+      highMultiplier: 1.2,
+      elapsedMs: 0,
+    };
+    const { container } = render(
+      <SensitivityCard summary={summary} running={false} onRun={() => undefined} />,
+    );
+    expect(container.textContent).toContain(
+      "No varying-cycle-time stations or constraint dimensions",
+    );
+  });
 });
