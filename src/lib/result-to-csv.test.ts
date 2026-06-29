@@ -105,6 +105,36 @@ describe("sustainabilityTimeseriesToCsv (VROL-1019)", () => {
   });
 });
 
+describe("optimizationToCsv (VROL-1053)", () => {
+  it("emits one row per candidate with throughput + energy columns", async () => {
+    const { optimizationToCsv } = await import("./result-to-csv");
+    const summary = {
+      targetStationLabel: "Filler",
+      candidates: [
+        {
+          bufferCapacity: 2,
+          cycleMultiplier: 1,
+          toolPoolDelta: 0,
+          meanThroughputPerHour: 1_000,
+          meanCompleted: 1_000,
+          meanTimeInSystemMs: 5_000,
+          meanScrapRate: 0,
+          meanLineOee: 0.7,
+          meanAvgWipL: 3,
+          meanGoodPartsPerHour: 1_000,
+          meanTotalEnergyJ: 200_000,
+          meanEnergyIntensityJPerPart: 200,
+          replications: 1,
+        },
+      ],
+    };
+    const csv = optimizationToCsv(summary);
+    expect(csv).toMatch(/target_station,buffer_capacity,cycle_multiplier,/);
+    expect(csv).toMatch(/Filler,2,1\.000,0,1000\.00/);
+    expect(csv).toMatch(/200000\.00,200\.00/);
+  });
+});
+
 describe("sensitivityToCsv (VROL-1045)", () => {
   it("emits cycle + constraint sections", async () => {
     const { sensitivityToCsv } = await import("./result-to-csv");

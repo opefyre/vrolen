@@ -3872,18 +3872,20 @@ function EditorCanvas() {
       `${stem}-all-in-one.csv`,
       // VROL-1045 — include sensitivity tornado when the user has
       // actually run a sweep; otherwise the section is skipped.
+      // VROL-1053 — same shape for the optimization grid.
       allInOneToCsv(
         result,
         runMeta.stationLabels,
         sixLoss,
         intervals,
         sensitivitySummary ?? undefined,
+        optimizationSummary ?? undefined,
       ),
       "text/csv",
     );
     toast.success("Downloaded all-in-one CSV");
     setMoreOpen(false);
-  }, [result, runMeta, sensitivitySummary]);
+  }, [result, runMeta, sensitivitySummary, optimizationSummary]);
 
   // VROL-811 — central editor action registry. All actions (Run, Undo,
   // Save, Duplicate, Auto-layout, Fit view, Open scenarios, …) are defined

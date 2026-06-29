@@ -173,6 +173,56 @@ export function sixLossToCsv(
 }
 
 /**
+ * VROL-1053 — optimization candidates → CSV. One row per cell in the
+ * grid (buffer × cycle × tool-pool delta). Includes throughput, time
+ * in system, OEE, scrap rate, energy total, energy intensity, and
+ * the cost-style ranking objectives. Header-only when no candidates.
+ */
+export function optimizationToCsv(summary: {
+  targetStationLabel: string;
+  candidates: ReadonlyArray<{
+    bufferCapacity: number;
+    cycleMultiplier: number;
+    toolPoolDelta: number;
+    meanThroughputPerHour: number;
+    meanCompleted: number;
+    meanTimeInSystemMs: number;
+    meanScrapRate: number;
+    meanLineOee: number;
+    meanAvgWipL: number;
+    meanGoodPartsPerHour: number;
+    meanTotalEnergyJ: number;
+    meanEnergyIntensityJPerPart: number;
+    replications: number;
+  }>;
+}): string {
+  const lines: string[] = [
+    "target_station,buffer_capacity,cycle_multiplier,tool_pool_delta,mean_throughput_per_hour,mean_completed,mean_time_in_system_ms,mean_scrap_rate,mean_line_oee,mean_avg_wip,mean_good_parts_per_hour,mean_total_energy_j,mean_energy_intensity_j_per_part,replications",
+  ];
+  for (const c of summary.candidates) {
+    lines.push(
+      row([
+        summary.targetStationLabel,
+        c.bufferCapacity,
+        c.cycleMultiplier.toFixed(3),
+        c.toolPoolDelta,
+        c.meanThroughputPerHour.toFixed(2),
+        c.meanCompleted.toFixed(2),
+        c.meanTimeInSystemMs.toFixed(0),
+        c.meanScrapRate.toFixed(4),
+        c.meanLineOee.toFixed(4),
+        c.meanAvgWipL.toFixed(2),
+        c.meanGoodPartsPerHour.toFixed(2),
+        c.meanTotalEnergyJ.toFixed(2),
+        c.meanEnergyIntensityJPerPart.toFixed(2),
+        c.replications,
+      ]),
+    );
+  }
+  return lines.join("\n");
+}
+
+/**
  * VROL-1045 — sensitivity tornado → CSV. One section emits per-station
  * cycle rows (baseline / low / high / swing) and a parallel section
  * emits the constraint-dimension rows (BOM qty, tool-pool capacity,
@@ -271,6 +321,24 @@ export function allInOneToCsv(
       swingPct: number;
     }>;
   },
+  optimizationSummary?: {
+    targetStationLabel: string;
+    candidates: ReadonlyArray<{
+      bufferCapacity: number;
+      cycleMultiplier: number;
+      toolPoolDelta: number;
+      meanThroughputPerHour: number;
+      meanCompleted: number;
+      meanTimeInSystemMs: number;
+      meanScrapRate: number;
+      meanLineOee: number;
+      meanAvgWipL: number;
+      meanGoodPartsPerHour: number;
+      meanTotalEnergyJ: number;
+      meanEnergyIntensityJPerPart: number;
+      replications: number;
+    }>;
+  },
 ): string {
   const parts: string[] = [];
   parts.push("# section: KPI summary");
@@ -305,6 +373,12 @@ export function allInOneToCsv(
     parts.push("");
     parts.push("# section: Sensitivity tornado");
     parts.push(sensitivityToCsv(sensitivitySummary));
+  }
+  // VROL-1053 — optimization grid (when the user ran the search).
+  if (optimizationSummary && optimizationSummary.candidates.length > 0) {
+    parts.push("");
+    parts.push("# section: Optimization grid");
+    parts.push(optimizationToCsv(optimizationSummary));
   }
   return parts.join("\n");
 }
