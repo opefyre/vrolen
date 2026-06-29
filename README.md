@@ -29,11 +29,12 @@ Browser-based discrete-event simulator for industrial production lines. Sketch y
 
 ### Insight surfaces
 
-- **Action card**: every run ranks the single highest-leverage change — reliability work, speed-up, BOM imbalance, tool-pool contention, downstream blocking, batch-fire starvation, energy hotspot, dominant six-loss bucket, slim OEE factor. One-click Apply mutates the scenario and re-runs.
+- **Action card**: every run ranks the single highest-leverage change across 12 rules — sampling bias, reliability work, partial-batch starvation, capacity bump for saturated single-server bottlenecks, subordination / speed-up, BOM imbalance, tool-pool contention, downstream blocking, buffer pressure, energy hotspot, dominant six-loss bucket, slim OEE factor. Each rule emits an Apply payload (cycle:halve, capacity:set, buffer:grow, tool-pool:grow, energy:scale, etc.) so one click mutates the scenario and re-runs.
 - **OEE narration**: plain-language summary above the per-station breakdown — "Performance is the slim factor at Filler (62 %). Filler is binding 91 % of the window."
 - **Constraint history**: horizontal lane chart showing which station was the binding constraint over the run.
-- **Goal mode**: enter a target throughput; binary-search returns the cheapest uniform cycle-scale that meets it.
-- **Sensitivity tornado**: per-station cycle ±20 % + BOM qty + tool-pool capacity dimensions.
+- **Goal mode**: enter a target throughput; binary-search returns the cheapest uniform cycle-scale that meets it. Multi-lever variant searches over (cycle × buffer × tool-pool delta) for the cheapest combo.
+- **Optimization search**: 2D grid sweeps buffer × cycle-multiplier × tool-pool delta; ranks candidates by 6 objectives (throughput, time-in-system, OEE, good-parts/h, WIP, energy / part) with a heatmap + Pareto-frontier scatter that swaps its X axis to match the active objective.
+- **Sensitivity tornado**: 4 dimensions — per-station cycle ±20 %, BOM qty ±50 %, tool-pool capacity ±50 %, and station parallel-capacity ±1.
 - **Replications + CIs**: line-level KPI 95 % CIs + per-station OEE half-widths when N > 1.
 - **A/B compare**: two scenarios side-by-side with per-station Δ highlighted.
 - **Run history**: last 10 runs persisted; click any cell to compare against the current canvas.
@@ -85,7 +86,7 @@ pnpm typecheck    # tsc --noEmit
 pnpm lint         # eslint --max-warnings 0
 ```
 
-Engine + UI subset: 1065 tests covering distribution sampling, scheduler, state machine, cycle execution, bottleneck detection, OEE, Little's Law, multi-product changeover, materials, workers, maintenance, breakdowns, BOM atomic pull, tool-pool queueing, per-SKU dispatch, sampler counters, constraint-history derivation, conveyor / residence-time, batch-fire (single + multi-plate), UoM v2 ratios, sustainability totals + time series, and result-panel components.
+Engine + UI subset: 1086 tests covering distribution sampling, scheduler, state machine, cycle execution, bottleneck detection, OEE, Little's Law, multi-product changeover, materials, workers, maintenance, breakdowns, BOM atomic pull, tool-pool queueing, per-SKU dispatch, sampler counters, constraint-history derivation, conveyor / residence-time, batch-fire (single + multi-plate), UoM v2 ratios, sustainability totals + time series, sensitivity sweep with capacity dim, optimization search with energy cost, and result-panel components.
 
 ## Working agreements
 
