@@ -203,8 +203,9 @@ export function OptimizationCard({
       }
       description={
         <>
-          2-D grid-search over buffer capacity × cycle-time on the bottleneck. Averaged across
-          seeds; the highest-scoring feasible cell wins.
+          Grid-search over buffer capacity × cycle-time on the bottleneck × tool-pool capacity
+          delta. Averaged across seeds; pick from 6 objectives (throughput, time-in-system, OEE,
+          good parts/h, WIP, energy / part).
         </>
       }
       status={status}
@@ -215,8 +216,10 @@ export function OptimizationCard({
     >
       {!summary ? (
         <p className="text-muted-foreground text-sm">
-          Click <strong>Run search</strong> to fire a 2-D sweep (buffer levels × cycle multipliers
-          on the bottleneck) and surface the best combo for this line.
+          Click <strong>Run search</strong> to fire a 3-D sweep (buffer levels × cycle multipliers
+          on the bottleneck × tool-pool capacity delta) and surface the best combo for this line.
+          Switch the objective dropdown to optimise for time-in-system, OEE, good parts/h, WIP, or
+          energy / part.
         </p>
       ) : (
         <OptimizationBody summary={summary} {...(onApply ? { onApply } : {})} />
