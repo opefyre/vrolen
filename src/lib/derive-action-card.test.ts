@@ -265,7 +265,7 @@ describe("deriveActionCard (VROL-948 / VROL-959)", () => {
     }
   });
 
-  it("VROL-1041 — cap=2 bottleneck does NOT fire the capacity rule", () => {
+  it("VROL-1054 — cap=2 saturated bottleneck fires capacity:set with target 3", () => {
     const r = baseResult({
       bottlenecks: [
         {
@@ -278,6 +278,29 @@ describe("deriveActionCard (VROL-948 / VROL-959)", () => {
         },
       ],
       perStationCapacity: [2, 1, 1],
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.tone).toBe("primary");
+    expect(card.apply?.kind).toBe("capacity:set");
+    if (card.apply?.kind === "capacity:set") {
+      expect(card.apply.capacity).toBe(3);
+    }
+    expect(card.title).toContain("3rd Filler");
+  });
+
+  it("VROL-1054 — cap=10 (engine max) does NOT fire the capacity rule", () => {
+    const r = baseResult({
+      bottlenecks: [
+        {
+          stationId: "s1" as ChainResult["bottlenecks"][number]["stationId"],
+          label: "Filler",
+          runningPct: 0.95,
+          bindingScore: 0.95,
+          primaryReason: "running",
+          breakdown: [{ state: "Running", pct: 0.95 }],
+        },
+      ],
+      perStationCapacity: [10, 1, 1],
     });
     const card = deriveActionCard(r)!;
     expect(card.apply?.kind ?? "").not.toBe("capacity:set");

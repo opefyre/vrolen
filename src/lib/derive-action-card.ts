@@ -20,6 +20,25 @@
 import type { ChainResult } from "@/engine";
 import { computeSixLoss, totalLossMs } from "./six-loss";
 
+/**
+ * VROL-1054 — ordinal helper for capacity-bump titles ("Add a 3rd
+ * Filler"). Engine caps capacity at 10 so we only need 1-10.
+ */
+function ordinal(n: number): string {
+  const v = n % 100;
+  if (v >= 11 && v <= 13) return `${String(n)}th`;
+  switch (n % 10) {
+    case 1:
+      return `${String(n)}st`;
+    case 2:
+      return `${String(n)}nd`;
+    case 3:
+      return `${String(n)}rd`;
+    default:
+      return `${String(n)}th`;
+  }
+}
+
 export type ActionApplyPayload =
   | { kind: "cycle:halve"; stationLabel: string }
   | { kind: "buffer:grow"; edgeKey: string }
@@ -121,21 +140,23 @@ export function deriveActionCard(
     }
   }
 
-  // VROL-1041 — capacity bump for a saturated single-server bottleneck.
-  // When the bottleneck is running > 80 % of the window AND has
-  // capacity = 1, the cheapest first-look move is to add a second
-  // server (cap 2). Ranks above subordination because it doesn't
-  // need a nominal-speed-ratio measurement to fire — running-pct is
-  // enough.
+  // VROL-1041 — capacity bump for a saturated bottleneck.
+  // VROL-1054 — generalised to any cap ∈ [1, 9]: when the bottleneck
+  // is running > 80 % AND the engine accepts another server, suggest
+  // cap+1. Ranks above subordination because it doesn't need a
+  // nominal-speed-ratio measurement to fire — running-pct is enough.
   if (top && top.runningPct > 0.8 && Array.isArray(result.perStationCapacity)) {
     const idx = labels.findIndex((l) => l === top.label);
     const cap = idx >= 0 ? (result.perStationCapacity[idx] ?? 1) : 1;
-    if (cap === 1) {
+    if (cap >= 1 && cap < 10) {
+      const nextCap = cap + 1;
+      const titleVerb =
+        cap === 1 ? `Add a second ${topLabel}` : `Add a ${ordinal(nextCap)} ${topLabel}`;
       return {
-        title: `Add a second ${topLabel}`,
-        body: `${topLabel} is the bottleneck and ran ${Math.round(top.runningPct * 100)} % of the window at capacity 1 — a single server saturated. Adding a parallel cycle (cap 2) roughly doubles the binding constraint's throughput; if you can't physically duplicate, fall back to cycle:halve.`,
+        title: titleVerb,
+        body: `${topLabel} is the bottleneck and ran ${Math.round(top.runningPct * 100)} % of the window at capacity ${String(cap)} — every parallel server is saturated. Raising to capacity ${String(nextCap)} adds a server and lifts the binding constraint by roughly ${String(Math.round((1 / cap) * 100))} %; if you can't physically duplicate, fall back to cycle:halve.`,
         tone: "primary",
-        apply: { kind: "capacity:set", stationLabel: topLabel, capacity: 2 },
+        apply: { kind: "capacity:set", stationLabel: topLabel, capacity: nextCap },
       };
     }
   }
