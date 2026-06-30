@@ -44,6 +44,17 @@ exports[`preset regression (VROL-472) > preset "bottling-line" KPI summary match
 }
 `;
 
+exports[`preset regression (VROL-472) > preset "changeover-heavy" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 5840,
+  "bottleneckLabel": "Filler",
+  "bottleneckReason": "starvation",
+  "completed": 256,
+  "lineOee": 0.111304,
+  "throughputPartsPerHour": 8014,
+}
+`;
+
 exports[`preset regression (VROL-472) > preset "conveyor-line" KPI summary matches snapshot 1`] = `
 {
   "avgTimeInSystemMs": 13086,
@@ -52,6 +63,17 @@ exports[`preset regression (VROL-472) > preset "conveyor-line" KPI summary match
   "completed": 190,
   "lineOee": 0.991304,
   "throughputPartsPerHour": 5948,
+}
+`;
+
+exports[`preset regression (VROL-472) > preset "conveyor-tis-dominated" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 52857,
+  "bottleneckLabel": "Pick",
+  "bottleneckReason": "blocking",
+  "completed": 30,
+  "lineOee": 0.026087,
+  "throughputPartsPerHour": 939,
 }
 `;
 
@@ -74,6 +96,17 @@ exports[`preset regression (VROL-472) > preset "electronics-smt" KPI summary mat
   "completed": 529,
   "lineOee": 1,
   "throughputPartsPerHour": 22405,
+}
+`;
+
+exports[`preset regression (VROL-472) > preset "energy-budget-squeeze" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 2490,
+  "bottleneckLabel": "Reactor",
+  "bottleneckReason": "starvation",
+  "completed": 639,
+  "lineOee": 1,
+  "throughputPartsPerHour": 20003,
 }
 `;
 
@@ -118,6 +151,17 @@ exports[`preset regression (VROL-472) > preset "parallel-fillers" KPI summary ma
   "completed": 550,
   "lineOee": 1,
   "throughputPartsPerHour": 36000,
+}
+`;
+
+exports[`preset regression (VROL-472) > preset "per-edge-buffer-demo" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 10022,
+  "bottleneckLabel": "Downstream",
+  "bottleneckReason": "starvation",
+  "completed": 275,
+  "lineOee": 1,
+  "throughputPartsPerHour": 18000,
 }
 `;
 
@@ -176,6 +220,17 @@ exports[`preset regression (VROL-472) > preset "source-rate" KPI summary matches
 }
 `;
 
+exports[`preset regression (VROL-472) > preset "stochastic-needs-reps" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 969,
+  "bottleneckLabel": "Source",
+  "bottleneckReason": "idle",
+  "completed": 544,
+  "lineOee": 0.989091,
+  "throughputPartsPerHour": 35607,
+}
+`;
+
 exports[`preset regression (VROL-472) > preset "sustainable-line" KPI summary matches snapshot 1`] = `
 {
   "avgTimeInSystemMs": 17866,
@@ -195,6 +250,28 @@ exports[`preset regression (VROL-472) > preset "two-line-packing" KPI summary ma
   "completed": 250,
   "lineOee": 1,
   "throughputPartsPerHour": 16364,
+}
+`;
+
+exports[`preset regression (VROL-472) > preset "upstream-limited" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 750,
+  "bottleneckLabel": "Slow source",
+  "bottleneckReason": "idle",
+  "completed": 183,
+  "lineOee": 0.998182,
+  "throughputPartsPerHour": 11978,
+}
+`;
+
+exports[`preset regression (VROL-472) > preset "wip-pileup" KPI summary matches snapshot 1`] = `
+{
+  "avgTimeInSystemMs": 32811,
+  "bottleneckLabel": "Slow downstream",
+  "bottleneckReason": "starvation",
+  "completed": 575,
+  "lineOee": 1,
+  "throughputPartsPerHour": 18000,
 }
 `;
 

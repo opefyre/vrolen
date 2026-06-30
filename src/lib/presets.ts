@@ -857,6 +857,222 @@ const SUSTAINABLE_LINE: Preset = {
   settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 120_000 },
 };
 
+// ─── 21. Per-edge buffer cap demo (VROL-1095) ──────────────────────────────
+// Demonstrates the per-edge bufferCapacity field added in S178. Mid-edge
+// is capped at 1 part; even though the global buffer is generous,
+// upstream BlockedOut accrues because the one queue slot fills before
+// downstream pulls.
+const PER_EDGE_BUFFER_DEMO: Preset = {
+  id: "per-edge-buffer-demo",
+  title: "Per-edge buffer cap",
+  blurb:
+    "Three-station line with a 1-slot buffer ONLY between Mid and Downstream. Upstream blocks out while the rest of the chain has room. Open the run and watch Mid's BlockedOut grow.",
+  highlight: "Per-edge bufferCapacity override (S178)",
+  tags: ["starter"],
+  graph: {
+    nodes: [
+      station("n1", "Upstream", "input", 60, 180, { cycleDistribution: constant(80) }),
+      station("n2", "Mid", "machine", 280, 180, { cycleDistribution: constant(80) }),
+      station("n3", "Downstream", "machine", 500, 180, { cycleDistribution: constant(200) }),
+      station("n4", "Sink", "output", 720, 180, { cycleDistribution: constant(80) }),
+    ],
+    edges: [
+      edge("e1-2", "n1", "n2"),
+      // Tight per-edge cap on Mid → Downstream. Engine validates int ≥ 1.
+      { id: "e2-3", source: "n2", target: "n3", data: { bufferCapacity: 1 } },
+      edge("e3-4", "n3", "n4"),
+    ],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, interStationBufferCapacity: 50, samplerIntervalMs: 1_000 },
+};
+
+// ─── 22. Energy budget squeeze (VROL-1096) ──────────────────────────────────
+// Sustainability-input line where the bottleneck is the energy hotspot.
+// Loads with sustainability inputs declared on every station so the
+// optimization card has something to constrain — user then sets a tight
+// maxEnergyIntensityJPerPart on the opt card to make the budget-infeasible
+// coach tip fire (S172/173/174).
+const ENERGY_BUDGET_SQUEEZE: Preset = {
+  id: "energy-budget-squeeze",
+  title: "Energy budget squeeze",
+  blurb:
+    "Sustainability-input line: the slow Reactor is also the energy hotspot. Try the optimization card with a tight energy/part budget to see the budget-infeasible coach tip fire.",
+  highlight: "Sustainability + tight energy ceiling (S172/173/174)",
+  tags: ["sustainability"],
+  graph: {
+    nodes: [
+      station("n1", "Feed", "input", 60, 180, {
+        cycleDistribution: constant(40),
+        energyPerCycleJ: 50,
+      }),
+      station("n2", "Reactor", "machine", 260, 180, {
+        cycleDistribution: constant(180),
+        energyPerCycleJ: 800, // the hotspot
+      }),
+      station("n3", "Filter", "machine", 460, 180, {
+        cycleDistribution: constant(80),
+        energyPerCycleJ: 120,
+      }),
+      station("n4", "Filler", "machine", 660, 180, {
+        cycleDistribution: constant(80),
+        energyPerCycleJ: 70,
+      }),
+      station("n5", "Output", "output", 860, 180, {
+        cycleDistribution: constant(30),
+        energyPerCycleJ: 20,
+      }),
+    ],
+    edges: [
+      edge("e1-2", "n1", "n2"),
+      edge("e2-3", "n2", "n3"),
+      edge("e3-4", "n3", "n4"),
+      edge("e4-5", "n4", "n5"),
+    ],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 120_000 },
+};
+
+// ─── 23. WIP pile-up (VROL-1097) ────────────────────────────────────────────
+// Fast source feeding a slow downstream with a deliberately generous
+// global buffer (200 slots). Parts pile up in the buffer — average WIP
+// will exceed 3 × stationCount. Fires the high-wip-warning coach tip
+// (S180/S181).
+const WIP_PILEUP: Preset = {
+  id: "wip-pileup",
+  title: "WIP pile-up",
+  blurb:
+    "Fast source (50ms) feeding slow downstream (200ms) with a roomy 200-slot buffer. Parts queue up — average WIP swells. Coach tip 'high-wip-warning' fires after the run.",
+  highlight: "Demonstrates buffer swelling without throttling",
+  tags: ["starter"],
+  graph: {
+    nodes: [
+      station("n1", "Fast feeder", "input", 60, 180, { cycleDistribution: constant(50) }),
+      station("n2", "Slow downstream", "machine", 280, 180, { cycleDistribution: constant(200) }),
+      station("n3", "Pack", "output", 500, 180, { cycleDistribution: constant(80) }),
+    ],
+    edges: [edge("e1-2", "n1", "n2"), edge("e2-3", "n2", "n3")],
+  },
+  settings: {
+    ...DEFAULT_RUN_SETTINGS,
+    interStationBufferCapacity: 200,
+    samplerIntervalMs: 1_000,
+    horizonMs: 120_000,
+  },
+};
+
+// ─── 24. Upstream-limited (VROL-1098) ───────────────────────────────────────
+// Very slow source (300ms) with fast downstream (50ms). Downstream is
+// idle most of the time because there's no upstream supply. Different
+// fix from a bottleneck-limited line — speed up the SOURCE. Fires the
+// idle-source coach tip (S180/S181).
+const UPSTREAM_LIMITED: Preset = {
+  id: "upstream-limited",
+  title: "Upstream-limited line",
+  blurb:
+    "Slow source (300ms) with fast downstream (50ms). Downstream is idle most of the run waiting for supply. Coach tip 'idle-source' fires — speed up the source, not the mid-chain stations.",
+  highlight: "Upstream-limited vs bottleneck-limited diagnosis",
+  tags: ["source-rate"],
+  graph: {
+    nodes: [
+      station("n1", "Slow source", "input", 60, 180, { cycleDistribution: constant(300) }),
+      station("n2", "Fast A", "machine", 280, 180, { cycleDistribution: constant(50) }),
+      station("n3", "Fast B", "machine", 500, 180, { cycleDistribution: constant(50) }),
+      station("n4", "Pack", "output", 720, 180, { cycleDistribution: constant(50) }),
+    ],
+    edges: [edge("e1-2", "n1", "n2"), edge("e2-3", "n2", "n3"), edge("e3-4", "n3", "n4")],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000 },
+};
+
+// ─── 25. Stochastic — needs replications (VROL-1099) ────────────────────────
+// Three stations with uniform(50, 150) cycle distributions and reps=1.
+// Single-rep run gives ONE realisation; the coach tip + wizard advisor
+// both nudge the user to bump replications (S180/S182). Educational
+// preset for replication-aware analysis.
+const STOCHASTIC_NEEDS_REPS: Preset = {
+  id: "stochastic-needs-reps",
+  title: "Stochastic — needs replications",
+  blurb:
+    "Three stations with uniform(50–150 ms) cycle distributions. With replications=1 the result is one noisy realisation. Bump replications to 3+ and watch the 95 % CI tighten.",
+  highlight: "Why replications matter for stochastic input",
+  tags: ["starter"],
+  graph: {
+    nodes: [
+      station("n1", "Source", "input", 60, 180, {
+        cycleDistribution: { kind: "uniform", min: 50, max: 150 } as Distribution,
+      }),
+      station("n2", "Mid", "machine", 280, 180, {
+        cycleDistribution: { kind: "uniform", min: 50, max: 150 } as Distribution,
+      }),
+      station("n3", "Sink", "output", 500, 180, {
+        cycleDistribution: { kind: "uniform", min: 50, max: 150 } as Distribution,
+      }),
+    ],
+    edges: [edge("e1-2", "n1", "n2"), edge("e2-3", "n2", "n3")],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, replications: 1 },
+};
+
+// ─── 26. Changeover-heavy multi-product (VROL-1100) ────────────────────────
+// Short cycles (50ms) but very long setupDistribution (400ms). When the
+// line switches products, changeover dominates throughput. Fires the
+// wizard advisor setup-dominates-cycle (S182).
+const CHANGEOVER_HEAVY: Preset = {
+  id: "changeover-heavy",
+  title: "Changeover-heavy mixed-model",
+  blurb:
+    "Fast 50ms cycles paired with 400ms changeovers on a 2-product line. Throughput is governed by how often you switch products, not how fast each cycle runs.",
+  highlight: "Setup dominates cycle (S182 advisor)",
+  tags: ["multi-product"],
+  graph: {
+    nodes: [
+      station("n1", "Feed", "input", 60, 180, {
+        cycleDistribution: constant(50),
+        products: {
+          list: [
+            { id: "A", name: "Product A", weight: 50 },
+            { id: "B", name: "Product B", weight: 50 },
+          ],
+        },
+      }),
+      station("n2", "Filler", "machine", 280, 180, {
+        cycleDistribution: constant(50),
+        setupDistribution: constant(400),
+      }),
+      station("n3", "Pack", "output", 500, 180, { cycleDistribution: constant(50) }),
+    ],
+    edges: [edge("e1-2", "n1", "n2"), edge("e2-3", "n2", "n3")],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 120_000 },
+};
+
+// ─── 27. Conveyor TIS dominated (VROL-1101) ────────────────────────────────
+// Two stations with cycle 100ms each, separated by a 30-second residence-
+// time conveyor. TIS dominated by transit not by work — Little's Law in
+// action.
+const CONVEYOR_TIS_DOMINATED: Preset = {
+  id: "conveyor-tis-dominated",
+  title: "Conveyor TIS dominated",
+  blurb:
+    "Two stations with 100ms cycles separated by a 30-second conveyor. Time-in-system is dominated by transit, not work. Little's Law in action.",
+  highlight: "Residence-time edge swamps work time",
+  tags: ["conveyor"],
+  graph: {
+    nodes: [
+      station("n1", "Pick", "input", 60, 180, { cycleDistribution: constant(100) }),
+      station("n2", "Conveyor", "machine", 280, 180, {
+        stationType: "transport",
+        cycleDistribution: constant(0),
+        lengthM: 30,
+        speedMps: 1,
+      }),
+      station("n3", "Pack", "output", 500, 180, { cycleDistribution: constant(100) }),
+    ],
+    edges: [edge("e1-2", "n1", "n2"), edge("e2-3", "n2", "n3")],
+  },
+  settings: { ...DEFAULT_RUN_SETTINGS, samplerIntervalMs: 1_000, horizonMs: 120_000 },
+};
+
 export const PRESETS: readonly Preset[] = [
   BOTTLING_LINE,
   MULTI_PRODUCT_CHANGEOVER,
@@ -877,6 +1093,14 @@ export const PRESETS: readonly Preset[] = [
   PRINT_BATCH_LINE,
   PRINT_MULTI_LINE,
   SUSTAINABLE_LINE,
+  // VROL-1095 → VROL-1101 — Sprint 184 diagnostic + feature-demo presets.
+  PER_EDGE_BUFFER_DEMO,
+  ENERGY_BUDGET_SQUEEZE,
+  WIP_PILEUP,
+  UPSTREAM_LIMITED,
+  STOCHASTIC_NEEDS_REPS,
+  CHANGEOVER_HEAVY,
+  CONVEYOR_TIS_DOMINATED,
 ];
 
 export function getPreset(id: string): Preset | undefined {

@@ -87,7 +87,7 @@ pnpm typecheck    # tsc --noEmit
 pnpm lint         # eslint --max-warnings 0
 ```
 
-Engine + UI subset: 1086 tests covering distribution sampling, scheduler, state machine, cycle execution, bottleneck detection, OEE, Little's Law, multi-product changeover, materials, workers, maintenance, breakdowns, BOM atomic pull, tool-pool queueing, per-SKU dispatch, sampler counters, constraint-history derivation, conveyor / residence-time, batch-fire (single + multi-plate), UoM v2 ratios, sustainability totals + time series, sensitivity sweep with capacity dim, optimization search with energy cost, and result-panel components.
+Engine + UI subset: 1200+ tests covering distribution sampling, scheduler, state machine, cycle execution, bottleneck detection, OEE, Little's Law, multi-product changeover, materials, workers, maintenance, breakdowns, BOM atomic pull, tool-pool queueing, per-SKU dispatch, sampler counters, constraint-history derivation, conveyor / residence-time, batch-fire (single + multi-plate), UoM v2 ratios, sustainability totals + time series, sensitivity sweep with capacity dim + per-row CIs, optimization search with per-objective CIs, per-edge buffer overrides, and result-panel components. 27 scenario presets (20 base + 7 diagnostic/feature demos) cover starter lines, multi-product, reliability, parallel, branching, sustainability, conveyor, batch, per-edge buffer, WIP pile-up, upstream-limited, stochastic, changeover-heavy, and conveyor-TIS-dominated topologies.
 
 ## Working agreements
 
