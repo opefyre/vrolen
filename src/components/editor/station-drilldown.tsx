@@ -20,6 +20,7 @@ import {
 import type { ChainResult } from "@/engine/chain-harness";
 import { Sparkline } from "@/routes/Sparkline";
 import { CycleHistogram } from "@/components/results/cycle-histogram";
+import { SingleStationSixLoss } from "@/components/results/single-station-six-loss";
 
 interface StationDrilldownProps {
   readonly open: boolean;
@@ -401,6 +402,11 @@ export function StationDrilldown({
                 </p>
               </section>
             ) : null}
+
+            {/* VROL-973 (Sprint 196) — per-station six-loss decomposition.
+                Line-level breakdown lives in the Stations tab; this is
+                the drill-down view for one station. */}
+            <SingleStationSixLoss result={result} stationIdx={stationIdx} />
 
             {/* VROL-975 — sampled cycle-time histogram. Surfaces bimodality
                 and long tails that the median scalar hides. */}
