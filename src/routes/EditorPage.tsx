@@ -5075,6 +5075,66 @@ function EditorCanvas() {
                 // because no candidate respected the energy budget.
                 goalMultiBudgetInfeasible:
                   goalMultiResult?.best != null && goalMultiResult.best.meetsEnergyBudget === false,
+                // VROL-1071 — line-wide average WIP (parts in buffers).
+                // S180 added the high-wip-warning predicate; wiring
+                // the dep here turns it on.
+                lineAverageWipL: result?.averageWipL,
+                // VROL-1072 — line OEE (Availability × Performance × Quality).
+                // Activates low-line-oee-warning.
+                lineOee: result?.lineOee,
+                // VROL-1073 — line-wide scrap fraction. Activates
+                // high-scrap-warning.
+                lineScrapRate: result?.lineScrapRate,
+                // VROL-1074 — warmup as fraction of horizon. Derived
+                // from settings (the run's actual horizonMs /
+                // warmupMs). Activates warmup-too-short.
+                warmupFractionOfHorizon:
+                  settings.horizonMs > 0 ? settings.warmupMs / settings.horizonMs : 0,
+                // VROL-1075 — true when reps=1 AND at least one
+                // station has a non-constant cycle distribution.
+                // Activates stochastic-needs-replications.
+                stochasticSingleRep: (() => {
+                  if (settings.replications > 1) return false;
+                  return nodes.some((n) => {
+                    if (n.type !== "station") return false;
+                    const d = (n.data as { cycleDistribution?: { kind?: string } } | undefined)
+                      ?.cycleDistribution;
+                    return d?.kind !== undefined && d.kind !== "constant";
+                  });
+                })(),
+                // VROL-1076 — peak per-edge buffer fill fraction
+                // across all samples. Cap denominator falls back to
+                // the global interStationBufferCapacity (per-edge
+                // overrides aren't surfaced here yet; the global is
+                // a conservative upper-bound on the denominator).
+                // Activates per-edge-buffer-saturated.
+                maxBufferFillFraction: (() => {
+                  if (!result || result.samples.length === 0) return 0;
+                  const cap = settings.interStationBufferCapacity;
+                  if (cap <= 0) return 0;
+                  let peak = 0;
+                  for (const s of result.samples) {
+                    for (const fill of s.perEdgeBufferFill) {
+                      const frac = fill / cap;
+                      if (frac > peak) peak = frac;
+                    }
+                  }
+                  return peak;
+                })(),
+                // VROL-1077 — source station's Idle-state share of
+                // the measurement window. Last sample carries
+                // cumulative state ms; we divide by total state-ms
+                // to get the fraction. Activates idle-source.
+                sourceIdleFraction: (() => {
+                  if (!result || result.samples.length === 0) return 0;
+                  const last = result.samples[result.samples.length - 1];
+                  const stateMs = last?.perStationStateMs?.[0];
+                  if (!stateMs) return 0;
+                  let total = 0;
+                  for (const v of Object.values(stateMs)) total += v;
+                  if (total <= 0) return 0;
+                  return (stateMs["Idle"] ?? 0) / total;
+                })(),
               },
               {
                 runNow: handleRun,
