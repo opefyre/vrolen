@@ -31,8 +31,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { OptimizationCandidate, OptimizationSummary } from "@/lib/optimization-search";
+import type { OptimizationCandidate, OptimizationSummary, Stats } from "@/lib/optimization-search";
 import { isOnFrontier, paretoFrontier } from "@/lib/pareto-frontier";
+import { pickBest } from "@/lib/opt-pick-best";
 import { useChartDimensions } from "@/lib/use-chart-dimensions";
 
 import { HeatmapCellDrilldown } from "./DrilldownSheets";
@@ -64,6 +65,13 @@ interface ObjectiveSpec {
   readonly label: string;
   readonly direction: ObjectiveDirection;
   readonly extract: (c: OptimizationCandidate) => number;
+  /**
+   * VROL-1060 — returns the Stats block for this objective on a
+   * candidate. Used by the CI-aware picker tiebreak + the tooltip /
+   * BestSummaryBar to surface the right CI alongside the right
+   * objective.
+   */
+  readonly stats: (c: OptimizationCandidate) => Stats;
   readonly format: (v: number) => string;
   readonly unitTrailing: string;
 }
@@ -79,6 +87,7 @@ const OBJECTIVES: readonly ObjectiveSpec[] = [
     label: "Maximize throughput",
     direction: "max",
     extract: (c) => c.meanThroughputPerHour,
+    stats: (c) => c.throughputStats,
     format: fmtInt,
     unitTrailing: "/h",
   },
@@ -87,6 +96,7 @@ const OBJECTIVES: readonly ObjectiveSpec[] = [
     label: "Minimize time-in-system",
     direction: "min",
     extract: (c) => c.meanTimeInSystemMs,
+    stats: (c) => c.timeInSystemStats,
     format: fmtMs,
     unitTrailing: "",
   },
@@ -95,6 +105,7 @@ const OBJECTIVES: readonly ObjectiveSpec[] = [
     label: "Maximize line efficiency",
     direction: "max",
     extract: (c) => c.meanLineOee,
+    stats: (c) => c.oeeStats,
     format: fmtPct,
     unitTrailing: "",
   },
@@ -103,6 +114,7 @@ const OBJECTIVES: readonly ObjectiveSpec[] = [
     label: "Maximize good parts per hour",
     direction: "max",
     extract: (c) => c.meanGoodPartsPerHour,
+    stats: (c) => c.goodPartsStats,
     format: fmtInt,
     unitTrailing: "/h",
   },
@@ -111,6 +123,7 @@ const OBJECTIVES: readonly ObjectiveSpec[] = [
     label: "Minimize WIP",
     direction: "min",
     extract: (c) => c.meanAvgWipL,
+    stats: (c) => c.wipStats,
     format: fmtWip,
     unitTrailing: "parts",
   },
@@ -124,6 +137,7 @@ const OBJECTIVES: readonly ObjectiveSpec[] = [
     label: "Minimize energy / part",
     direction: "min",
     extract: (c) => c.meanEnergyIntensityJPerPart,
+    stats: (c) => c.energyIntensityStats,
     format: (v) => `${Math.round(v).toLocaleString()} J`,
     unitTrailing: "/part",
   },
@@ -161,56 +175,6 @@ function isFeasible(c: OptimizationCandidate, k: Constraints): boolean {
   )
     return false;
   return true;
-}
-
-/**
- * Pick the best candidate for the chosen objective across the feasible
- * subset. Falls back to the full set when nothing is feasible so the card
- * still shows a "winner" — the constraint badge then tells the user that
- * the winner is technically infeasible.
- *
- * VROL-1059 — CI-aware tiebreaker: when the leader and a runner-up have
- * 95 % confidence intervals on throughput that overlap, prefer the one
- * with the higher LOWER bound on throughput. This is the robust pick
- * — picking by mean alone with overlapping CIs is statistically a
- * coin flip. We only apply this for the throughput-max objective
- * because the CI is computed on throughput; the other objectives
- * fall back to mean-only ordering.
- */
-function pickBest(
-  candidates: readonly OptimizationCandidate[],
-  objective: ObjectiveSpec,
-  feasibleSet: ReadonlySet<OptimizationCandidate>,
-): { readonly winner: OptimizationCandidate; readonly fromFeasible: boolean } {
-  const pool = candidates.filter((c) => feasibleSet.has(c));
-  const fromFeasible = pool.length > 0;
-  const sortPool = fromFeasible ? pool : [...candidates];
-  const sorted = [...sortPool].sort((a, b) => {
-    const av = objective.extract(a);
-    const bv = objective.extract(b);
-    return objective.direction === "max" ? bv - av : av - bv;
-  });
-  let winner = sorted[0] ?? candidates[0]!;
-  // VROL-1059 — for throughput-max, walk down ties (overlapping CIs)
-  // and pick the candidate with the higher LOWER 95 % bound.
-  if (
-    objective.value === "throughput-max" &&
-    winner.throughputHalfWidth95 > 0 &&
-    sorted.length > 1
-  ) {
-    for (let i = 1; i < sorted.length; i++) {
-      const next = sorted[i]!;
-      if (next.throughputHalfWidth95 <= 0) break;
-      // Overlap = the next candidate's HIGH end exceeds the current
-      // leader's LOW end. If they overlap, prefer the candidate with
-      // the higher lower bound (more robust). Stop walking once the
-      // next candidate's HIGH falls below the leader's LOW (no overlap
-      // means the leader is statistically clear of everything below).
-      if (next.throughputHigh95 < winner.throughputLow95) break;
-      if (next.throughputLow95 > winner.throughputLow95) winner = next;
-    }
-  }
-  return { winner, fromFeasible };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -553,12 +517,20 @@ function BestSummaryBar({
       <span className="text-muted-foreground">
         {objective.format(winnerValue)}
         {objective.unitTrailing ? ` ${objective.unitTrailing}` : ""}
-        {/* VROL-1059 — show ± half-width when the search ran ≥ 2 reps. */}
-        {winner.throughputHalfWidth95 > 0 && objective.value === "throughput-max" ? (
-          <span className="text-muted-foreground/80 ml-1">
-            ± {fmtInt(winner.throughputHalfWidth95)} /h (95 % CI)
-          </span>
-        ) : null}
+        {/* VROL-1060 — show ± half-width for whichever objective the
+            user picked, not just throughput. Format the half-width
+            with the objective's own formatter so units stay correct
+            (ms, %, parts, J, etc.). */}
+        {(() => {
+          const s = objective.stats(winner);
+          if (s.halfWidth95 <= 0) return null;
+          return (
+            <span className="text-muted-foreground/80 ml-1" data-testid="best-summary-ci">
+              ± {objective.format(s.halfWidth95)}
+              {objective.unitTrailing ? ` ${objective.unitTrailing}` : ""} (95 % CI)
+            </span>
+          );
+        })()}
         {deltaPct !== null ? (
           <span className={goodDelta ? "text-sim-running ml-1" : "text-sim-down ml-1"}>
             ({deltaPct >= 0 ? "+" : ""}
@@ -686,7 +658,7 @@ function HeatmapView({
                           data-winner={isWinner ? "true" : "false"}
                           onClick={() => onCellClick(cell)}
                           className={`${heat.bg} ${ringCls} ${infeasibleCls} hover:ring-foreground/30 flex w-full cursor-pointer flex-col items-end justify-center rounded px-2 py-1.5 text-right transition-shadow hover:ring-2`}
-                          title={`WIP ${String(cap)} @${multX(mult)} → ${objective.format(objective.extract(cell))}${objective.unitTrailing ? ` ${objective.unitTrailing}` : ""}${cell.throughputHalfWidth95 > 0 ? ` (${fmtInt(cell.throughputLow95)}–${fmtInt(cell.throughputHigh95)} 95% CI)` : ""}${feasible ? "" : " · infeasible"}`}
+                          title={`WIP ${String(cap)} @${multX(mult)} → ${objective.format(objective.extract(cell))}${objective.unitTrailing ? ` ${objective.unitTrailing}` : ""}${objective.stats(cell).halfWidth95 > 0 ? ` (${objective.format(objective.stats(cell).low95)}–${objective.format(objective.stats(cell).high95)} 95% CI)` : ""}${feasible ? "" : " · infeasible"}`}
                         >
                           <span className="font-mono text-[11px] tabular-nums">
                             {objective.format(objective.extract(cell))}

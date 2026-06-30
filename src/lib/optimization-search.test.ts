@@ -102,10 +102,10 @@ describe("runOptimizationSearch CIs (VROL-1059)", () => {
       currentCapacity: 10,
     });
     const c = summary.candidates[0]!;
-    expect(c.throughputStddev).toBe(0);
-    expect(c.throughputHalfWidth95).toBe(0);
-    expect(c.throughputLow95).toBe(c.meanThroughputPerHour);
-    expect(c.throughputHigh95).toBe(c.meanThroughputPerHour);
+    expect(c.throughputStats.stddev).toBe(0);
+    expect(c.throughputStats.halfWidth95).toBe(0);
+    expect(c.throughputStats.low95).toBe(c.meanThroughputPerHour);
+    expect(c.throughputStats.high95).toBe(c.meanThroughputPerHour);
   });
 
   it("emits stddev > 0 + halfWidth > 0 when reps >= 2 (stochastic distribution)", () => {
@@ -132,13 +132,59 @@ describe("runOptimizationSearch CIs (VROL-1059)", () => {
       currentCapacity: 10,
     });
     const c = summary.candidates[0]!;
-    expect(c.throughputStddev).toBeGreaterThan(0);
-    expect(c.throughputHalfWidth95).toBeGreaterThan(0);
+    expect(c.throughputStats.stddev).toBeGreaterThan(0);
+    expect(c.throughputStats.halfWidth95).toBeGreaterThan(0);
     // Half-width is exactly 1.96 × σ / √n.
-    const expected = (1.96 * c.throughputStddev) / Math.sqrt(5);
-    expect(c.throughputHalfWidth95).toBeCloseTo(expected, 6);
+    const expected = (1.96 * c.throughputStats.stddev) / Math.sqrt(5);
+    expect(c.throughputStats.halfWidth95).toBeCloseTo(expected, 6);
     // CI brackets the mean.
-    expect(c.throughputLow95).toBeLessThan(c.meanThroughputPerHour);
-    expect(c.throughputHigh95).toBeGreaterThan(c.meanThroughputPerHour);
+    expect(c.throughputStats.low95).toBeLessThan(c.meanThroughputPerHour);
+    expect(c.throughputStats.high95).toBeGreaterThan(c.meanThroughputPerHour);
+  });
+});
+
+describe("runOptimizationSearch CIs on every objective (VROL-1060)", () => {
+  it("populates timeInSystemStats / oeeStats / wipStats / goodPartsStats / energyIntensityStats with positive halfWidths under stochastic input", () => {
+    const stochasticSusTopology = (): ChainTopology => ({
+      nodes: [
+        {
+          id: "src",
+          label: "Src",
+          cycleTimeMs: { kind: "uniform", min: 50, max: 150 },
+          energyPerCycleJ: 200,
+        },
+        {
+          id: "sink",
+          label: "Sink",
+          cycleTimeMs: { kind: "uniform", min: 50, max: 150 },
+          energyPerCycleJ: 50,
+        },
+      ],
+      edges: [{ source: "src", target: "sink" }],
+    });
+    const summary = runOptimizationSearch({
+      buildBaseOptions: buildBaseFactory(stochasticSusTopology()),
+      bufferLevels: [10],
+      cycleMultipliers: [1],
+      toolPoolDeltas: [0],
+      replicationsPerCandidate: 5,
+      horizonMs: 5_000,
+      warmupMs: 0,
+      seed: 1,
+      targetStationIdx: 0,
+      targetStationLabel: "src",
+      currentCapacity: 10,
+    });
+    const c = summary.candidates[0]!;
+    expect(c.timeInSystemStats.halfWidth95).toBeGreaterThan(0);
+    expect(c.oeeStats.halfWidth95).toBeGreaterThanOrEqual(0); // OEE may be ~constant if always running
+    expect(c.wipStats.halfWidth95).toBeGreaterThan(0);
+    expect(c.goodPartsStats.halfWidth95).toBeGreaterThan(0);
+    expect(c.energyIntensityStats.mean).toBeGreaterThan(0);
+    // Energy intensity is deterministic given per-cycle inputs unless
+    // completed varies. With stochastic cycle times, completed varies,
+    // so intensity ~250 J/part should hold near-constant.
+    expect(c.energyIntensityStats.mean).toBeGreaterThan(225);
+    expect(c.energyIntensityStats.mean).toBeLessThan(275);
   });
 });
