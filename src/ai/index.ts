@@ -61,6 +61,21 @@ export {
   type QueryResult,
 } from "./query";
 
+// VROL-382 / VROL-386 — live provider adapters.
+export {
+  createOpenAiAdapter,
+  createAnthropicAdapter,
+  type OpenAiAdapterOptions,
+  type AnthropicAdapterOptions,
+} from "./openai-adapter";
+export {
+  createGeminiAdapter,
+  geminiRequestBody,
+  parseGeminiResponse,
+  type GeminiAdapterOptions,
+} from "./gemini-adapter";
+export { createAdapterForProvider, type AdapterFactoryOptions } from "./adapter-factory";
+
 // VROL-389 — BYO-key storage + provider catalogue.
 export {
   PROVIDER_CATALOGUE,
