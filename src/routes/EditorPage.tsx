@@ -1114,6 +1114,35 @@ function EditorCanvas() {
       mql.removeEventListener("change", handler);
     };
   }, []);
+
+  // VROL-1184 — keyboard shortcuts: [ toggles palette, ] toggles inspector.
+  // Skip when typing inside any editable element so users can still bracket
+  // their station names.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "[" && e.key !== "]") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t) {
+        const tag = t.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable) {
+          return;
+        }
+      }
+      e.preventDefault();
+      if (e.key === "[") {
+        setPalettePaneOpen((v) => !v);
+      } else {
+        setInspectorPaneOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
   // VROL-682 — two slots for picking history runs to compare.
   const [historyCompareA, setHistoryCompareA] = useState<number | null>(null);
   const [historyCompareB, setHistoryCompareB] = useState<number | null>(null);
@@ -5066,9 +5095,11 @@ function EditorCanvas() {
               setPalettePaneOpen((v) => !v);
             }}
             aria-label={palettePaneOpen ? "Collapse stations panel" : "Expand stations panel"}
-            title={palettePaneOpen ? "Collapse stations panel" : "Expand stations panel"}
+            aria-pressed={!palettePaneOpen}
+            aria-keyshortcuts="["
+            title={`${palettePaneOpen ? "Collapse" : "Expand"} stations panel ([)`}
             data-testid="palette-pane-toggle"
-            className="border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground absolute top-3 left-3 z-20 hidden h-7 w-7 items-center justify-center rounded-md border shadow-sm transition-colors lg:flex"
+            className="border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-ring focus-visible:ring-offset-background absolute top-3 left-3 z-20 hidden h-7 w-7 items-center justify-center rounded-md border shadow-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-1 lg:flex"
           >
             {palettePaneOpen ? (
               <PanelLeftClose className="h-4 w-4" />
@@ -5082,9 +5113,11 @@ function EditorCanvas() {
               setInspectorPaneOpen((v) => !v);
             }}
             aria-label={inspectorPaneOpen ? "Collapse inspector panel" : "Expand inspector panel"}
-            title={inspectorPaneOpen ? "Collapse inspector panel" : "Expand inspector panel"}
+            aria-pressed={!inspectorPaneOpen}
+            aria-keyshortcuts="]"
+            title={`${inspectorPaneOpen ? "Collapse" : "Expand"} inspector panel (])`}
             data-testid="inspector-pane-toggle"
-            className="border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground absolute top-3 right-3 z-20 hidden h-7 w-7 items-center justify-center rounded-md border shadow-sm transition-colors lg:flex"
+            className="border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-ring focus-visible:ring-offset-background absolute top-3 right-3 z-20 hidden h-7 w-7 items-center justify-center rounded-md border shadow-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-1 lg:flex"
           >
             {inspectorPaneOpen ? (
               <PanelRightClose className="h-4 w-4" />
