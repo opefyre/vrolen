@@ -209,6 +209,7 @@ import { RunConsole, logToRunConsole } from "@/components/editor/run-console";
 import { ScenariosList } from "@/components/editor/scenarios-list";
 import { Coach } from "@/components/editor/coach";
 import { buildCoachTips } from "@/lib/coach-tips";
+import { deriveActionCard } from "@/lib/derive-action-card";
 import {
   DEFAULT_RUN_SETTINGS,
   loadRunSettings,
@@ -2411,8 +2412,14 @@ function EditorCanvas() {
   );
   const handleApplyGoalMultiplier = useCallback(
     (multiplier: number): void => {
-      setNodes((ns) =>
-        ns.map((n) => {
+      // VROL-1164 (UX audit H11) — snapshot the pre-mutation nodes so
+      // the toast's Undo action can revert. Stores the closure
+      // locally; toast.dismiss / timeout cleans it up automatically
+      // when the toast goes away.
+      let snapshot: Node[] | null = null;
+      setNodes((ns) => {
+        snapshot = ns;
+        return ns.map((n) => {
           const d = n.data as { cycleDistribution?: unknown };
           if (!isDistribution(d.cycleDistribution)) return n;
           return {
@@ -2422,10 +2429,20 @@ function EditorCanvas() {
               cycleDistribution: scaleDistribution(d.cycleDistribution, multiplier),
             },
           };
-        }),
-      );
+        });
+      });
       setApplyAndRunTick((x) => x + 1);
-      toast.success(`Scaled every station's cycle by ${multiplier.toFixed(2)}x. Re-running…`);
+      toast.success(`Scaled every station's cycle by ${multiplier.toFixed(2)}x. Re-running…`, {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            if (snapshot) {
+              setNodes(snapshot);
+              setApplyAndRunTick((x) => x + 1);
+            }
+          },
+        },
+      });
     },
     [setNodes],
   );
@@ -4919,6 +4936,45 @@ function EditorCanvas() {
           data-pan-mode={spacePanning ? "true" : undefined}
           className="border-border bg-background relative overflow-hidden rounded-md border"
         >
+          {/* VROL-1161 (UX audit H7) — inline empty-state overlay
+              when the canvas has zero stations. Overlay uses
+              pointer-events: none on the grid behind it so palette
+              drag-to-canvas still works; the CTAs inside re-enable
+              pointer events. */}
+          {nodes.filter((n) => n.type === "station").length === 0 ? (
+            <div
+              className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+              data-testid="editor-empty-state"
+            >
+              <div className="bg-background/90 border-border pointer-events-auto max-w-md rounded-lg border p-6 text-center shadow-md">
+                <div className="text-foreground mb-1 text-base font-semibold">
+                  Build your first line
+                </div>
+                <p className="text-muted-foreground mb-4 text-sm">
+                  Start with the wizard, browse a template, or drag a station from the palette on
+                  the left.
+                </p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  <Button size="sm" variant="default" onClick={() => setWizardOpen(true)}>
+                    Open wizard
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      // VROL-1161 — load the canonical starter preset
+                      // so the user lands on a working scenario in
+                      // one click.
+                      const starter = PRESETS.find((p) => p.id === "bottling-line") ?? PRESETS[0];
+                      if (starter) loadPresetInto(starter);
+                    }}
+                  >
+                    Load demo line
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
           <ReactFlow
             nodes={nodesForFlow}
             edges={edgesForFlowOrdered}
@@ -5130,6 +5186,18 @@ function EditorCanvas() {
                   }
                   return peak;
                 })(),
+                // VROL-1158 (UX audit H4) — let the coach know what
+                // the action card is saying so it can suppress its
+                // own tip on the same root signal.
+                topActionCardTitle:
+                  result != null
+                    ? deriveActionCard(
+                        result,
+                        runMeta?.perStationBatchSize
+                          ? { perStationBatchSize: runMeta.perStationBatchSize }
+                          : {},
+                      )?.title
+                    : undefined,
                 // VROL-1077 — source station's Idle-state share of
                 // the measurement window. Last sample carries
                 // cumulative state ms; we divide by total state-ms

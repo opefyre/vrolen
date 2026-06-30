@@ -274,6 +274,100 @@ describe("buildCoachTips visibility", () => {
     expect(ids).not.toContain("idle-source");
   });
 
+  // ────────────────────────────────────────────────────────────────────────
+  // VROL-1158 (UX audit H4) — coach suppresses tips when action card
+  // is already speaking on the same root signal.
+  // ────────────────────────────────────────────────────────────────────────
+
+  it("H4 — high-wip-warning suppressed when action card title mentions 'WIP'", () => {
+    const ids = visibleIds({
+      stationCount: 4,
+      edgeCount: 3,
+      hasRun: true,
+      lineAverageWipL: 20,
+      topActionCardTitle: "WIP averaging 20.0 parts",
+    });
+    expect(ids).not.toContain("high-wip-warning");
+  });
+
+  it("H4 — high-wip-warning still fires when action card is silent or unrelated", () => {
+    const ids = visibleIds({
+      stationCount: 4,
+      edgeCount: 3,
+      hasRun: true,
+      lineAverageWipL: 20,
+      topActionCardTitle: "Reliability is the biggest lever at Capper",
+    });
+    expect(ids).toContain("high-wip-warning");
+  });
+
+  it("H4 — low-line-oee-warning suppressed when action card mentions 'Line OEE'", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      lineOee: 0.3,
+      topActionCardTitle: "Line OEE is 30 %",
+    });
+    expect(ids).not.toContain("low-line-oee-warning");
+  });
+
+  it("H4 — high-scrap-warning suppressed when action card mentions 'scrap'", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      lineScrapRate: 0.1,
+      topActionCardTitle: "Scrap rate 10.0 %",
+    });
+    expect(ids).not.toContain("high-scrap-warning");
+  });
+
+  it("H4 — idle-source suppressed when action card says 'upstream-limited'", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      sourceIdleFraction: 0.7,
+      topActionCardTitle: "Line is upstream-limited",
+    });
+    expect(ids).not.toContain("idle-source");
+  });
+
+  it("H4 — per-edge-buffer-saturated suppressed when action card mentions 'buffer'", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      maxBufferFillFraction: 0.99,
+      topActionCardTitle: "Buffer 2 is sustained near full",
+    });
+    expect(ids).not.toContain("per-edge-buffer-saturated");
+  });
+
+  it("H4 — tune-the-bottleneck suppressed when action card mentions reliability/capacity/blocked", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      isBottleneckHigh: true,
+      topActionCardTitle: "Reliability is the biggest lever at Capper",
+    });
+    expect(ids).not.toContain("tune-the-bottleneck");
+  });
+
+  it("H4 — pre-run tips (try-the-wizard, run-it) unaffected by action card title", () => {
+    // Pre-run state with an action card title set anyway — pre-run
+    // tips don't read it because they're gated on !hasRun.
+    const ids = visibleIds({
+      stationCount: 0,
+      edgeCount: 0,
+      hasRun: false,
+      topActionCardTitle: "anything",
+    });
+    expect(ids).toContain("try-the-wizard");
+  });
+
   it("VROL-1063→1069 — none of the new tips fire before a run", () => {
     const ids = visibleIds({
       stationCount: 3,

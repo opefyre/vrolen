@@ -88,6 +88,14 @@ export interface CoachTipDeps {
    * downstream bottleneck.
    */
   readonly sourceIdleFraction?: number;
+  /**
+   * VROL-1158 (UX audit H4) — title of the top-priority action card,
+   * when one fired. Coach uses this to suppress its own tip whose
+   * root signal already drove the action card, so the user doesn't
+   * see two surfaces giving the same diagnosis. Pre-run + scenario-
+   * management tips are unaffected.
+   */
+  readonly topActionCardTitle?: string;
 }
 
 export interface CoachTipCallbacks {
@@ -95,6 +103,17 @@ export interface CoachTipCallbacks {
   readonly runNow: () => void;
   /** VROL-1030 — Optional save-scenario opener. */
   readonly saveScenario?: () => void;
+}
+
+/**
+ * VROL-1158 (UX audit H4) — does the active action card's title
+ * already describe the same root signal? Keywords are lowercase
+ * substrings; any match suppresses the coach's redundant tip.
+ */
+function actionCardCoversSignal(title: string | undefined, keywords: readonly string[]): boolean {
+  if (!title) return false;
+  const lower = title.toLowerCase();
+  return keywords.some((k) => lower.includes(k));
 }
 
 export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks): CoachTip[] {
@@ -127,7 +146,19 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
       id: "tune-the-bottleneck",
       title: "Tune the bottleneck",
       body: "The bottleneck station is starving or blocking more than 20% of the run. Open Inspector on it to adjust capacity or cycle time.",
-      whenVisible: () => hasRun && isBottleneckHigh,
+      whenVisible: () =>
+        hasRun &&
+        isBottleneckHigh &&
+        // VROL-1158 — suppress when the action card already speaks for
+        // the bottleneck (reliability / capacity / cycle / blocked).
+        !actionCardCoversSignal(deps.topActionCardTitle, [
+          "reliability",
+          "speed up",
+          "blocked",
+          "capacity",
+          "second",
+          "third",
+        ]),
     },
     // VROL-963 — Sprint 90/91 constraint anomalies. Each triggers only
     // after a run AND when the matching counter exceeds a sane threshold.
@@ -195,7 +226,12 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
       title: "WIP is piling up",
       body: `Average WIP is ${(deps.lineAverageWipL ?? 0).toFixed(1)} parts across ${String(stationCount)} stations — buffers are swelling because downstream isn't pulling fast enough. Tighten a downstream buffer cap or open the bottleneck before adding more cycle.`,
       whenVisible: () =>
-        hasRun && stationCount > 0 && (deps.lineAverageWipL ?? 0) > 3 * stationCount,
+        hasRun &&
+        stationCount > 0 &&
+        (deps.lineAverageWipL ?? 0) > 3 * stationCount &&
+        // VROL-1158 — action card "WIP averaging X parts" rule
+        // already speaks for this signal.
+        !actionCardCoversSignal(deps.topActionCardTitle, ["wip"]),
     },
     // VROL-1064 — line OEE below 0.5 is "something is structurally
     // wrong" not "tune a station." Direct the user at the OEE
@@ -205,7 +241,12 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
       id: "low-line-oee-warning",
       title: "Line OEE is below 50 %",
       body: `Line OEE is ${((deps.lineOee ?? 0) * 100).toFixed(0)} %. Open the OEE breakdown card to see which factor — Availability (breakdowns / maintenance), Performance (slow cycles, micro-stops), or Quality (scrap) — is the slim one before chasing cycle time changes.`,
-      whenVisible: () => hasRun && (deps.lineOee ?? 1) < 0.5,
+      whenVisible: () =>
+        hasRun &&
+        (deps.lineOee ?? 1) < 0.5 &&
+        // VROL-1158 — action card "Line OEE is X %" rule already
+        // speaks for this signal.
+        !actionCardCoversSignal(deps.topActionCardTitle, ["line oee", "slim factor"]),
     },
     // VROL-1065 — scrap above 5 % means the line is producing waste
     // at a rate that almost always swamps cycle-time gains. Surface
@@ -214,7 +255,12 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
       id: "high-scrap-warning",
       title: "Scrap rate is above 5 %",
       body: `Line scrap rate is ${((deps.lineScrapRate ?? 0) * 100).toFixed(1)} %. At this level, defect root-cause work outpaces cycle tuning — open per-station Inspector → Defects to see which station drives the loss.`,
-      whenVisible: () => hasRun && (deps.lineScrapRate ?? 0) > 0.05,
+      whenVisible: () =>
+        hasRun &&
+        (deps.lineScrapRate ?? 0) > 0.05 &&
+        // VROL-1158 — action card "Scrap rate X %" rule already
+        // speaks for this signal.
+        !actionCardCoversSignal(deps.topActionCardTitle, ["scrap"]),
     },
     // VROL-1066 — warmup < 10 % of horizon. The engine's
     // measurement window starts AFTER warmupMs; setting it too short
@@ -243,7 +289,12 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
       id: "per-edge-buffer-saturated",
       title: "A buffer is hitting its cap",
       body: `Peak buffer fill on at least one edge sat at ${((deps.maxBufferFillFraction ?? 0) * 100).toFixed(0)} % of capacity. Raising the global buffer affects every edge; the per-edge bufferCapacity field (set on the edge directly in JSON) is the precise lever.`,
-      whenVisible: () => hasRun && (deps.maxBufferFillFraction ?? 0) > 0.95,
+      whenVisible: () =>
+        hasRun &&
+        (deps.maxBufferFillFraction ?? 0) > 0.95 &&
+        // VROL-1158 — action card "Buffer X is sustained near full"
+        // OR "Buffer on edge X is saturating" both speak for this.
+        !actionCardCoversSignal(deps.topActionCardTitle, ["buffer"]),
     },
     // VROL-1069 — source idle > 50 % means the line is UPSTREAM-
     // limited (the source can't keep up with the downstream's
@@ -253,7 +304,12 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
       id: "idle-source",
       title: "Line is upstream-limited",
       body: `The source station is idle ${((deps.sourceIdleFraction ?? 0) * 100).toFixed(0)} % of the time — the downstream is starving on supply, not blocked by a slow mid-chain station. Speed up the source's cycle or raise its capacity before chasing bottlenecks downstream.`,
-      whenVisible: () => hasRun && (deps.sourceIdleFraction ?? 0) > 0.5,
+      whenVisible: () =>
+        hasRun &&
+        (deps.sourceIdleFraction ?? 0) > 0.5 &&
+        // VROL-1158 — action card "Line is upstream-limited" already
+        // speaks for this signal.
+        !actionCardCoversSignal(deps.topActionCardTitle, ["upstream-limited"]),
     },
   ];
 }

@@ -209,14 +209,15 @@ export default function LandingPage() {
         <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
           Model your line, find the bottleneck.
         </h1>
+        {/* VROL-1163 (UX audit H10) — outcome chips moved above the
+            jargon-light subhead so first-time visitors read what
+            Vrolen DOES before they read how. */}
+        <HeroOutcomeChips />
         <p className="text-muted-foreground mx-auto max-w-2xl text-base sm:text-lg">
-          Vrolen runs a deterministic discrete-event simulation over a station-and-edge graph,
-          surfaces throughput, OEE, buffer fill, and worker utilization over time — and tells you
-          where the constraint really is.
+          See where your line is constrained. Model it as a graph, press Run, watch throughput, OEE,
+          and buffer fill. Find the bottleneck — then prove the fix.
         </p>
         <HeroFlow />
-        {/* VROL-823 — outcome chips replace the inventory-style counter row. */}
-        <HeroOutcomeChips />
         {/* VROL-815 — three-tier CTA hierarchy: 1 primary, 1 outline, 1 link.
             Primary = wizard (30s time-to-first-run). Outline = demo (autoruns).
             Link = templates browser for users who want to shop around first. */}

@@ -90,7 +90,7 @@ export function GoalModeCard({
           onChange={(e) => {
             setTarget(Math.max(0, Math.floor(Number(e.target.value) || 0)));
           }}
-          className="border-input bg-background w-32 rounded-md border px-2 py-1.5 font-mono text-sm tabular-nums"
+          className="border-input bg-background h-9 min-w-[160px] rounded-md border px-3 py-1.5 font-mono text-sm tabular-nums"
           aria-label={`Target ${unitLabel} per hour`}
         />
         <span className="text-muted-foreground text-xs">{unitLabel} / h</span>
@@ -109,22 +109,30 @@ export function GoalModeCard({
         </Button>
       </div>
       {/* VROL-1056 — optional sustainability budget. Pairs with the
-          multi-lever picker; 0 disables. */}
-      <div className="flex items-center gap-2">
-        <input
-          type="number"
-          value={maxIntensity}
-          min={0}
-          step={10}
-          onChange={(e) => {
-            setMaxIntensity(Math.max(0, Math.floor(Number(e.target.value) || 0)));
-          }}
-          className="border-input bg-background w-32 rounded-md border px-2 py-1.5 font-mono text-sm tabular-nums"
-          aria-label="Max energy per part (J)"
-          data-testid="goal-mode-energy-budget"
-        />
-        <span className="text-muted-foreground text-xs">J / part max (0 = off)</span>
-      </div>
+          multi-lever picker; 0 disables.
+          VROL-1160 (UX audit H6) — hidden behind a disclosure so
+          the default state is one input + one button, not two
+          stacked input rows. */}
+      <details className="text-xs">
+        <summary className="text-muted-foreground hover:text-foreground cursor-pointer select-none">
+          Set energy budget
+        </summary>
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            type="number"
+            value={maxIntensity}
+            min={0}
+            step={10}
+            onChange={(e) => {
+              setMaxIntensity(Math.max(0, Math.floor(Number(e.target.value) || 0)));
+            }}
+            className="border-input bg-background h-9 min-w-[160px] rounded-md border px-3 py-1.5 font-mono text-sm tabular-nums"
+            aria-label="Max energy per part (J)"
+            data-testid="goal-mode-energy-budget"
+          />
+          <span className="text-muted-foreground text-xs">J / part max (0 = off)</span>
+        </div>
+      </details>
       {result ? (
         <div className="border-border space-y-1 rounded-md border p-2 text-xs">
           {result.capped ? (
@@ -229,7 +237,9 @@ export function GoalModeCard({
             .
           </p>
           {onApplyMulti ? (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-2">
+              {/* VROL-1160 (UX audit H6) — gap-2 + flex-wrap so apply
+                  chips reflow cleanly on narrow screens. */}
               {Math.abs(1 - multiBest.cycleMultiplier) > 1e-3
                 ? (() => {
                     const payload: ActionApplyPayload = {
