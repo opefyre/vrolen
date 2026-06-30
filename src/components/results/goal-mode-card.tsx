@@ -192,7 +192,41 @@ export function GoalModeCard({
             ) : null}{" "}
             hits <strong className="font-mono tabular-nums">{fmt(multiBest.perHour)}</strong>{" "}
             {unitLabel}/h. Cost{" "}
-            <span className="font-mono tabular-nums">{multiBest.cost.toFixed(1)}</span>.
+            <span className="font-mono tabular-nums">{multiBest.cost.toFixed(1)}</span>
+            {/* VROL-1058 — surface the achieved energy intensity when
+                the scenario declared sustainability inputs. */}
+            {multiBest.meanEnergyIntensityJPerPart > 0 ? (
+              <>
+                . Uses{" "}
+                <strong className="font-mono tabular-nums" data-testid="goal-mode-multi-intensity">
+                  {Math.round(multiBest.meanEnergyIntensityJPerPart).toLocaleString()} J/part
+                </strong>
+                {/* Budget badge: green ✓ when the candidate respects
+                    the budget; red × when it doesn't. The picker
+                    falls back to throughput-only when no candidate
+                    meets both — meetsEnergyBudget=false here means
+                    the user asked for a tighter budget than any
+                    combo could deliver. */}
+                {multiBest.meetsEnergyBudget ? (
+                  <span
+                    className="text-sim-running ml-1"
+                    aria-label="Within energy budget"
+                    data-testid="goal-mode-multi-budget-ok"
+                  >
+                    ✓
+                  </span>
+                ) : (
+                  <span
+                    className="text-sim-down ml-1"
+                    aria-label="Over energy budget"
+                    data-testid="goal-mode-multi-budget-over"
+                  >
+                    ×
+                  </span>
+                )}
+              </>
+            ) : null}
+            .
           </p>
           {onApplyMulti ? (
             <div className="flex flex-wrap gap-1.5">
