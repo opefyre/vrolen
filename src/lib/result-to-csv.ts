@@ -237,6 +237,8 @@ export function sensitivityToCsv(summary: {
     highPerHour: number;
     swingPerHour: number;
     swingPct: number;
+    swingStats?: { halfWidth95: number; low95: number; high95: number };
+    isSignificant?: boolean;
   }>;
   constraintRows: ReadonlyArray<{
     kind: string;
@@ -245,12 +247,21 @@ export function sensitivityToCsv(summary: {
     highPerHour: number;
     swingPerHour: number;
     swingPct: number;
+    swingStats?: { halfWidth95: number; low95: number; high95: number };
+    isSignificant?: boolean;
   }>;
 }): string {
   const lines: string[] = [];
   lines.push("# cycle dimension (per-station)");
-  lines.push("station_label,baseline_per_hour,low_per_hour,high_per_hour,swing_per_hour,swing_pct");
+  // VROL-1062 — CI half-width + significance columns. Empty / 0 for
+  // K=1 sweeps (no CI to report).
+  lines.push(
+    "station_label,baseline_per_hour,low_per_hour,high_per_hour,swing_per_hour,swing_pct,swing_half_width_95,swing_low_95,swing_high_95,significant",
+  );
   for (const r of summary.rows) {
+    const hw = r.swingStats?.halfWidth95 ?? 0;
+    const lo = r.swingStats?.low95 ?? 0;
+    const hi = r.swingStats?.high95 ?? 0;
     lines.push(
       row([
         r.stationLabel,
@@ -259,13 +270,22 @@ export function sensitivityToCsv(summary: {
         r.highPerHour.toFixed(2),
         r.swingPerHour.toFixed(2),
         r.swingPct.toFixed(2),
+        hw.toFixed(2),
+        lo.toFixed(2),
+        hi.toFixed(2),
+        String(r.isSignificant ?? false),
       ]),
     );
   }
   lines.push("");
   lines.push("# constraint dimensions (kind = bomQty | toolPoolCap | stationCapacity)");
-  lines.push("kind,label,low_per_hour,high_per_hour,swing_per_hour,swing_pct");
+  lines.push(
+    "kind,label,low_per_hour,high_per_hour,swing_per_hour,swing_pct,swing_half_width_95,swing_low_95,swing_high_95,significant",
+  );
   for (const r of summary.constraintRows) {
+    const hw = r.swingStats?.halfWidth95 ?? 0;
+    const lo = r.swingStats?.low95 ?? 0;
+    const hi = r.swingStats?.high95 ?? 0;
     lines.push(
       row([
         r.kind,
@@ -274,6 +294,10 @@ export function sensitivityToCsv(summary: {
         r.highPerHour.toFixed(2),
         r.swingPerHour.toFixed(2),
         r.swingPct.toFixed(2),
+        hw.toFixed(2),
+        lo.toFixed(2),
+        hi.toFixed(2),
+        String(r.isSignificant ?? false),
       ]),
     );
   }

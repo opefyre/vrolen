@@ -23,6 +23,11 @@ function row(overrides: Partial<SensitivityRow>): SensitivityRow {
     highPerHour: 800,
     swingPerHour: 400,
     swingPct: 40,
+    // VROL-1062 — Stats defaults: K=1 fixture → halfWidth=0 so
+    // classifyTornadoRow falls back to the existing swing-vs-floor
+    // path (preserves these tests' semantics).
+    swingStats: { mean: -400, stddev: 0, halfWidth95: 0, low95: -400, high95: -400 },
+    isSignificant: true,
     ...overrides,
   };
 }

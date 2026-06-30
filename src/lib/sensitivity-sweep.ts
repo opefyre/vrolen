@@ -11,6 +11,7 @@
  */
 
 import { runChain, SeededPrng, type ChainOptions, type Distribution } from "@/engine";
+import { computeStats, type Stats } from "./optimization-search";
 
 export interface SensitivityRow {
   readonly stationLabel: string;
@@ -22,6 +23,21 @@ export interface SensitivityRow {
   readonly swingPerHour: number;
   /** Percent swing vs baseline, signed (positive = higher cycle helped). */
   readonly swingPct: number;
+  /**
+   * VROL-1062 — replication-aware swing statistics. Stats of the
+   * per-rep paired delta (high − low). When K=1 (default) halfWidth=0
+   * and low/high collapse to mean. When K>=2 we get the Bessel-
+   * corrected 95 % CI on the swing. swingPerHour = |stats.mean|
+   * (kept for back-compat — same physical quantity).
+   */
+  readonly swingStats: Stats;
+  /**
+   * VROL-1062 — true when the swing is statistically distinguishable
+   * from zero at the 95 % level. For K=1 this falls back to
+   * swingPerHour > 0; for K>=2 it's true iff the 95 % CI excludes
+   * zero (low95 > 0 OR high95 < 0).
+   */
+  readonly isSignificant: boolean;
 }
 
 /**
@@ -40,6 +56,10 @@ export interface SensitivityConstraintRow {
   readonly highPerHour: number;
   readonly swingPerHour: number;
   readonly swingPct: number;
+  /** VROL-1062 — same Stats shape as the cycle rows. */
+  readonly swingStats: Stats;
+  /** VROL-1062 — true when the swing's 95 % CI excludes zero. */
+  readonly isSignificant: boolean;
 }
 
 export interface SensitivitySummary {
@@ -96,6 +116,15 @@ interface RunOptsLike {
   readonly buildBaseOptions: () => ChainOptions;
   readonly stationCycleDistributions: readonly Distribution[];
   readonly stationLabels: readonly string[];
+  /**
+   * VROL-1062 — paired replications per swing. Default 1 (preserves
+   * existing 2N-runs cost). When K>=2, each row runs K paired
+   * (low_i, high_i) trials with CRN-stepped seeds; per-rep delta_i
+   * = high − low feeds computeStats() for a Bessel-corrected 95 % CI
+   * on the swing magnitude. Caller decides cost vs rigor — 3 is a
+   * good default at the UI layer.
+   */
+  readonly replicationsPerSwing?: number;
 }
 
 /**
@@ -107,6 +136,13 @@ export function runSensitivitySweep(opts: RunOptsLike): SensitivitySummary {
   const t0 = performance.now();
   const LOW = 0.8;
   const HIGH = 1.2;
+  // VROL-1062 — K paired reps per swing. Default 1 keeps prior
+  // performance + behaviour identical.
+  const reps = Math.max(1, Math.floor(opts.replicationsPerSwing ?? 1));
+  // CRN-stepped seed: each rep keeps low + high paired on the SAME
+  // seed (variance reduction within the pair); reps differ by a
+  // multiplier matching the optimization sweep convention.
+  const REP_STEP = 31;
   // Baseline: build options as-is.
   const baseline = runChain({
     ...opts.buildBaseOptions(),
@@ -115,6 +151,35 @@ export function runSensitivitySweep(opts: RunOptsLike): SensitivitySummary {
     prng: new SeededPrng(opts.seed),
   });
   const baselinePerHour = baseline.throughputLambda * 3_600_000;
+  /**
+   * Run K paired (low, high) trials returning per-rep deltas + the
+   * mean low/high. `runLow(seed)` and `runHigh(seed)` are caller-
+   * provided closures so the cycle/BOM/tool-pool/capacity sweeps
+   * can share this logic without duplicating their per-swing wiring.
+   */
+  function runPairedSwing(
+    runLow: (seed: number) => number,
+    runHigh: (seed: number) => number,
+  ): { deltas: number[]; meanLow: number; meanHigh: number } {
+    const deltas: number[] = [];
+    let sumLow = 0;
+    let sumHigh = 0;
+    for (let r = 0; r < reps; r++) {
+      const s = opts.seed + r * REP_STEP;
+      const low = runLow(s);
+      const high = runHigh(s);
+      sumLow += low;
+      sumHigh += high;
+      deltas.push(high - low);
+    }
+    return { deltas, meanLow: sumLow / reps, meanHigh: sumHigh / reps };
+  }
+  function isSignificantFrom(s: Stats): boolean {
+    // K=1 → halfWidth=0 → fall back to "did the mean move at all?"
+    if (s.halfWidth95 <= 0) return Math.abs(s.mean) > 0;
+    // K>=2 → 95 % CI excludes zero on either side.
+    return s.low95 > 0 || s.high95 < 0;
+  }
 
   const rows: SensitivityRow[] = [];
   for (let i = 0; i < opts.stationCycleDistributions.length; i++) {
@@ -128,56 +193,52 @@ export function runSensitivitySweep(opts: RunOptsLike): SensitivitySummary {
     lowArr[i] = lowDist;
     const highArr = [...opts.stationCycleDistributions];
     highArr[i] = highDist;
-    const lowOpts = opts.buildBaseOptions();
-    const highOpts = opts.buildBaseOptions();
     // Topology may be present — when it is, the stationCycleTimes path
     // isn't taken; we have to also patch the topology nodes' cycleTime.
-    const lowRun = runChain({
-      ...lowOpts,
-      ...(lowOpts.topology
-        ? {
-            topology: {
-              ...lowOpts.topology,
-              nodes: lowOpts.topology.nodes.map((n, idx) =>
-                idx === i ? { ...n, cycleTime: lowDist } : n,
-              ),
-            },
-          }
-        : { stationCycleTimes: lowArr, stationLabels: [...opts.stationLabels] }),
-      horizonMs: opts.horizonMs,
-      warmupMs: opts.warmupMs,
-      // CRN — share the seed across low and high so the parameter change is
-      // the only thing that moves the result. Sampling noise cancels.
-      prng: new SeededPrng(opts.seed),
-    });
-    const highRun = runChain({
-      ...highOpts,
-      ...(highOpts.topology
-        ? {
-            topology: {
-              ...highOpts.topology,
-              nodes: highOpts.topology.nodes.map((n, idx) =>
-                idx === i ? { ...n, cycleTime: highDist } : n,
-              ),
-            },
-          }
-        : { stationCycleTimes: highArr, stationLabels: [...opts.stationLabels] }),
-      horizonMs: opts.horizonMs,
-      warmupMs: opts.warmupMs,
-      prng: new SeededPrng(opts.seed),
-    });
-    const lowPerHour = lowRun.throughputLambda * 3_600_000;
-    const highPerHour = highRun.throughputLambda * 3_600_000;
-    const swing = Math.abs(highPerHour - lowPerHour);
+    const runOnce =
+      (perturbedDist: Distribution, perturbedArr: Distribution[]) =>
+      (seed: number): number => {
+        const baseOpts = opts.buildBaseOptions();
+        const r = runChain({
+          ...baseOpts,
+          ...(baseOpts.topology
+            ? {
+                topology: {
+                  ...baseOpts.topology,
+                  nodes: baseOpts.topology.nodes.map((n, idx) =>
+                    // Latent bug fix: engine field is cycleTimeMs not
+                    // cycleTime; the pre-1062 code wrote `cycleTime`
+                    // so the patch was a silent no-op for topology
+                    // mode (cycle sweeps returned delta=0). Restored
+                    // correctness as part of the K-rep refactor.
+                    idx === i ? { ...n, cycleTimeMs: perturbedDist } : n,
+                  ),
+                },
+              }
+            : { stationCycleTimes: perturbedArr, stationLabels: [...opts.stationLabels] }),
+          horizonMs: opts.horizonMs,
+          warmupMs: opts.warmupMs,
+          prng: new SeededPrng(seed),
+        });
+        return r.throughputLambda * 3_600_000;
+      };
+    const { deltas, meanLow, meanHigh } = runPairedSwing(
+      runOnce(lowDist, lowArr),
+      runOnce(highDist, highArr),
+    );
+    const swingStats = computeStats(deltas);
+    const swing = Math.abs(swingStats.mean);
     const swingPct = baselinePerHour > 0 ? (swing / baselinePerHour) * 100 : 0;
     rows.push({
       stationLabel: label,
       stationIdx: i,
       baselinePerHour,
-      lowPerHour,
-      highPerHour,
+      lowPerHour: meanLow,
+      highPerHour: meanHigh,
       swingPerHour: swing,
       swingPct,
+      swingStats,
+      isSignificant: isSignificantFrom(swingStats),
     });
   }
   rows.sort((a, b) => b.swingPerHour - a.swingPerHour);
@@ -208,30 +269,30 @@ export function runSensitivitySweep(opts: RunOptsLike): SensitivitySummary {
                 },
           ),
         });
-        const lowRun = runChain({
-          ...baseOpts,
-          topology: patch(lowQty),
-          horizonMs: opts.horizonMs,
-          warmupMs: opts.warmupMs,
-          prng: new SeededPrng(opts.seed),
-        });
-        const highRun = runChain({
-          ...baseOpts,
-          topology: patch(highQty),
-          horizonMs: opts.horizonMs,
-          warmupMs: opts.warmupMs,
-          prng: new SeededPrng(opts.seed),
-        });
-        const lp = lowRun.throughputLambda * 3_600_000;
-        const hp = highRun.throughputLambda * 3_600_000;
-        const swing = Math.abs(hp - lp);
+        const runQty =
+          (qty: number) =>
+          (seed: number): number => {
+            const r = runChain({
+              ...baseOpts,
+              topology: patch(qty),
+              horizonMs: opts.horizonMs,
+              warmupMs: opts.warmupMs,
+              prng: new SeededPrng(seed),
+            });
+            return r.throughputLambda * 3_600_000;
+          };
+        const { deltas, meanLow, meanHigh } = runPairedSwing(runQty(lowQty), runQty(highQty));
+        const swingStats = computeStats(deltas);
+        const swing = Math.abs(swingStats.mean);
         constraintRows.push({
           kind: "bomQty",
           label: `BOM ${node.label ?? node.id} ← ${f.feederStationId} qty`,
-          lowPerHour: lp,
-          highPerHour: hp,
+          lowPerHour: meanLow,
+          highPerHour: meanHigh,
           swingPerHour: swing,
           swingPct: baselinePerHour > 0 ? (swing / baselinePerHour) * 100 : 0,
+          swingStats,
+          isSignificant: isSignificantFrom(swingStats),
         });
       });
     });
@@ -248,30 +309,30 @@ export function runSensitivitySweep(opts: RunOptsLike): SensitivitySummary {
         pools[p] = { ...(pools[p] ?? pool), capacity: cap };
         return pools;
       };
-      const lowRun = runChain({
-        ...baseOpts,
-        toolPools: patch(lowCap),
-        horizonMs: opts.horizonMs,
-        warmupMs: opts.warmupMs,
-        prng: new SeededPrng(opts.seed),
-      });
-      const highRun = runChain({
-        ...baseOpts,
-        toolPools: patch(highCap),
-        horizonMs: opts.horizonMs,
-        warmupMs: opts.warmupMs,
-        prng: new SeededPrng(opts.seed),
-      });
-      const lp = lowRun.throughputLambda * 3_600_000;
-      const hp = highRun.throughputLambda * 3_600_000;
-      const swing = Math.abs(hp - lp);
+      const runPool =
+        (cap: number) =>
+        (seed: number): number => {
+          const r = runChain({
+            ...baseOpts,
+            toolPools: patch(cap),
+            horizonMs: opts.horizonMs,
+            warmupMs: opts.warmupMs,
+            prng: new SeededPrng(seed),
+          });
+          return r.throughputLambda * 3_600_000;
+        };
+      const { deltas, meanLow, meanHigh } = runPairedSwing(runPool(lowCap), runPool(highCap));
+      const swingStats = computeStats(deltas);
+      const swing = Math.abs(swingStats.mean);
       constraintRows.push({
         kind: "toolPoolCap",
         label: `Tool pool "${pool.name}" capacity`,
-        lowPerHour: lp,
-        highPerHour: hp,
+        lowPerHour: meanLow,
+        highPerHour: meanHigh,
         swingPerHour: swing,
         swingPct: baselinePerHour > 0 ? (swing / baselinePerHour) * 100 : 0,
+        swingStats,
+        isSignificant: isSignificantFrom(swingStats),
       });
     }
   }
@@ -295,31 +356,31 @@ export function runSensitivitySweep(opts: RunOptsLike): SensitivitySummary {
         ...topology,
         nodes: topology.nodes.map((n, i) => (i === nIdx ? { ...n, capacity: newCap } : n)),
       });
-      const lowRun = runChain({
-        ...baseOpts,
-        topology: patch(lowCap),
-        horizonMs: opts.horizonMs,
-        warmupMs: opts.warmupMs,
-        prng: new SeededPrng(opts.seed),
-      });
-      const highRun = runChain({
-        ...baseOpts,
-        topology: patch(highCap),
-        horizonMs: opts.horizonMs,
-        warmupMs: opts.warmupMs,
-        prng: new SeededPrng(opts.seed),
-      });
-      const lp = lowRun.throughputLambda * 3_600_000;
-      const hp = highRun.throughputLambda * 3_600_000;
-      const swing = Math.abs(hp - lp);
+      const runCap =
+        (newCap: number) =>
+        (seed: number): number => {
+          const r = runChain({
+            ...baseOpts,
+            topology: patch(newCap),
+            horizonMs: opts.horizonMs,
+            warmupMs: opts.warmupMs,
+            prng: new SeededPrng(seed),
+          });
+          return r.throughputLambda * 3_600_000;
+        };
+      const { deltas, meanLow, meanHigh } = runPairedSwing(runCap(lowCap), runCap(highCap));
+      const swingStats = computeStats(deltas);
+      const swing = Math.abs(swingStats.mean);
       const stationLabel = node.label ?? `Station ${String(nIdx + 1)}`;
       constraintRows.push({
         kind: "stationCapacity",
         label: `${stationLabel} capacity (${String(lowCap)} ↔ ${String(highCap)})`,
-        lowPerHour: lp,
-        highPerHour: hp,
+        lowPerHour: meanLow,
+        highPerHour: meanHigh,
         swingPerHour: swing,
         swingPct: baselinePerHour > 0 ? (swing / baselinePerHour) * 100 : 0,
+        swingStats,
+        isSignificant: isSignificantFrom(swingStats),
       });
     });
   }

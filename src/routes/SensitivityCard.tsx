@@ -197,7 +197,7 @@ export function SensitivityBody({
               key={row.stationLabel}
               {...wrapperProps}
               data-tone={tone}
-              title={`${row.stationLabel}: ${fmt(row.lowPerHour)}/h (low) → ${fmt(row.highPerHour)}/h (high) · ${toneLabel}${onClickRow ? " · click for detail" : ""}`}
+              title={`${row.stationLabel}: ${fmt(row.lowPerHour)}/h (low) → ${fmt(row.highPerHour)}/h (high) · ${toneLabel}${row.swingStats.halfWidth95 > 0 ? ` · 95 % CI ±${fmt(row.swingStats.halfWidth95)}/h on swing` : ""}${onClickRow ? " · click for detail" : ""}`}
             >
               <div
                 className={`w-28 shrink-0 truncate text-right font-medium ${tone === "noise" ? "text-muted-foreground" : "text-foreground/80"}`}
@@ -226,6 +226,18 @@ export function SensitivityBody({
               >
                 {row.swingPct.toFixed(1)}%
               </div>
+              {/* VROL-1062 — inline CI hint when reps ≥ 2.
+                  "noise" tone already implies "CI overlaps zero";
+                  we render the half-width either way so the user
+                  sees how wide the answer is, not just the verdict. */}
+              {row.swingStats.halfWidth95 > 0 ? (
+                <div
+                  className="text-muted-foreground/70 w-20 shrink-0 text-right font-mono text-[10px] tabular-nums"
+                  data-testid={`sens-ci-${row.stationLabel}`}
+                >
+                  ±{fmt(row.swingStats.halfWidth95)}
+                </div>
+              ) : null}
             </Wrapper>
           );
         })}

@@ -28,6 +28,18 @@ export const NOISE_FLOOR_PCT_OF_MAX = 0.01; // 1% of the widest bar
 export const NOISE_FLOOR_ABS_PER_HOUR = 5; // 5 parts/h absolute floor
 
 export function classifyTornadoRow(row: SensitivityRow, maxSwingPerHour: number): TornadoBarTone {
+  // VROL-1062 — when the sweep ran ≥ 2 reps we have a real 95 % CI on
+  // the swing. Use the statistical significance flag as the noise
+  // gate — far more rigorous than the swing-vs-floor heuristic
+  // below. The flag is true when the CI excludes zero (the swing is
+  // statistically distinguishable from no effect).
+  if (row.swingStats.halfWidth95 > 0) {
+    if (!row.isSignificant) return "noise";
+    return row.lowPerHour >= row.highPerHour ? "positive" : "negative";
+  }
+  // K=1 (no CI to test against) — fall back to the swing-vs-floor
+  // heuristics. Captures the "single rep, swing barely moved"
+  // scenario when the user hasn't opted into replications.
   const belowRelFloor =
     maxSwingPerHour > 0 && row.swingPerHour < maxSwingPerHour * NOISE_FLOOR_PCT_OF_MAX;
   const belowAbsFloor = row.swingPerHour < NOISE_FLOOR_ABS_PER_HOUR;
