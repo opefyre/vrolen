@@ -168,6 +168,14 @@ function isFeasible(c: OptimizationCandidate, k: Constraints): boolean {
  * subset. Falls back to the full set when nothing is feasible so the card
  * still shows a "winner" — the constraint badge then tells the user that
  * the winner is technically infeasible.
+ *
+ * VROL-1059 — CI-aware tiebreaker: when the leader and a runner-up have
+ * 95 % confidence intervals on throughput that overlap, prefer the one
+ * with the higher LOWER bound on throughput. This is the robust pick
+ * — picking by mean alone with overlapping CIs is statistically a
+ * coin flip. We only apply this for the throughput-max objective
+ * because the CI is computed on throughput; the other objectives
+ * fall back to mean-only ordering.
  */
 function pickBest(
   candidates: readonly OptimizationCandidate[],
@@ -182,7 +190,26 @@ function pickBest(
     const bv = objective.extract(b);
     return objective.direction === "max" ? bv - av : av - bv;
   });
-  const winner = sorted[0] ?? candidates[0]!;
+  let winner = sorted[0] ?? candidates[0]!;
+  // VROL-1059 — for throughput-max, walk down ties (overlapping CIs)
+  // and pick the candidate with the higher LOWER 95 % bound.
+  if (
+    objective.value === "throughput-max" &&
+    winner.throughputHalfWidth95 > 0 &&
+    sorted.length > 1
+  ) {
+    for (let i = 1; i < sorted.length; i++) {
+      const next = sorted[i]!;
+      if (next.throughputHalfWidth95 <= 0) break;
+      // Overlap = the next candidate's HIGH end exceeds the current
+      // leader's LOW end. If they overlap, prefer the candidate with
+      // the higher lower bound (more robust). Stop walking once the
+      // next candidate's HIGH falls below the leader's LOW (no overlap
+      // means the leader is statistically clear of everything below).
+      if (next.throughputHigh95 < winner.throughputLow95) break;
+      if (next.throughputLow95 > winner.throughputLow95) winner = next;
+    }
+  }
   return { winner, fromFeasible };
 }
 
@@ -526,6 +553,12 @@ function BestSummaryBar({
       <span className="text-muted-foreground">
         {objective.format(winnerValue)}
         {objective.unitTrailing ? ` ${objective.unitTrailing}` : ""}
+        {/* VROL-1059 — show ± half-width when the search ran ≥ 2 reps. */}
+        {winner.throughputHalfWidth95 > 0 && objective.value === "throughput-max" ? (
+          <span className="text-muted-foreground/80 ml-1">
+            ± {fmtInt(winner.throughputHalfWidth95)} /h (95 % CI)
+          </span>
+        ) : null}
         {deltaPct !== null ? (
           <span className={goodDelta ? "text-sim-running ml-1" : "text-sim-down ml-1"}>
             ({deltaPct >= 0 ? "+" : ""}
@@ -653,7 +686,7 @@ function HeatmapView({
                           data-winner={isWinner ? "true" : "false"}
                           onClick={() => onCellClick(cell)}
                           className={`${heat.bg} ${ringCls} ${infeasibleCls} hover:ring-foreground/30 flex w-full cursor-pointer flex-col items-end justify-center rounded px-2 py-1.5 text-right transition-shadow hover:ring-2`}
-                          title={`WIP ${String(cap)} @${multX(mult)} → ${objective.format(objective.extract(cell))}${objective.unitTrailing ? ` ${objective.unitTrailing}` : ""}${feasible ? "" : " · infeasible"}`}
+                          title={`WIP ${String(cap)} @${multX(mult)} → ${objective.format(objective.extract(cell))}${objective.unitTrailing ? ` ${objective.unitTrailing}` : ""}${cell.throughputHalfWidth95 > 0 ? ` (${fmtInt(cell.throughputLow95)}–${fmtInt(cell.throughputHigh95)} 95% CI)` : ""}${feasible ? "" : " · infeasible"}`}
                         >
                           <span className="font-mono text-[11px] tabular-nums">
                             {objective.format(objective.extract(cell))}

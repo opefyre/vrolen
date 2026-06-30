@@ -31,6 +31,11 @@ function candidate(overrides: Partial<OptimizationCandidate>): OptimizationCandi
     // VROL-1036/1037 — sustainability cost defaults.
     meanTotalEnergyJ: 0,
     meanEnergyIntensityJPerPart: 0,
+    // VROL-1059 — CI defaults: single-rep → zero half-width.
+    throughputStddev: 0,
+    throughputHalfWidth95: 0,
+    throughputLow95: 1_000,
+    throughputHigh95: 1_000,
     ...overrides,
   } satisfies OptimizationCandidate;
 }
@@ -245,5 +250,93 @@ describe("OptimizationCard (VROL-842)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Heatmap" }));
     expect(container.querySelectorAll('[data-slot="optimization-cell"]').length).toBe(4);
     expect(container.querySelectorAll('[data-slot="pareto-dot"]').length).toBe(0);
+  });
+
+  it("VROL-1059 — picker prefers higher LOWER-95 bound when CIs overlap on throughput", () => {
+    // Two candidates with overlapping 95% CIs:
+    //   A: mean 1000, halfWidth 200 → CI [800, 1200]
+    //   B: mean 1100, halfWidth 400 → CI [700, 1500]
+    // A has the higher LOWER bound (800 > 700), so the robust picker
+    // prefers A even though B has the higher MEAN.
+    const candidates: OptimizationCandidate[] = [
+      candidate({
+        bufferCapacity: 2,
+        cycleMultiplier: 1,
+        meanThroughputPerHour: 1_000,
+        throughputStddev: 100,
+        throughputHalfWidth95: 200,
+        throughputLow95: 800,
+        throughputHigh95: 1_200,
+      }),
+      candidate({
+        bufferCapacity: 4,
+        cycleMultiplier: 1,
+        meanThroughputPerHour: 1_100,
+        throughputStddev: 200,
+        throughputHalfWidth95: 400,
+        throughputLow95: 700,
+        throughputHigh95: 1_500,
+      }),
+    ];
+    const summary: OptimizationSummary = {
+      candidates,
+      best: candidates[1]!,
+      runnerUp: candidates[0]!,
+      currentCapacity: 2,
+      targetStationIdx: 0,
+      targetStationLabel: "Filler",
+      bufferLevels: [2, 4],
+      cycleMultipliers: [1],
+      searchSize: 2,
+      elapsedMs: 12,
+    };
+    const { container } = render(
+      <OptimizationCard summary={summary} running={false} onRun={() => undefined} />,
+    );
+    const winner = container.querySelector('[data-slot="optimization-cell"][data-winner="true"]');
+    expect(winner?.textContent ?? "").toContain("1,000");
+  });
+
+  it("VROL-1059 — picker falls back to mean ordering when CIs don't overlap", () => {
+    // A: mean 1000, halfWidth 50 → CI [950, 1050]
+    // B: mean 1200, halfWidth 50 → CI [1150, 1250]
+    // CIs don't overlap (1050 < 1150), so the picker prefers B by mean.
+    const candidates: OptimizationCandidate[] = [
+      candidate({
+        bufferCapacity: 2,
+        cycleMultiplier: 1,
+        meanThroughputPerHour: 1_000,
+        throughputStddev: 25,
+        throughputHalfWidth95: 50,
+        throughputLow95: 950,
+        throughputHigh95: 1_050,
+      }),
+      candidate({
+        bufferCapacity: 4,
+        cycleMultiplier: 1,
+        meanThroughputPerHour: 1_200,
+        throughputStddev: 25,
+        throughputHalfWidth95: 50,
+        throughputLow95: 1_150,
+        throughputHigh95: 1_250,
+      }),
+    ];
+    const summary: OptimizationSummary = {
+      candidates,
+      best: candidates[1]!,
+      runnerUp: candidates[0]!,
+      currentCapacity: 2,
+      targetStationIdx: 0,
+      targetStationLabel: "Filler",
+      bufferLevels: [2, 4],
+      cycleMultipliers: [1],
+      searchSize: 2,
+      elapsedMs: 12,
+    };
+    const { container } = render(
+      <OptimizationCard summary={summary} running={false} onRun={() => undefined} />,
+    );
+    const winner = container.querySelector('[data-slot="optimization-cell"][data-winner="true"]');
+    expect(winner?.textContent ?? "").toContain("1,200");
   });
 });

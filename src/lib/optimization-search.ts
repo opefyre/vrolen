@@ -55,6 +55,21 @@ export interface OptimizationCandidate {
    */
   readonly meanTotalEnergyJ: number;
   readonly meanEnergyIntensityJPerPart: number;
+  /**
+   * VROL-1059 — sample stddev of throughputPerHour across
+   * replications (Bessel-corrected). 0 when reps < 2.
+   */
+  readonly throughputStddev: number;
+  /**
+   * VROL-1059 — half-width of the 95% confidence interval on mean
+   * throughput, computed as 1.96 × s / √n (normal-approx z). 0 when
+   * reps < 2. Same formula as the line-OEE replications card.
+   */
+  readonly throughputHalfWidth95: number;
+  /** VROL-1059 — meanThroughputPerHour − halfWidth (or = mean when reps=1). */
+  readonly throughputLow95: number;
+  /** VROL-1059 — meanThroughputPerHour + halfWidth (or = mean when reps=1). */
+  readonly throughputHigh95: number;
 }
 
 export interface OptimizationSummary {
@@ -117,6 +132,9 @@ export function runOptimizationSearch(opts: RunOptsLike): OptimizationSummary {
         let sumGoodPerHour = 0;
         let sumEnergyJ = 0;
         let sumIntensity = 0;
+        // VROL-1059 — collect per-rep throughputPerHour so we can
+        // compute Bessel-corrected sample stddev + 95 % half-width.
+        const tputSamples: number[] = [];
         for (let i = 0; i < reps; i++) {
           const base = opts.buildBaseOptions(mult);
           // VROL-966 — apply toolPoolDelta uniformly to every declared pool.
@@ -135,6 +153,7 @@ export function runOptimizationSearch(opts: RunOptsLike): OptimizationSummary {
             prng: new SeededPrng(opts.seed + i * 31),
           });
           const tputPerHour = r.throughputLambda * 3_600_000;
+          tputSamples.push(tputPerHour);
           sumTput += tputPerHour;
           sumCompleted += r.completed;
           sumTisys += r.avgTimeInSystemW;
@@ -152,12 +171,27 @@ export function runOptimizationSearch(opts: RunOptsLike): OptimizationSummary {
           sumEnergyJ += r.totalEnergyJ ?? 0;
           sumIntensity += r.completed > 0 ? (r.totalEnergyJ ?? 0) / r.completed : 0;
         }
+        // VROL-1059 — sample stddev + 95 % half-width on throughput.
+        // Single-rep run → no variance estimate; expose 0 + low=high=mean.
+        const meanTput = sumTput / reps;
+        let throughputStddev = 0;
+        let throughputHalfWidth95 = 0;
+        if (reps > 1) {
+          let variance = 0;
+          for (const t of tputSamples) {
+            const d = t - meanTput;
+            variance += d * d;
+          }
+          variance /= reps - 1; // Bessel-corrected.
+          throughputStddev = Math.sqrt(variance);
+          throughputHalfWidth95 = (1.96 * throughputStddev) / Math.sqrt(reps);
+        }
         candidates.push({
           bufferCapacity: capacity,
           cycleMultiplier: mult,
           toolPoolDelta,
           targetStationIdx: opts.targetStationIdx,
-          meanThroughputPerHour: sumTput / reps,
+          meanThroughputPerHour: meanTput,
           meanCompleted: sumCompleted / reps,
           meanTimeInSystemMs: sumTisys / reps,
           meanScrapRate: sumScrap / reps,
@@ -167,6 +201,10 @@ export function runOptimizationSearch(opts: RunOptsLike): OptimizationSummary {
           replications: reps,
           meanTotalEnergyJ: sumEnergyJ / reps,
           meanEnergyIntensityJPerPart: sumIntensity / reps,
+          throughputStddev,
+          throughputHalfWidth95,
+          throughputLow95: meanTput - throughputHalfWidth95,
+          throughputHigh95: meanTput + throughputHalfWidth95,
         });
       }
     }
