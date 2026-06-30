@@ -27,6 +27,10 @@ export function applyLabel(payload: ActionApplyPayload): string {
       return `Apply capacity +${String(payload.delta)} line-wide`;
     case "reliability:flag":
     case "sampling:flag":
+    case "tip:flag":
+      // VROL-1103 — three info-only kinds share one label. The handler
+      // surfaces the carried hint as a toast; the button itself just
+      // reads "Apply".
       return "Apply";
   }
 }

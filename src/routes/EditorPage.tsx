@@ -2750,6 +2750,15 @@ function EditorCanvas() {
               "Open the station inspector → Cycle distribution. Pick truncatedNormal and set min/max to physical bounds.",
           });
           break;
+        // VROL-1103 — generic info nudge (Sprint 185 rules). The rule
+        // body lives on the payload's `hint`; station context is
+        // optional. Surfaced as a toast.info just like the older
+        // flag kinds.
+        case "tip:flag":
+          toast.info(payload.hint, {
+            ...(payload.stationLabel ? { description: `At ${payload.stationLabel}.` } : {}),
+          });
+          break;
         case "cycle:scaleAll":
           // VROL-998 — multi-lever goal-mode applies a uniform cycle
           // multiplier to every station. Reuses scaleDistribution.

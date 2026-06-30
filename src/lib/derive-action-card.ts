@@ -63,7 +63,17 @@ export type ActionApplyPayload =
   // VROL-1044 — uniform additive bump to every station's capacity.
   // Used by multi-lever goal mode when capacityDelta > 0 is the
   // best path to the target. Engine clamps each station's cap at 10.
-  | { kind: "capacity:scaleAll"; delta: number };
+  | { kind: "capacity:scaleAll"; delta: number }
+  /**
+   * VROL-1103 — generic informational flag for rules that hint at a
+   * setting elsewhere rather than mutate the scenario. Carries a
+   * `hint` string the EditorPage handler shows as a toast.info, plus
+   * an optional `stationLabel` for "this is about station X" framing.
+   * Sprint 185 introduced six rules that all needed an info nudge;
+   * sharing one payload kind keeps the union flat rather than adding
+   * six near-identical variants.
+   */
+  | { kind: "tip:flag"; hint: string; stationLabel?: string };
 
 export interface ActionCard {
   readonly title: string;
@@ -324,6 +334,169 @@ export function deriveActionCard(
           tone: "warn",
         };
       }
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────
+  // VROL-1104 → VROL-1109 (Sprint 185) — six informational rules
+  // covering scenarios the structural rules above don't catch. Each
+  // emits a tip:flag payload (introduced in VROL-1103); the EditorPage
+  // handler surfaces the hint as a toast.info. Ordered by impact:
+  // scrap invalidates conclusions, low-OEE points at A/P/Q breakdown,
+  // WIP / idle-source / setup / per-edge-buffer are diagnostic flags.
+  // Sits between the structural rules and the slim-factor fallback so
+  // it fires when no specific lever matched but a clear systemic
+  // signal is present.
+  // ────────────────────────────────────────────────────────────────────
+
+  // VROL-1104 — high-scrap. Above 5 % line scrap, defect work outpaces
+  // cycle tuning. Surfaces BEFORE the slim-factor fallback because the
+  // user needs to address scrap before reading the OEE breakdown.
+  if ((result.lineScrapRate ?? 0) > 0.05) {
+    const worstScrapIdx = (() => {
+      const totals = result.perStationScrapped ?? [];
+      let max = 0;
+      let pick = -1;
+      for (let i = 0; i < totals.length; i++) {
+        const v = totals[i] ?? 0;
+        if (v > max) {
+          max = v;
+          pick = i;
+        }
+      }
+      return pick;
+    })();
+    const worstLabel = labels[worstScrapIdx] ?? topLabel;
+    return {
+      title: `Scrap rate ${(result.lineScrapRate * 100).toFixed(1)} %`,
+      body: `Defective parts are above 5 % of total output. At this level, defect root-cause work outpaces cycle tuning — open Inspector → Defects at ${worstLabel} (highest scrap count) to see what's driving it.`,
+      tone: "warn",
+      apply: {
+        kind: "tip:flag",
+        hint: `Open Inspector → Defects at ${worstLabel} to investigate the scrap source.`,
+        stationLabel: worstLabel,
+      },
+    };
+  }
+
+  // VROL-1105 — low line OEE (< 50 %). Distinct from the slim-factor
+  // fallback below: that one runs at any OEE and identifies which
+  // FACTOR is slim. This one fires only at structurally low OEE and
+  // hints the user at the BREAKDOWN card (which surfaces A/P/Q +
+  // Util/TEEP together) rather than fishing in the bottleneck.
+  if ((result.lineOee ?? 1) < 0.5) {
+    return {
+      title: `Line OEE is ${(result.lineOee * 100).toFixed(0)} %`,
+      body: "Below 50 %, the line is structurally constrained. Open the OEE breakdown card to see which factor — Availability (breakdowns / maintenance), Performance (slow cycles / micro-stops), Quality (scrap) — is the slim one before chasing cycle-time changes.",
+      tone: "warn",
+      apply: {
+        kind: "tip:flag",
+        hint: "Open the OEE breakdown card on the result panel.",
+      },
+    };
+  }
+
+  // VROL-1106 — WIP pile-up. averageWipL > 3 × station count means
+  // buffers are swelling because downstream isn't pulling fast enough.
+  // Tighten a downstream buffer cap or open the bottleneck before
+  // adding more cycle.
+  const stationCount = result.perStationOee.length;
+  if (stationCount > 0 && (result.averageWipL ?? 0) > 3 * stationCount) {
+    return {
+      title: `WIP averaging ${result.averageWipL.toFixed(1)} parts`,
+      body: `Average WIP is ${result.averageWipL.toFixed(1)} across ${String(stationCount)} stations — buffers are swelling because downstream isn't pulling fast enough. Tighten a downstream buffer cap or accelerate the bottleneck before adding more upstream cycle.`,
+      tone: "warn",
+      apply: {
+        kind: "tip:flag",
+        hint: "Lower interStationBufferCapacity in run settings, or open the bottleneck inspector to raise its cycle / capacity.",
+      },
+    };
+  }
+
+  // VROL-1107 — idle-source (upstream-limited). Source idle > 50 %
+  // means the line is starving on supply, not blocked by a slow mid-
+  // chain station. Different fix — speed up the source.
+  const sourceState = result.perStationStateMs?.[0];
+  if (sourceState) {
+    let total = 0;
+    for (const v of Object.values(sourceState)) total += v;
+    const idleFraction = total > 0 ? (sourceState["Idle"] ?? 0) / total : 0;
+    if (idleFraction > 0.5) {
+      const sourceLabel = labels[0] ?? "the source";
+      return {
+        title: "Line is upstream-limited",
+        body: `${sourceLabel} is idle ${(idleFraction * 100).toFixed(0)} % of the run — downstream is starving on supply, not blocked by a slow mid-chain station. Speed up the source cycle or raise its capacity before chasing downstream bottlenecks.`,
+        tone: "info",
+        apply: {
+          kind: "tip:flag",
+          hint: `Open Inspector → Cycle on ${sourceLabel} and reduce its cycle time.`,
+          stationLabel: sourceLabel,
+        },
+      };
+    }
+  }
+
+  // VROL-1108 — setup dominates cycle. If any station's per-rep setup
+  // exceeds 2 × its cycle time (taken from perStationStateMs), the
+  // line's throughput is governed by changeovers, not work.
+  for (let i = 0; i < (result.perStationStateMs?.length ?? 0); i++) {
+    const stateMs = result.perStationStateMs?.[i];
+    if (!stateMs) continue;
+    const setupMs = stateMs["Setup"] ?? 0;
+    const runningMs = stateMs["Running"] ?? 0;
+    if (runningMs > 0 && setupMs > 2 * runningMs) {
+      const stationLabel = labels[i] ?? `Station ${String(i + 1)}`;
+      return {
+        title: `Changeovers swamp work at ${stationLabel}`,
+        body: `${stationLabel} spent ${Math.round(setupMs / 1000)} s in Setup vs ${Math.round(runningMs / 1000)} s Running — setup is dominating throughput. Reduce setupDistribution or consolidate the product mix so the line changes over less often.`,
+        tone: "warn",
+        apply: {
+          kind: "tip:flag",
+          hint: `Open Inspector → Setup distribution on ${stationLabel}.`,
+          stationLabel,
+        },
+      };
+    }
+  }
+
+  // VROL-1109 — per-edge buffer saturation. Any sample's
+  // perEdgeBufferFill[i] / interStationBufferCapacity > 0.95 for
+  // > 50 % of samples means one queue is the choke point. Suggest the
+  // per-edge bufferCapacity override (S178) rather than raising the
+  // global buffer line-wide.
+  // We don't know the global cap from ChainResult alone — use the max
+  // observed fill across all samples + edges as a proxy. When ANY fill
+  // sits near a steady max, the buffer is likely capped.
+  if (result.samples && result.samples.length >= 4) {
+    const edgeCount = result.samples[0]?.perEdgeBufferFill.length ?? 0;
+    let saturated: number | null = null;
+    for (let edgeIdx = 0; edgeIdx < edgeCount; edgeIdx++) {
+      let peak = 0;
+      for (const s of result.samples) {
+        const fill = s.perEdgeBufferFill[edgeIdx] ?? 0;
+        if (fill > peak) peak = fill;
+      }
+      if (peak === 0) continue;
+      let nearPeakCount = 0;
+      for (const s of result.samples) {
+        const fill = s.perEdgeBufferFill[edgeIdx] ?? 0;
+        if (fill / peak >= 0.95) nearPeakCount++;
+      }
+      if (nearPeakCount > result.samples.length * 0.5) {
+        saturated = edgeIdx;
+        break;
+      }
+    }
+    if (saturated !== null) {
+      return {
+        title: `Buffer on edge ${String(saturated + 1)} is saturating`,
+        body: `One inter-station buffer sat near its cap for most of the run. Raising the global interStationBufferCapacity affects every edge; the per-edge bufferCapacity field (S178) lets you raise it on JUST this buffer without growing the WIP envelope line-wide.`,
+        tone: "info",
+        apply: {
+          kind: "tip:flag",
+          hint: `Set bufferCapacity on edge ${String(saturated + 1)} in the scenario JSON to raise just this buffer.`,
+        },
+      };
     }
   }
 

@@ -325,4 +325,163 @@ describe("deriveActionCard (VROL-948 / VROL-959)", () => {
     const card = deriveActionCard(r)!;
     expect(card.title.toLowerCase()).not.toContain("partial batch");
   });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Sprint 185 — VROL-1104 → VROL-1109: 6 new informational rules.
+  // Each predicate gets a positive (fires) + a negative case.
+  // The baseResult fixture has lineOee=0.75, lineScrapRate=0,
+  // averageWipL=5, perStationScrapped=[0,0,0]; these tests overlay
+  // ONLY the field needed to trip each predicate to keep the
+  // higher-priority rules dormant.
+  // ────────────────────────────────────────────────────────────────────────
+
+  it("VROL-1104 — high-scrap rule fires when lineScrapRate > 5 %", () => {
+    const r = baseResult({
+      lineScrapRate: 0.08,
+      perStationScrapped: [10, 90, 5], // worst station = idx 1 (Capper)
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).toContain("scrap");
+    expect(card.tone).toBe("warn");
+    expect(card.apply?.kind).toBe("tip:flag");
+    if (card.apply?.kind === "tip:flag") {
+      expect(card.apply.stationLabel).toBe("Capper");
+    }
+  });
+
+  it("VROL-1104 — high-scrap rule hidden when scrap is at or below 5 %", () => {
+    const r = baseResult({ lineScrapRate: 0.03 });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).not.toContain("scrap rate");
+  });
+
+  it("VROL-1105 — low-line-oee fires when lineOee < 0.5", () => {
+    const r = baseResult({ lineOee: 0.4 });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).toContain("line oee");
+    expect(card.tone).toBe("warn");
+    expect(card.apply?.kind).toBe("tip:flag");
+  });
+
+  it("VROL-1105 — low-line-oee hidden when OEE ≥ 0.5", () => {
+    const r = baseResult({ lineOee: 0.7 });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).not.toContain("line oee is");
+  });
+
+  it("VROL-1106 — high-wip rule fires when WIP > 3 × stationCount", () => {
+    // 3 stations in baseResult → 3 × 3 = 9. WIP=15 trips it.
+    const r = baseResult({ averageWipL: 15 });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).toContain("wip");
+    expect(card.apply?.kind).toBe("tip:flag");
+  });
+
+  it("VROL-1106 — high-wip rule hidden when WIP is below threshold", () => {
+    const r = baseResult({ averageWipL: 5 });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).not.toContain("wip averaging");
+  });
+
+  it("VROL-1107 — idle-source rule fires when source Idle > 50 %", () => {
+    const r = baseResult({
+      perStationStateMs: [
+        { Idle: 7_000, Running: 3_000 }, // 70 % idle at source
+        { Idle: 0, Running: 10_000 },
+        { Idle: 0, Running: 10_000 },
+      ],
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).toContain("upstream-limited");
+    expect(card.apply?.kind).toBe("tip:flag");
+    if (card.apply?.kind === "tip:flag") {
+      expect(card.apply.stationLabel).toBe("Filler");
+    }
+  });
+
+  it("VROL-1107 — idle-source rule hidden when source is busy", () => {
+    const r = baseResult({
+      perStationStateMs: [
+        { Idle: 1_000, Running: 9_000 }, // 10 % idle
+        { Idle: 0, Running: 10_000 },
+        { Idle: 0, Running: 10_000 },
+      ],
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).not.toContain("upstream-limited");
+  });
+
+  it("VROL-1108 — setup-dominates rule fires when Setup > 2 × Running", () => {
+    const r = baseResult({
+      perStationStateMs: [
+        { Idle: 0, Running: 8_000 },
+        // Station idx=1 (Capper): 8s Setup vs 2s Running → setup-dominates.
+        { Setup: 8_000, Running: 2_000 },
+        { Idle: 0, Running: 10_000 },
+      ],
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).toContain("changeovers swamp work");
+    expect(card.apply?.kind).toBe("tip:flag");
+    if (card.apply?.kind === "tip:flag") {
+      expect(card.apply.stationLabel).toBe("Capper");
+    }
+  });
+
+  it("VROL-1108 — setup-dominates rule hidden when setup is short", () => {
+    const r = baseResult({
+      perStationStateMs: [
+        { Idle: 0, Running: 10_000 },
+        { Setup: 500, Running: 9_000 }, // 5 % setup share
+        { Idle: 0, Running: 10_000 },
+      ],
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).not.toContain("changeovers swamp");
+  });
+
+  it("VROL-1109 — per-edge-buffer-saturated rule fires when fill is near peak ≥ 50 % of samples but not EVERY sample", () => {
+    // 4 of 5 samples near the peak (10). One sample at 2 keeps the
+    // existing "buffer sustained near full" rule (which requires
+    // every-of-last-10 ≥ 80 % of peak) from firing — only the new
+    // per-edge rule (≥ 95 % for > 50 % of samples) trips.
+    const samples = [
+      { perEdgeBufferFill: [10, 2] },
+      { perEdgeBufferFill: [10, 1] },
+      { perEdgeBufferFill: [10, 3] },
+      { perEdgeBufferFill: [2, 2] },
+      { perEdgeBufferFill: [10, 2] },
+    ];
+    const r = baseResult({ samples: samples as ChainResult["samples"] });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).toContain("saturating");
+    expect(card.apply?.kind).toBe("tip:flag");
+  });
+
+  it("VROL-1109 — per-edge-buffer-saturated rule hidden when fill varies widely", () => {
+    const samples = [
+      { perEdgeBufferFill: [1, 2] },
+      { perEdgeBufferFill: [10, 1] },
+      { perEdgeBufferFill: [2, 3] },
+      { perEdgeBufferFill: [9, 2] },
+      { perEdgeBufferFill: [3, 2] },
+    ];
+    const r = baseResult({ samples: samples as ChainResult["samples"] });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).not.toContain("saturating");
+  });
+
+  it("VROL-1110 — priority discipline: structural rules still fire ahead of the new ones", () => {
+    // High scrap AND high WIP AND low OEE all at once. The high-scrap
+    // rule (1104) has highest priority among the new ones, so it
+    // should win over the others.
+    const r = baseResult({
+      lineScrapRate: 0.08,
+      averageWipL: 50,
+      lineOee: 0.2,
+      perStationScrapped: [10, 90, 5],
+    });
+    const card = deriveActionCard(r)!;
+    expect(card.title.toLowerCase()).toContain("scrap");
+  });
 });
