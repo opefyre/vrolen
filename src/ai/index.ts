@@ -41,3 +41,27 @@ export {
   generateScenarioFromNl,
   type ScenarioGenerationResult,
 } from "./scenario-tool";
+
+// VROL-410 — auto-narration of a sim run.
+export {
+  deriveDeterministicNarration,
+  narrationSystemPrompt,
+  narrateRun,
+  type NarrationBundle,
+  type NarrationResult,
+} from "./narration";
+
+// VROL-414 — AI usage tracking.
+export {
+  withUsageTracking,
+  createInMemoryUsageStore,
+  createLocalStorageUsageStore,
+  summarizeByDay,
+  summarizeByProvider,
+  formatCostEstimate,
+  type UsageEntry,
+  type UsageStore,
+  type UsageSummary,
+  type DayRollup,
+  type ProviderRollup,
+} from "./usage";
