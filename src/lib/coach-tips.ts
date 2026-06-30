@@ -44,6 +44,50 @@ export interface CoachTipDeps {
    * multiResult.best.meetsEnergyBudget && a budget was set.
    */
   readonly goalMultiBudgetInfeasible?: boolean;
+  /**
+   * VROL-1063 — last-run line-wide average WIP (parts in inter-station
+   * buffers). When much larger than the station count it signals
+   * pile-up (buffers swelling, downstream not pulling fast enough).
+   */
+  readonly lineAverageWipL?: number;
+  /**
+   * VROL-1064 — last-run line OEE (Availability × Performance × Quality),
+   * clamped 0..1. Below 0.5 suggests a structural issue worth a
+   * breakdown investigation rather than just bottleneck tuning.
+   */
+  readonly lineOee?: number;
+  /**
+   * VROL-1065 — last-run line scrap rate, clamped 0..1. Above 5 %
+   * suggests defect-root-cause investigation; below that it's noise.
+   */
+  readonly lineScrapRate?: number;
+  /**
+   * VROL-1066 — warmup-as-fraction-of-horizon on the last run. Below
+   * 10 % means the engine had barely any time to reach steady state
+   * before measurements started.
+   */
+  readonly warmupFractionOfHorizon?: number;
+  /**
+   * VROL-1067 — true when at least one station's cycle distribution
+   * is non-deterministic (not "constant") AND the last run used
+   * replications=1. Replications would let the user see the
+   * variance, not just the single-rep mean.
+   */
+  readonly stochasticSingleRep?: boolean;
+  /**
+   * VROL-1068 — peak per-edge buffer fill fraction across the last
+   * run, 0..1. When > 0.95 (buffer regularly hits its cap), a
+   * per-edge bufferCapacity override (S178) is the precise lever
+   * rather than raising the global buffer.
+   */
+  readonly maxBufferFillFraction?: number;
+  /**
+   * VROL-1069 — source station's idle-state fraction over the last
+   * run, 0..1. Above 0.5 means the line was upstream-limited (the
+   * source isn't producing fast enough) — different fix than a
+   * downstream bottleneck.
+   */
+  readonly sourceIdleFraction?: number;
 }
 
 export interface CoachTipCallbacks {
@@ -142,6 +186,74 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
       ...(callbacks.saveScenario
         ? { action: { label: "Save", onClick: callbacks.saveScenario } }
         : {}),
+    },
+    // VROL-1063 — WIP pile-up. Threshold 3 × stationCount captures
+    // "more parts queued than the line could turn over even once" —
+    // a rough but reliable signal that buffers are swelling.
+    {
+      id: "high-wip-warning",
+      title: "WIP is piling up",
+      body: `Average WIP is ${(deps.lineAverageWipL ?? 0).toFixed(1)} parts across ${String(stationCount)} stations — buffers are swelling because downstream isn't pulling fast enough. Tighten a downstream buffer cap or open the bottleneck before adding more cycle.`,
+      whenVisible: () =>
+        hasRun && stationCount > 0 && (deps.lineAverageWipL ?? 0) > 3 * stationCount,
+    },
+    // VROL-1064 — line OEE below 0.5 is "something is structurally
+    // wrong" not "tune a station." Direct the user at the OEE
+    // breakdown so they isolate Availability vs Performance vs
+    // Quality before chasing cycle time.
+    {
+      id: "low-line-oee-warning",
+      title: "Line OEE is below 50 %",
+      body: `Line OEE is ${((deps.lineOee ?? 0) * 100).toFixed(0)} %. Open the OEE breakdown card to see which factor — Availability (breakdowns / maintenance), Performance (slow cycles, micro-stops), or Quality (scrap) — is the slim one before chasing cycle time changes.`,
+      whenVisible: () => hasRun && (deps.lineOee ?? 1) < 0.5,
+    },
+    // VROL-1065 — scrap above 5 % means the line is producing waste
+    // at a rate that almost always swamps cycle-time gains. Surface
+    // the defect-root-cause path before optimization.
+    {
+      id: "high-scrap-warning",
+      title: "Scrap rate is above 5 %",
+      body: `Line scrap rate is ${((deps.lineScrapRate ?? 0) * 100).toFixed(1)} %. At this level, defect root-cause work outpaces cycle tuning — open per-station Inspector → Defects to see which station drives the loss.`,
+      whenVisible: () => hasRun && (deps.lineScrapRate ?? 0) > 0.05,
+    },
+    // VROL-1066 — warmup < 10 % of horizon. The engine's
+    // measurement window starts AFTER warmupMs; setting it too short
+    // means the steady-state hasn't formed and the throughput /
+    // WIP figures still carry the startup transient.
+    {
+      id: "warmup-too-short",
+      title: "Warmup may be too short",
+      body: `Warmup is ${((deps.warmupFractionOfHorizon ?? 0) * 100).toFixed(0)} % of the horizon — the run is measuring startup transients alongside steady state. Raise warmupMs to ~20 % of horizon (or extend the horizon) so the early WIP build-up doesn't bias the numbers.`,
+      whenVisible: () => hasRun && (deps.warmupFractionOfHorizon ?? 1) < 0.1,
+    },
+    // VROL-1067 — single-rep on stochastic input hides the variance.
+    // Each rep would sample a different cycle-time draw; without
+    // replications the user is reading one realisation as if it's
+    // the truth.
+    {
+      id: "stochastic-needs-replications",
+      title: "Enable replications for stochastic inputs",
+      body: "At least one station has a non-deterministic cycle distribution, but this run used a single replication. The throughput figure above is one realisation; with replications=3+ you'll see the 95 % CI on the mean. Open Run Settings → Replications.",
+      whenVisible: () => hasRun && deps.stochasticSingleRep === true,
+    },
+    // VROL-1068 — per-edge buffer is hitting its cap > 95 % of the
+    // time. Suggest the per-edge bufferCapacity field (S178) as the
+    // precise lever, not raising the global buffer cap line-wide.
+    {
+      id: "per-edge-buffer-saturated",
+      title: "A buffer is hitting its cap",
+      body: `Peak buffer fill on at least one edge sat at ${((deps.maxBufferFillFraction ?? 0) * 100).toFixed(0)} % of capacity. Raising the global buffer affects every edge; the per-edge bufferCapacity field (set on the edge directly in JSON) is the precise lever.`,
+      whenVisible: () => hasRun && (deps.maxBufferFillFraction ?? 0) > 0.95,
+    },
+    // VROL-1069 — source idle > 50 % means the line is UPSTREAM-
+    // limited (the source can't keep up with the downstream's
+    // appetite), not bottleneck-limited. Different fix: speed up
+    // the source, not the slowest mid-chain station.
+    {
+      id: "idle-source",
+      title: "Line is upstream-limited",
+      body: `The source station is idle ${((deps.sourceIdleFraction ?? 0) * 100).toFixed(0)} % of the time — the downstream is starving on supply, not blocked by a slow mid-chain station. Speed up the source's cycle or raise its capacity before chasing bottlenecks downstream.`,
+      whenVisible: () => hasRun && (deps.sourceIdleFraction ?? 0) > 0.5,
     },
   ];
 }

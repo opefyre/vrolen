@@ -127,4 +127,176 @@ describe("buildCoachTips visibility", () => {
     });
     expect(ids).not.toContain("budget-infeasible");
   });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // VROL-1063 → VROL-1069 — new tips landed in Sprint 180.
+  // Each tip has a positive (predicate fires) + a negative
+  // (predicate doesn't fire) case.
+  // ────────────────────────────────────────────────────────────────────────
+
+  it("VROL-1063 — high-wip-warning fires when WIP > 3 × stations", () => {
+    const ids = visibleIds({
+      stationCount: 4,
+      edgeCount: 3,
+      hasRun: true,
+      lineAverageWipL: 20, // 5 × stations
+    });
+    expect(ids).toContain("high-wip-warning");
+  });
+
+  it("VROL-1063 — high-wip-warning hidden when WIP is below the threshold", () => {
+    const ids = visibleIds({
+      stationCount: 4,
+      edgeCount: 3,
+      hasRun: true,
+      lineAverageWipL: 8, // 2 × stations
+    });
+    expect(ids).not.toContain("high-wip-warning");
+  });
+
+  it("VROL-1064 — low-line-oee-warning fires when lineOee < 0.5", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      lineOee: 0.35,
+    });
+    expect(ids).toContain("low-line-oee-warning");
+  });
+
+  it("VROL-1064 — low-line-oee-warning hidden when lineOee >= 0.5", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      lineOee: 0.65,
+    });
+    expect(ids).not.toContain("low-line-oee-warning");
+  });
+
+  it("VROL-1065 — high-scrap-warning fires when scrap > 5 %", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      lineScrapRate: 0.08,
+    });
+    expect(ids).toContain("high-scrap-warning");
+  });
+
+  it("VROL-1065 — high-scrap-warning hidden when scrap is at or below 5 %", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      lineScrapRate: 0.04,
+    });
+    expect(ids).not.toContain("high-scrap-warning");
+  });
+
+  it("VROL-1066 — warmup-too-short fires when warmup is < 10 % of horizon", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      warmupFractionOfHorizon: 0.05,
+    });
+    expect(ids).toContain("warmup-too-short");
+  });
+
+  it("VROL-1066 — warmup-too-short hidden when warmup is at or above 10 %", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      warmupFractionOfHorizon: 0.2,
+    });
+    expect(ids).not.toContain("warmup-too-short");
+  });
+
+  it("VROL-1067 — stochastic-needs-replications fires when single-rep + stochastic", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      stochasticSingleRep: true,
+    });
+    expect(ids).toContain("stochastic-needs-replications");
+  });
+
+  it("VROL-1067 — stochastic-needs-replications hidden when the flag is false", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      stochasticSingleRep: false,
+    });
+    expect(ids).not.toContain("stochastic-needs-replications");
+  });
+
+  it("VROL-1068 — per-edge-buffer-saturated fires when peak fill > 95 %", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      maxBufferFillFraction: 0.98,
+    });
+    expect(ids).toContain("per-edge-buffer-saturated");
+  });
+
+  it("VROL-1068 — per-edge-buffer-saturated hidden when peak fill is below 95 %", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      maxBufferFillFraction: 0.6,
+    });
+    expect(ids).not.toContain("per-edge-buffer-saturated");
+  });
+
+  it("VROL-1069 — idle-source fires when source is idle > 50 %", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      sourceIdleFraction: 0.65,
+    });
+    expect(ids).toContain("idle-source");
+  });
+
+  it("VROL-1069 — idle-source hidden when source idle is at or below 50 %", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      sourceIdleFraction: 0.3,
+    });
+    expect(ids).not.toContain("idle-source");
+  });
+
+  it("VROL-1063→1069 — none of the new tips fire before a run", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: false, // pre-run guard on every new tip
+      lineAverageWipL: 100,
+      lineOee: 0.1,
+      lineScrapRate: 0.9,
+      warmupFractionOfHorizon: 0.01,
+      stochasticSingleRep: true,
+      maxBufferFillFraction: 0.99,
+      sourceIdleFraction: 0.99,
+    });
+    for (const id of [
+      "high-wip-warning",
+      "low-line-oee-warning",
+      "high-scrap-warning",
+      "warmup-too-short",
+      "stochastic-needs-replications",
+      "per-edge-buffer-saturated",
+      "idle-source",
+    ]) {
+      expect(ids).not.toContain(id);
+    }
+  });
 });

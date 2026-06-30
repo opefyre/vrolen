@@ -29,6 +29,7 @@ Browser-based discrete-event simulator for industrial production lines. Sketch y
 
 ### Insight surfaces
 
+- **Coach**: 18 contextual tips covering empty-canvas, no-edges, no-run, bottleneck-tuning, BOM-imbalance, tool-pool-contention, per-SKU-routed-info, capacity-high-leverage, save-as-scenario, budget-infeasible, high-WIP, low-line-OEE, high-scrap, warmup-too-short, stochastic-needs-replications, per-edge-buffer-saturated, idle-source. Each tip is a pure predicate over a small editor-state snapshot so adding one is data, not glue.
 - **Action card**: every run ranks the single highest-leverage change across 12 rules — sampling bias, reliability work, partial-batch starvation, capacity bump for saturated single-server bottlenecks, subordination / speed-up, BOM imbalance, tool-pool contention, downstream blocking, buffer pressure, energy hotspot, dominant six-loss bucket, slim OEE factor. Each rule emits an Apply payload (cycle:halve, capacity:set, buffer:grow, tool-pool:grow, energy:scale, etc.) so one click mutates the scenario and re-runs.
 - **OEE narration**: plain-language summary above the per-station breakdown — "Performance is the slim factor at Filler (62 %). Filler is binding 91 % of the window."
 - **Constraint history**: horizontal lane chart showing which station was the binding constraint over the run.
