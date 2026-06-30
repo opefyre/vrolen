@@ -61,7 +61,7 @@ Browser-based discrete-event simulator for industrial production lines. Sketch y
 - **Engine** — TypeScript (Phases 0–3) → Rust→WASM (Phase 4+)
 - **Backend** — Supabase (Auth · Postgres + RLS · Storage · Edge Functions)
 - **Hosting** — Cloudflare Pages
-- **AI** — Provider-agnostic with Gemini Flash default; BYO-key path supported (deferred)
+- **AI** — Provider-agnostic abstraction (VROL-379) at `src/ai/`. `ChatAdapter` interface, `MockChatAdapter` for tests, `openAiChatRequestBody()` + `parseOpenAiChatResponse()` shape helpers ready to plug into VROL-386. Gemini Flash default; BYO-key path supported (live adapters deferred until API keys land).
 
 ## How it compares
 
