@@ -97,4 +97,34 @@ describe("buildCoachTips visibility", () => {
     });
     expect(ids).not.toContain("capacity-high-leverage");
   });
+
+  it("VROL-1057 — budget-infeasible fires when the flag is true after a run", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      goalMultiBudgetInfeasible: true,
+    });
+    expect(ids).toContain("budget-infeasible");
+  });
+
+  it("VROL-1057 — budget-infeasible hidden when the flag is false (budget met or unset)", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: true,
+      goalMultiBudgetInfeasible: false,
+    });
+    expect(ids).not.toContain("budget-infeasible");
+  });
+
+  it("VROL-1057 — budget-infeasible hidden before any run, even with the flag set", () => {
+    const ids = visibleIds({
+      stationCount: 3,
+      edgeCount: 2,
+      hasRun: false,
+      goalMultiBudgetInfeasible: true,
+    });
+    expect(ids).not.toContain("budget-infeasible");
+  });
 });

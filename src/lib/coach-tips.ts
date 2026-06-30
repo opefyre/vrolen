@@ -37,6 +37,13 @@ export interface CoachTipDeps {
   readonly topConstraintKind?: string;
   readonly topConstraintSwingPct?: number;
   readonly topConstraintLabel?: string;
+  /**
+   * VROL-1057 — multi-lever goal mode found NO candidate that meets
+   * both the throughput target AND the energy budget; the picker
+   * fell back to throughput-only. Caller derives from
+   * multiResult.best.meetsEnergyBudget && a budget was set.
+   */
+  readonly goalMultiBudgetInfeasible?: boolean;
 }
 
 export interface CoachTipCallbacks {
@@ -97,6 +104,16 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
       title: "Per-SKU routing fired",
       body: "Some parts followed the perSkuRouting overrides you configured. Check the SKU-routed counter in OEE breakdown or the drilldown Constraints tab to confirm the split looks right.",
       whenVisible: () => hasRun && (deps.totalSkuRouted ?? 0) > 0,
+    },
+    // VROL-1057 — multi-lever goal mode couldn't find a combo that
+    // honoured the energy budget. The picker fell back to the
+    // throughput-only winner; the user needs to know the ceiling was
+    // violated so they can relax it or accept the trade-off.
+    {
+      id: "budget-infeasible",
+      title: "No combo fits within that energy budget",
+      body: "The multi-lever picker tried every (cycle × buffer × tool × capacity) combo and none hit your throughput target while staying inside the energy / part ceiling. The 'best' chip is the cheapest throughput-only winner — its energy intensity is above your budget. Two options: relax the budget, or accept this energy hit as the cost of hitting the throughput target.",
+      whenVisible: () => hasRun && deps.goalMultiBudgetInfeasible === true,
     },
     // VROL-1050 — sensitivity revealed capacity as the dominant
     // constraint lever. Fires only after a run when the most recent

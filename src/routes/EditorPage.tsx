@@ -5070,6 +5070,11 @@ function EditorCanvas() {
                         : {};
                     })()
                   : {}),
+                // VROL-1057 — surface "budget infeasible" when the
+                // multi-lever picker fell back to throughput-only
+                // because no candidate respected the energy budget.
+                goalMultiBudgetInfeasible:
+                  goalMultiResult?.best != null && goalMultiResult.best.meetsEnergyBudget === false,
               },
               {
                 runNow: handleRun,
