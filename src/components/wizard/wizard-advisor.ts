@@ -94,6 +94,111 @@ export function analyzeWizardDraft(draft: WizardDraft): readonly WizardWarning[]
     }
   }
 
+  // VROL-1079 — interStationBufferCapacity > 1000 is almost always
+  // over-allocated WIP envelope. Stretching the convergence to steady
+  // state without helping throughput.
+  if (draft.interStationBufferCapacity > 1000) {
+    out.push({
+      id: "buffer-cap-extreme",
+      step: "run-window",
+      severity: "info",
+      title: `Inter-station buffer = ${String(draft.interStationBufferCapacity)} parts`,
+      body: "Buffers above 1000 rarely lift throughput; they mostly mean the line takes longer to reach steady state, which biases short runs. Try 20-100 first; raise only if you see throughput clip.",
+    });
+  }
+
+  // VROL-1080 — setup distribution mean > 2 × cycle mean. Changeovers
+  // will swamp work; the line's throughput is governed by setup, not
+  // cycle. Flag per station.
+  draft.stations.forEach((s, i) => {
+    if (!s.setupDistribution) return;
+    const cycleMs = meanOf(s.cycleDistribution);
+    const setupMs = meanOf(s.setupDistribution);
+    if (cycleMs > 0 && setupMs > 2 * cycleMs) {
+      out.push({
+        id: `setup-dominates-cycle-${String(i)}`,
+        step: "stations",
+        severity: "warning",
+        title: `${s.label}: setup ~${String(Math.round(setupMs))} ms vs cycle ~${String(Math.round(cycleMs))} ms`,
+        body: "Changeover time is more than twice the cycle. Throughput will be governed by how often you change product, not how fast the station runs. Check the unit or reduce setup if it's wrong.",
+      });
+    }
+  });
+
+  // VROL-1081 — replications above 20 hit diminishing returns on CI
+  // tightening (1/√n flattens out fast). Sub-1 % half-width does need
+  // big N, but most users won't.
+  if (draft.replications > 20) {
+    out.push({
+      id: "replications-very-high",
+      step: "run-window",
+      severity: "info",
+      title: `Replications = ${String(draft.replications)}`,
+      body: "Past ~10 reps the 95 % CI on throughput tightens slowly (half-width shrinks with 1/√n). 5-10 reps is the usual sweet spot; only crank higher if you need very tight bounds.",
+    });
+  }
+
+  // VROL-1082 — wizard-side counterpart to the S180 stochastic-needs-
+  // replications coach tip. Surface BEFORE the run so the user fixes
+  // it pre-flight instead of finding out from the coach after.
+  if (draft.replications === 1) {
+    const stochasticStation = draft.stations.find((s) => s.cycleDistribution.kind !== "constant");
+    if (stochasticStation) {
+      out.push({
+        id: "reps-one-with-stochastic",
+        step: "run-window",
+        severity: "info",
+        title: "Single replication on stochastic cycle",
+        body: `${stochasticStation.label} uses a ${stochasticStation.cycleDistribution.kind} cycle distribution. With replications=1 the output is one realisation — the throughput figure carries the sampling noise of the cycle distribution. Bump replications to 3+ to see the 95 % CI on the mean.`,
+      });
+    }
+  }
+
+  // VROL-1083 — high defect rate with no rework path. The bad parts
+  // are all scrapped; yield = 1 − defectRate. If the user intended
+  // rework they need to set the target.
+  draft.stations.forEach((s, i) => {
+    if (s.defectRate > 0.1 && !s.reworkTargetId) {
+      out.push({
+        id: `defect-no-rework-${String(i)}`,
+        step: "stations",
+        severity: "info",
+        title: `${s.label}: ${String(Math.round(s.defectRate * 100))}% defect rate, no rework target`,
+        body:
+          "Defective parts are scrapped (not re-routed for rework). Yield will sit at ~" +
+          `${String(Math.round((1 - s.defectRate) * 100))}%. Set a rework target on this station if you wanted them re-routed instead.`,
+      });
+    }
+  });
+
+  // VROL-1084 — one station total. No flow modeling possible; no
+  // bottleneck, no WIP, no buffer dynamics. The user almost certainly
+  // wants ≥ 2 stations.
+  if (draft.stations.length === 1) {
+    out.push({
+      id: "single-station-line",
+      step: "stations",
+      severity: "info",
+      title: "Only one station defined",
+      body: "Vrolen models inter-station flow — bottlenecks, buffers, blocking. With one station there's no flow to model; the run will only produce throughput at the single cycle rate. Add ≥ 2 stations to see the interesting behaviour.",
+    });
+  }
+
+  // VROL-1085 — product with weight = 0 is silently excluded from the
+  // mix. The user probably meant to remove it or set a non-zero
+  // weight; surface so they make the choice explicitly.
+  draft.products.forEach((p, i) => {
+    if (p.weight === 0) {
+      out.push({
+        id: `product-zero-weight-${String(i)}`,
+        step: "products",
+        severity: "warning",
+        title: `Product "${p.name}" has weight = 0`,
+        body: "A zero-weight product never appears in the production mix. Either give it a positive weight or remove it from the product list.",
+      });
+    }
+  });
+
   // Run window — horizon too short for warmup to be useful.
   if (draft.warmupMs > 0 && draft.warmupMs > draft.horizonMs * 0.5) {
     out.push({
