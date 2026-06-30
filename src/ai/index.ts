@@ -51,6 +51,29 @@ export {
   type NarrationResult,
 } from "./narration";
 
+// VROL-405 — NL result querying.
+export {
+  extractResultFacts,
+  retrieveRelevantFacts,
+  queryResultSystemPrompt,
+  queryRunResult,
+  type ResultFact,
+  type QueryResult,
+} from "./query";
+
+// VROL-389 — BYO-key storage + provider catalogue.
+export {
+  PROVIDER_CATALOGUE,
+  listProviders,
+  lookupProvider,
+  createInMemoryProviderKeyStore,
+  createLocalStorageProviderKeyStore,
+  type ProviderId,
+  type ProviderInfo,
+  type ProviderKey,
+  type ProviderKeyStore,
+} from "./provider-keys";
+
 // VROL-414 — AI usage tracking.
 export {
   withUsageTracking,
