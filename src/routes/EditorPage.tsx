@@ -63,6 +63,10 @@ import {
   MoreHorizontal,
   Package,
   PackageCheck,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Play,
   Save,
   Settings2,
@@ -1040,6 +1044,76 @@ function EditorCanvas() {
   // dropdown removed in favor of the 2-primary + collapsed-rest pattern.
   // VROL-726 — palette search input state.
   const [paletteSearch, setPaletteSearch] = useState<string>("");
+
+  /**
+   * Sidebar collapse state — persisted to localStorage so the user's
+   * choice survives a reload. Tiny side rail toggles let the user
+   * reclaim canvas space without leaving the desktop layout.
+   * Default = open on both sides (current behaviour).
+   */
+  const [palettePaneOpen, setPalettePaneOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const raw = window.localStorage?.getItem?.("vrolen.editor.palette-pane-open");
+      return raw === null || raw === undefined ? true : raw === "1";
+    } catch {
+      return true;
+    }
+  });
+  const [inspectorPaneOpen, setInspectorPaneOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const raw = window.localStorage?.getItem?.("vrolen.editor.inspector-pane-open");
+      return raw === null || raw === undefined ? true : raw === "1";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage?.setItem?.(
+        "vrolen.editor.palette-pane-open",
+        palettePaneOpen ? "1" : "0",
+      );
+    } catch {
+      // ignore quota / private mode
+    }
+  }, [palettePaneOpen]);
+  useEffect(() => {
+    try {
+      window.localStorage?.setItem?.(
+        "vrolen.editor.inspector-pane-open",
+        inspectorPaneOpen ? "1" : "0",
+      );
+    } catch {
+      // ignore
+    }
+  }, [inspectorPaneOpen]);
+
+  /**
+   * Track whether we're at the desktop (lg+) breakpoint so the
+   * inline gridTemplateColumns style only applies there. Below lg,
+   * the mobile single-column class wins.
+   */
+  const [isLgViewport, setIsLgViewport] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return window.matchMedia?.("(min-width: 1024px)")?.matches ?? true;
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mql = window.matchMedia("(min-width: 1024px)");
+    const handler = (e: MediaQueryListEvent) => {
+      setIsLgViewport(e.matches);
+    };
+    mql.addEventListener("change", handler);
+    return () => {
+      mql.removeEventListener("change", handler);
+    };
+  }, []);
   // VROL-682 — two slots for picking history runs to compare.
   const [historyCompareA, setHistoryCompareA] = useState<number | null>(null);
   const [historyCompareB, setHistoryCompareB] = useState<number | null>(null);
@@ -4845,20 +4919,28 @@ function EditorCanvas() {
         <RunConsole playheadTimeMs={playbackSnapshot?.tMs ?? null} />
       </div>
       <div
-        className={`grid h-[calc(100vh-15rem)] gap-3 ${
-          // VROL-771 — right rail is always present on ≥ lg screens so the
-          // layout doesn't jump when the user clicks/unclicks a station. Empty
-          // state fills the rail otherwise.
-          // VROL-772 — below lg, drop the palette + rail columns; the slide-over
-          // Sheets handle that surface on small screens.
-          "grid-cols-1 lg:grid-cols-[200px_1fr_260px]"
-        }`}
+        // Mobile (single column) is driven by `grid-cols-1`. Above
+        // lg the inline gridTemplateColumns overrides via JS-detected
+        // breakpoint so Tailwind doesn't need to JIT 4 different
+        // arbitrary track strings.
+        className="grid h-[calc(100vh-15rem)] grid-cols-1 gap-3"
+        style={
+          isLgViewport
+            ? {
+                gridTemplateColumns: `${palettePaneOpen ? "200px" : "0px"} minmax(0,1fr) ${inspectorPaneOpen ? "260px" : "0px"}`,
+              }
+            : undefined
+        }
       >
         {/* VROL-772 — palette + right rail are docked columns ≥ lg; below
             lg they collapse out of the grid and the user reaches them via
             top-bar drawer affordances (the existing Sheets in Scenarios /
             Comparison / etc. already follow that pattern). */}
-        <Card className="hidden overflow-y-auto lg:block" data-tour="palette">
+        {/* Keep palette in the grid flow at lg+; collapsing it shrinks the
+            column to 0 (set via inline gridTemplateColumns above) and
+            overflow-hidden clips the card body so nothing leaks into
+            the canvas. Below lg the card is hidden as before. */}
+        <Card className="hidden overflow-x-hidden overflow-y-auto lg:block" data-tour="palette">
           <CardHeader>
             <CardTitle className="font-heading text-base">Stations</CardTitle>
             <CardDescription>Drag onto the canvas</CardDescription>
@@ -4973,6 +5055,43 @@ function EditorCanvas() {
           data-pan-mode={spacePanning ? "true" : undefined}
           className="border-border bg-background relative overflow-hidden rounded-md border"
         >
+          {/* Pane toggle buttons — left edge collapses/expands the
+              Stations palette; right edge collapses/expands the
+              Inspector. Visible only at lg+ where the docked
+              columns exist; below lg the layout already collapses
+              the rails. State persists to localStorage. */}
+          <button
+            type="button"
+            onClick={() => {
+              setPalettePaneOpen((v) => !v);
+            }}
+            aria-label={palettePaneOpen ? "Collapse stations panel" : "Expand stations panel"}
+            title={palettePaneOpen ? "Collapse stations panel" : "Expand stations panel"}
+            data-testid="palette-pane-toggle"
+            className="border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground absolute top-3 left-3 z-20 hidden h-7 w-7 items-center justify-center rounded-md border shadow-sm transition-colors lg:flex"
+          >
+            {palettePaneOpen ? (
+              <PanelLeftClose className="h-4 w-4" />
+            ) : (
+              <PanelLeftOpen className="h-4 w-4" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setInspectorPaneOpen((v) => !v);
+            }}
+            aria-label={inspectorPaneOpen ? "Collapse inspector panel" : "Expand inspector panel"}
+            title={inspectorPaneOpen ? "Collapse inspector panel" : "Expand inspector panel"}
+            data-testid="inspector-pane-toggle"
+            className="border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground absolute top-3 right-3 z-20 hidden h-7 w-7 items-center justify-center rounded-md border shadow-sm transition-colors lg:flex"
+          >
+            {inspectorPaneOpen ? (
+              <PanelRightClose className="h-4 w-4" />
+            ) : (
+              <PanelRightOpen className="h-4 w-4" />
+            )}
+          </button>
           {/* VROL-1161 (UX audit H7) — inline empty-state overlay
               when the canvas has zero stations. Overlay uses
               pointer-events: none on the grid behind it so palette
@@ -5438,7 +5557,7 @@ function EditorCanvas() {
         {selectedNodeIds.length > 1 ? (
           // VROL-663 — bulk panel when 2+ stations are selected.
           // VROL-772 — docked column on ≥ lg only; below lg the rail collapses.
-          <Card className="hidden overflow-y-auto lg:block">
+          <Card className="hidden overflow-x-hidden overflow-y-auto lg:block">
             <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
               <div className="space-y-1">
                 <CardTitle className="font-heading text-base">Bulk edit</CardTitle>
@@ -5467,7 +5586,7 @@ function EditorCanvas() {
             </CardContent>
           </Card>
         ) : selectedNode && (selectedNode.type === "sticky" || selectedNode.type === "frame") ? (
-          <div className="hidden lg:block">
+          <div className="hidden overflow-hidden lg:block">
             <NonStationInspector
               node={selectedNode}
               onClose={() => {
@@ -5478,7 +5597,7 @@ function EditorCanvas() {
             />
           </div>
         ) : selectedNode ? (
-          <Card className="hidden overflow-y-auto lg:block">
+          <Card className="hidden overflow-x-hidden overflow-y-auto lg:block">
             <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
               <div className="space-y-1">
                 <CardTitle className="font-heading text-base">Inspector</CardTitle>
@@ -6581,7 +6700,7 @@ function EditorCanvas() {
           // column stays put with an empty-state card explaining how to fill
           // it. Avoids the "canvas jumps wider on deselect" reflow the prior
           // conditional column count caused.
-          <Card className="hidden overflow-y-auto lg:block">
+          <Card className="hidden overflow-x-hidden overflow-y-auto lg:block">
             <CardHeader>
               <CardTitle className="font-heading text-base">Inspector</CardTitle>
               <CardDescription>
