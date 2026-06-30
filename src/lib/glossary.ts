@@ -139,6 +139,39 @@ export const GLOSSARY: Readonly<Record<string, GlossaryEntry>> = {
     title: "Pareto frontier (multi-objective optimization)",
     body: "When optimizing two objectives at once (e.g. throughput vs energy/part), the Pareto frontier is the set of candidates where you can't improve one objective without making the other worse. Dominated candidates are strictly beaten by some frontier point on both axes. Vrolen's optimization scatter highlights frontier points in the primary colour; dominated cells are muted — pick the frontier candidate whose tradeoff matches your priority.",
   },
+  // VROL-1087 → VROL-1093 — Sprint 183 statistical / DES vocabulary.
+  // The CI arc (S176-S179) introduced terms the UI tooltips +
+  // result-panel copy now use without definition.
+  replication: {
+    title: "Replication",
+    body: "One re-run of the same scenario with a different RNG seed. Each replication produces one realisation of the stochastic system; averaging across replications gives a mean + 95 % confidence interval that the single-run output can't show. Vrolen runs N reps when settings.replications > 1.",
+    source: "Law & Kelton — Simulation Modeling and Analysis",
+  },
+  "confidence-interval": {
+    title: "95 % confidence interval",
+    body: "The range that contains the true mean with 95 % probability under repeated sampling. Reported as mean ± half-width or [low, high]. Vrolen surfaces 95 % CIs on optimization candidates (S176) and sensitivity swings (S179); a wide CI means the figure is noisy and another rep would change it materially.",
+  },
+  "half-width": {
+    title: "Half-width (95 % CI)",
+    body: "The ± part of a confidence interval. mean ± halfWidth gives [low, high]. Vrolen computes halfWidth = 1.96 × σ/√n (normal-approximation Z), where σ is the Bessel-corrected sample standard deviation across replications. Shrinks with 1/√n — to halve the half-width, run 4× the replications.",
+  },
+  crn: {
+    title: "Common random numbers (CRN)",
+    body: "Variance-reduction trick: paired scenarios share the same RNG seed so the sampling noise cancels in the difference between them. Vrolen uses CRN in the sensitivity sweep (low + high cycle perturbations of the same station are paired on the seed) and in the optimization replications. The signal — the parameter change — survives; the noise mostly cancels.",
+    source: "Law & Kelton — Simulation Modeling and Analysis",
+  },
+  "bessel-correction": {
+    title: "Bessel-corrected sample stddev",
+    body: "Divide the squared-deviations sum by (n − 1) instead of n when computing variance from a SAMPLE rather than a full population. Corrects the small-sample bias that would systematically under-estimate the true variance. Vrolen's computeStats() helper applies Bessel for every objective's CI math.",
+  },
+  "sensitivity-sweep": {
+    title: "Sensitivity sweep (tornado)",
+    body: "Per-input throughput swing when that input is perturbed ±X % while everything else stays fixed. Sorted descending by swing magnitude so the widest bar is the highest-leverage lever. Vrolen sweeps four dimensions: per-station cycle ±20 %, BOM qty ±50 %, tool-pool capacity ±50 %, station parallel-capacity ±1.",
+  },
+  "robust-pick": {
+    title: "Robust pick / CI-aware tiebreak",
+    body: "When two optimization candidates' 95 % CIs overlap on the active objective, picking by mean alone is a statistical coin flip. Vrolen's picker prefers the candidate whose CI gives the STRONGER guarantee in the objective's direction — higher LOWER bound for max-direction, lower UPPER bound for min-direction. Falls back to mean ordering only when the CIs are statistically clear of each other.",
+  },
 };
 
 export function lookupGlossary(key: string): GlossaryEntry | undefined {

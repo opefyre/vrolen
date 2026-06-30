@@ -49,7 +49,7 @@ Browser-based discrete-event simulator for industrial production lines. Sketch y
 
 ### Pedagogy
 
-- **In-app glossary** with sourced definitions (Goldratt, ISA-95 / Nakajima, Little 1961, Welch 1983).
+- **In-app glossary** with sourced definitions (Goldratt, ISA-95 / Nakajima, Little 1961, Welch 1983, Law & Kelton). 35 entries covering TOC vocabulary, OEE/TEEP, DES primitives, sustainability, and the statistical / replication terms surfaced by the CI arc (replication, 95 % confidence interval, half-width, common random numbers, Bessel correction, sensitivity sweep, robust pick).
 - **Wizard advisor** flags physics-implausible + structurally-odd inputs without blocking the user. 15 non-blocking pre-flight checks: cycle-too-fast, cycle-too-slow, defect-too-high, capacity-suspect, MTTR>MTBF, MTBF<1min, warmup-too-large, horizon-too-short, buffer-cap-extreme, setup-dominates-cycle, replications-very-high, reps-one-with-stochastic, defect-no-rework, single-station-line, product-zero-weight.
 - **Validation panel** groups BOM / tool-pool / per-SKU misconfig as their own Constraints section.
 - **Onboarding tour** ends at the sustainability card.
