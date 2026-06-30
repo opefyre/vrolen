@@ -168,4 +168,34 @@ describe("OnboardingTour (VROL-818)", () => {
       vi.useRealTimers();
     }
   });
+
+  // VROL-1166/1167 (UX audit H2) — tour split + auto-start.
+
+  it("H2 — hasResult=false skips the bottleneck-tile step", () => {
+    saveOnboardingStep(2); // index 2 = run-button step
+    render(<OnboardingTour open onClose={vi.fn()} hasResult={false} />);
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    // Step 4 (bottleneck-tile, index 3) requires result. Next should
+    // skip past it to step 5 (scenarios-menu, index 4 / 7).
+    expect(screen.getByText(/5 of 7/i)).toBeInTheDocument();
+  });
+
+  it("H2 — hasResult=true keeps every step in the sequence", () => {
+    saveOnboardingStep(2);
+    render(<OnboardingTour open onClose={vi.fn()} hasResult={true} />);
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    expect(screen.getByText(/4 of 7/i)).toBeInTheDocument();
+  });
+
+  it("H2 — onAutoStart fires once when tour opens with hasResult=false", () => {
+    const onAutoStart = vi.fn();
+    render(<OnboardingTour open onClose={vi.fn()} hasResult={false} onAutoStart={onAutoStart} />);
+    expect(onAutoStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("H2 — onAutoStart does NOT fire when hasResult=true", () => {
+    const onAutoStart = vi.fn();
+    render(<OnboardingTour open onClose={vi.fn()} hasResult={true} onAutoStart={onAutoStart} />);
+    expect(onAutoStart).not.toHaveBeenCalled();
+  });
 });

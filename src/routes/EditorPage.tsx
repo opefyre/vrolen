@@ -4205,7 +4205,44 @@ function EditorCanvas() {
         onClose={() => {
           setTourOpen(false);
         }}
+        // VROL-1166 — tour skips requiresResult steps when there's
+        // no result yet so it never lands on a missing anchor.
+        hasResult={result !== null}
+        // VROL-1167 — when the tour opens on an empty canvas, load
+        // the bottling-line preset + autorun. The post-run anchors
+        // materialize by the time the user reaches them.
+        onAutoStart={() => {
+          if (nodes.filter((n) => n.type === "station").length === 0) {
+            const starter = PRESETS.find((p) => p.id === "bottling-line") ?? PRESETS[0];
+            if (starter) loadPresetInto(starter);
+          }
+        }}
       />
+      {/* VROL-1171 (UX audit H1 starter) — narrow-viewport notice.
+          Below the lg breakpoint the side rails (palette + inspector)
+          are hidden by the existing `hidden lg:block` classes. Until
+          the full drawer refactor lands, surface a one-line banner
+          with CTAs to the wizard + scenarios so first-time users on
+          narrow viewports can still reach the primary entry points.
+          The full Sheet drawer refactor is a planned follow-up. */}
+      <div
+        className="border-border bg-muted/30 text-muted-foreground -mx-6 flex items-center justify-between gap-2 border-b px-4 py-1.5 text-xs lg:hidden"
+        role="status"
+        data-testid="narrow-viewport-banner"
+      >
+        <span>
+          <strong className="text-foreground">Wider screen recommended.</strong> Side panels
+          (palette + inspector) appear at ≥ 1024 px.
+        </span>
+        <div className="flex gap-1.5">
+          <Button size="sm" variant="outline" onClick={() => setWizardOpen(true)}>
+            Open wizard
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setScenariosOpen(true)}>
+            Browse
+          </Button>
+        </div>
+      </div>
       {/* VROL-432 — offline banner: appears above the toolbar when the
           browser reports offline. Run + edits stay enabled (everything is
           local-first); only flags cloud-sync / AI as paused. */}

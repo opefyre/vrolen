@@ -169,12 +169,24 @@ export function SensitivityBody({
           const left = 50 + Math.min(lowPct, highPct);
           const width = Math.abs(highPct - lowPct);
           const tone = classifyTornadoRow(row, maxSwing);
+          // VROL-1169 (UX audit H5) — bumped /70 → /90 so bars hit AA
+          // contrast on the muted/40 rail and don't rely on hue alone.
           const barColor =
             tone === "positive"
-              ? "bg-sim-running/70"
+              ? "bg-sim-running/90"
               : tone === "negative"
-                ? "bg-sim-down/70"
-                : "bg-muted-foreground/30";
+                ? "bg-sim-down/90"
+                : "bg-muted-foreground/40";
+          // VROL-1169 — direction glyph so deuteranopes / monochrome
+          // readers get the verdict without colour. Announced via
+          // aria-label below.
+          const directionGlyph = tone === "positive" ? "↑" : tone === "negative" ? "↓" : "•";
+          const directionLabel =
+            tone === "positive"
+              ? "speed-up helps"
+              : tone === "negative"
+                ? "slow-down helps"
+                : "noise";
           const toneLabel =
             tone === "positive"
               ? "Speeding up helps throughput"
@@ -204,6 +216,15 @@ export function SensitivityBody({
               >
                 {row.stationLabel}
               </div>
+              {/* VROL-1169 (UX audit H5) — direction glyph for
+                  colour-independent decoding. */}
+              <span
+                className={`shrink-0 font-mono text-xs select-none ${tone === "positive" ? "text-sim-running" : tone === "negative" ? "text-sim-down" : "text-muted-foreground"}`}
+                data-testid={`sens-direction-${row.stationLabel}`}
+                aria-label={directionLabel}
+              >
+                {directionGlyph}
+              </span>
               <div className="bg-muted/40 relative h-4 flex-1 rounded">
                 {/* Centerline (= baseline). */}
                 <div className="bg-border absolute top-0 bottom-0 left-1/2 w-px" />

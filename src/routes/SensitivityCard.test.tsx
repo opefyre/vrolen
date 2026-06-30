@@ -195,4 +195,89 @@ describe("SensitivityCard tornado rendering (VROL-793)", () => {
       "No varying-cycle-time stations or constraint dimensions",
     );
   });
+
+  // VROL-1169 (UX audit H5) — direction glyph colour-independence.
+
+  it("H5 — positive tone row renders ↑ glyph with aria-label 'speed-up helps'", () => {
+    const summary: SensitivitySummary = {
+      baselinePerHour: 1_000,
+      lowMultiplier: 0.8,
+      highMultiplier: 1.2,
+      elapsedMs: 5,
+      constraintRows: [],
+      rows: [
+        row({
+          stationLabel: "Filler",
+          lowPerHour: 1_500,
+          highPerHour: 500,
+          swingPerHour: 1_000,
+          swingPct: 100,
+        }),
+      ],
+    };
+    const { getByTestId } = render(
+      <SensitivityCard summary={summary} running={false} onRun={() => undefined} />,
+    );
+    const glyph = getByTestId("sens-direction-Filler");
+    expect(glyph.textContent).toBe("↑");
+    expect(glyph.getAttribute("aria-label")).toMatch(/speed-up/);
+  });
+
+  it("H5 — negative tone row renders ↓ glyph with aria-label 'slow-down helps'", () => {
+    const summary: SensitivitySummary = {
+      baselinePerHour: 1_000,
+      lowMultiplier: 0.8,
+      highMultiplier: 1.2,
+      elapsedMs: 5,
+      constraintRows: [],
+      rows: [
+        row({
+          stationLabel: "Capper",
+          lowPerHour: 500,
+          highPerHour: 1_500,
+          swingPerHour: 1_000,
+          swingPct: 100,
+        }),
+      ],
+    };
+    const { getByTestId } = render(
+      <SensitivityCard summary={summary} running={false} onRun={() => undefined} />,
+    );
+    const glyph = getByTestId("sens-direction-Capper");
+    expect(glyph.textContent).toBe("↓");
+    expect(glyph.getAttribute("aria-label")).toMatch(/slow-down/);
+  });
+
+  it("H5 — noise tone row renders • glyph with aria-label 'noise'", () => {
+    const summary: SensitivitySummary = {
+      baselinePerHour: 10_000,
+      lowMultiplier: 0.8,
+      highMultiplier: 1.2,
+      elapsedMs: 5,
+      constraintRows: [],
+      // Tiny swing relative to widest bar → noise tone.
+      rows: [
+        row({
+          stationLabel: "Pack",
+          lowPerHour: 10_001,
+          highPerHour: 10_000.5,
+          swingPerHour: 0.5,
+          swingPct: 0.005,
+          swingStats: {
+            mean: -0.5,
+            stddev: 0,
+            halfWidth95: 0,
+            low95: -0.5,
+            high95: -0.5,
+          },
+        }),
+      ],
+    };
+    const { getByTestId } = render(
+      <SensitivityCard summary={summary} running={false} onRun={() => undefined} />,
+    );
+    const glyph = getByTestId("sens-direction-Pack");
+    expect(glyph.textContent).toBe("•");
+    expect(glyph.getAttribute("aria-label")).toMatch(/noise/);
+  });
 });

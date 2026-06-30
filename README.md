@@ -54,7 +54,8 @@ Browser-based discrete-event simulator for industrial production lines. Sketch y
 - **In-app glossary** with sourced definitions (Goldratt, ISA-95 / Nakajima, Little 1961, Welch 1983, Law & Kelton). 35 entries covering TOC vocabulary, OEE/TEEP, DES primitives, sustainability, and the statistical / replication terms surfaced by the CI arc (replication, 95 % confidence interval, half-width, common random numbers, Bessel correction, sensitivity sweep, robust pick).
 - **Wizard advisor** flags physics-implausible + structurally-odd inputs without blocking the user. 15 non-blocking pre-flight checks: cycle-too-fast, cycle-too-slow, defect-too-high, capacity-suspect, MTTR>MTBF, MTBF<1min, warmup-too-large, horizon-too-short, buffer-cap-extreme, setup-dominates-cycle, replications-very-high, reps-one-with-stochastic, defect-no-rework, single-station-line, product-zero-weight.
 - **Validation panel** groups BOM / tool-pool / per-SKU misconfig as their own Constraints section.
-- **Onboarding tour** ends at the sustainability card.
+- **Onboarding tour** ends at the sustainability card. Steps that point at post-run anchors (bottleneck tile / action card / sustainability) are gated on a run completing so the tour never lands on a missing anchor; on an empty canvas the tour optionally auto-loads the bottling-line preset and runs it so the post-run steps materialize before the user reaches them.
+- **Sensitivity tornado** rows ship a colour-independent direction glyph (↑/↓/•) alongside the divergent bar so colour-blind readers get the same verdict, with an `aria-label` for screen readers.
 
 ## Stack
 

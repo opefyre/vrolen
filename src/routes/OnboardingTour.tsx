@@ -22,7 +22,7 @@
  * resume-step too.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { useReducedMotion } from "@/lib/use-reduced-motion";
@@ -39,6 +39,13 @@ interface TourStep {
   readonly title: string;
   readonly body: string;
   readonly placement: "right" | "bottom" | "left" | "top" | "center";
+  /**
+   * VROL-1166 (UX audit H2) — when true, this step's target only
+   * exists after a successful run (e.g. data-tour='bottleneck-tile',
+   * data-testid='action-card'). The tour skips over it when
+   * hasResult=false instead of landing on an empty popover.
+   */
+  readonly requiresResult?: boolean;
 }
 
 const STEPS: readonly TourStep[] = [
@@ -65,6 +72,7 @@ const STEPS: readonly TourStep[] = [
     title: "Tweak the bottleneck",
     body: "The workflow loop: find the bottleneck, shorten its cycle time or grow its upstream buffer, re-run, and measure the lift. Improving any other station won't move throughput until the bottleneck moves.",
     placement: "top",
+    requiresResult: true,
   },
   {
     target: "[data-tour='scenarios-menu']",
@@ -77,6 +85,7 @@ const STEPS: readonly TourStep[] = [
     title: "Read the action card",
     body: "After every run, an Action card up top tells you the single next thing to try — speed up the bottleneck, grow a buffer, fix a tool-pool contention, or look at reliability. Click Apply to mutate the scenario and re-run.",
     placement: "bottom",
+    requiresResult: true,
   },
   {
     // VROL-1022 — surface the Sustainability card. The target lives in
@@ -88,12 +97,27 @@ const STEPS: readonly TourStep[] = [
     title: "Energy + water + CO₂e",
     body: "When stations declare per-cycle resource use, the Sustainability card surfaces line totals, per-station breakdown bars, and an intensity figure (e.g. J/kg) so you can compare scenarios on environmental footprint, not just throughput. Load the 'Sustainable line' preset to see it in action.",
     placement: "top",
+    requiresResult: true,
   },
 ];
 
 interface OnboardingTourProps {
   readonly open: boolean;
   readonly onClose: () => void;
+  /**
+   * VROL-1166 (UX audit H2) — when false, steps with
+   * requiresResult are skipped so the tour never lands on a missing
+   * anchor (bottleneck-tile / action-card / sustainability-card).
+   * Defaults to true so existing call sites keep working.
+   */
+  readonly hasResult?: boolean;
+  /**
+   * VROL-1167 (UX audit H2) — invoked when the tour opens on an
+   * empty canvas. Caller typically loads a demo preset + autoruns so
+   * the requiresResult steps materialize. When omitted the tour
+   * just shows pre-run steps until a real run completes.
+   */
+  readonly onAutoStart?: () => void;
 }
 
 interface TargetRect {
@@ -114,7 +138,10 @@ function clampStep(idx: number): number {
   return idx;
 }
 
-export function OnboardingTour({ open, onClose }: OnboardingTourProps) {
+export function OnboardingTour({ open, onClose, hasResult, onAutoStart }: OnboardingTourProps) {
+  // Default to true so legacy call sites (without hasResult wired)
+  // keep the old "render every step" behaviour.
+  const effectiveHasResult = hasResult ?? true;
   // Resume from the persisted step on mount. Reads localStorage once; from
   // there the in-memory cache + saveOnboardingStep keep it in sync.
   const [stepIdx, setStepIdx] = useState<number>(() => clampStep(loadOnboardingStep()));
@@ -135,10 +162,29 @@ export function OnboardingTour({ open, onClose }: OnboardingTourProps) {
     onClose();
   }, [onClose]);
 
+  /**
+   * VROL-1166 — walk forward past any requiresResult step when
+   * !hasResult so we never land on a missing anchor. If we walk off
+   * the end, the tour completes.
+   */
+  function advanceFrom(idx: number, dir: 1 | -1): number {
+    let i = idx;
+    while (i >= 0 && i < STEPS.length) {
+      const s = STEPS[i];
+      if (!s) return idx;
+      if (s.requiresResult && !effectiveHasResult) {
+        i += dir;
+        continue;
+      }
+      return i;
+    }
+    return idx;
+  }
+
   const goNext = useCallback((): void => {
     setStepIdx((i) => {
-      const next = i + 1;
-      if (next >= STEPS.length) {
+      const next = advanceFrom(i + 1, 1);
+      if (next >= STEPS.length || next === i) {
         markOnboardingSeen();
         onClose();
         return 0;
@@ -146,15 +192,18 @@ export function OnboardingTour({ open, onClose }: OnboardingTourProps) {
       saveOnboardingStep(next);
       return next;
     });
-  }, [onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onClose, effectiveHasResult]);
 
   const goBack = useCallback((): void => {
     setStepIdx((i) => {
-      const prev = Math.max(0, i - 1);
-      saveOnboardingStep(prev);
-      return prev;
+      const prev = advanceFrom(Math.max(0, i - 1), -1);
+      const clamped = Math.max(0, prev);
+      saveOnboardingStep(clamped);
+      return clamped;
     });
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveHasResult]);
 
   // Persist the current step on mount/changes — covers the path where the
   // user lands directly on a non-zero resume step.
@@ -162,6 +211,24 @@ export function OnboardingTour({ open, onClose }: OnboardingTourProps) {
     if (!open) return;
     saveOnboardingStep(stepIdx);
   }, [open, stepIdx]);
+
+  // VROL-1167 (UX audit H2) — when the tour opens and we already
+  // know there's no result, fire the optional auto-start once so the
+  // post-run anchors materialize before the user reaches them.
+  // Guards: only on open transition, only when hasResult was
+  // explicitly false, only when caller wired the callback. Tracked
+  // via a ref so a re-render during the tour doesn't double-fire.
+  const autoStartFiredRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (!open) {
+      autoStartFiredRef.current = false;
+      return;
+    }
+    if (hasResult !== false || !onAutoStart) return;
+    if (autoStartFiredRef.current) return;
+    autoStartFiredRef.current = true;
+    onAutoStart();
+  }, [open, hasResult, onAutoStart]);
 
   // Track the target element's position so the popover stays glued to it on
   // scroll + resize. Each step swap re-queries the target. The initial
