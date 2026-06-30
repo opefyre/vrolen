@@ -1069,6 +1069,9 @@ function EditorCanvas() {
       return true;
     }
   });
+  // VROL-1186 — mobile palette Sheet drawer. Below lg the docked palette
+  // is hidden; this state opens a left-side Sheet with the same content.
+  const [mobilePaletteOpen, setMobilePaletteOpen] = useState<boolean>(false);
   useEffect(() => {
     try {
       window.localStorage?.setItem?.(
@@ -4321,25 +4324,32 @@ function EditorCanvas() {
           }
         }}
       />
-      {/* VROL-1171 (UX audit H1 starter) — narrow-viewport notice.
-          Below the lg breakpoint the side rails (palette + inspector)
-          are hidden by the existing `hidden lg:block` classes. Until
-          the full drawer refactor lands, surface a one-line banner
-          with CTAs to the wizard + scenarios so first-time users on
-          narrow viewports can still reach the primary entry points.
-          The full Sheet drawer refactor is a planned follow-up. */}
+      {/* VROL-1186 — narrow-viewport toolbar. The Stations button opens
+          a left-side Sheet drawer mirroring the desktop palette so
+          first-time users on small screens can still place stations.
+          Wizard + Browse remain as the secondary entry points. */}
       <div
         className="border-border bg-muted/30 text-muted-foreground -mx-6 flex items-center justify-between gap-2 border-b px-4 py-1.5 text-xs lg:hidden"
         role="status"
         data-testid="narrow-viewport-banner"
       >
         <span>
-          <strong className="text-foreground">Wider screen recommended.</strong> Side panels
-          (palette + inspector) appear at ≥ 1024 px.
+          <strong className="text-foreground">Wider screen recommended.</strong> Tap Stations to add
+          to the canvas.
         </span>
         <div className="flex gap-1.5">
+          <Button
+            size="sm"
+            variant="default"
+            onClick={() => {
+              setMobilePaletteOpen(true);
+            }}
+            data-testid="mobile-palette-trigger"
+          >
+            Stations
+          </Button>
           <Button size="sm" variant="outline" onClick={() => setWizardOpen(true)}>
-            Open wizard
+            Wizard
           </Button>
           <Button size="sm" variant="outline" onClick={() => setScenariosOpen(true)}>
             Browse
@@ -4969,11 +4979,12 @@ function EditorCanvas() {
             column to 0 (set via inline gridTemplateColumns above) and
             overflow-hidden clips the card body so nothing leaks into
             the canvas. Below lg the card is hidden as before. */}
-        <Card className="hidden overflow-x-hidden overflow-y-auto lg:block" data-tour="palette">
-          <CardHeader>
-            <CardTitle className="font-heading text-base">Stations</CardTitle>
-            <CardDescription>Drag onto the canvas</CardDescription>
-            {/* VROL-726 — palette search. */}
+        {/* VROL-1186 — palette body extracted so the same content can mount
+            inside both the desktop docked Card (lg+) and the mobile Sheet
+            drawer. Two args distinguish the test ids so RTL can address
+            either surface unambiguously. */}
+        {(() => {
+          const renderPaletteSearch = (testid: string) => (
             <Input
               type="search"
               value={paletteSearch}
@@ -4981,93 +4992,119 @@ function EditorCanvas() {
               onChange={(e) => {
                 setPaletteSearch(e.target.value);
               }}
-              data-testid="palette-search"
+              data-testid={testid}
               className="h-7 text-xs"
             />
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {/* Sticky note — separate from PALETTE because it's not a station. */}
-            <div
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.setData("application/vrolen-sticky", "1");
-                e.dataTransfer.effectAllowed = "move";
-              }}
-              className="flex cursor-grab items-center gap-2 rounded-md border border-amber-300 bg-amber-100 p-2 text-amber-900 hover:border-amber-500 active:cursor-grabbing"
-              title="Free-text annotation. Press S to drop one at the cursor."
-            >
-              <span className="text-base" aria-hidden>
-                ✎
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium">Sticky note</div>
-                <div className="truncate text-xs opacity-70">Annotation / comment</div>
-              </div>
-              {/* VROL-784 — keyboard shortcut chip. */}
-              <kbd
-                aria-label="Press S to insert"
-                className="shrink-0 rounded bg-amber-200/60 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-amber-900"
-              >
-                S
-              </kbd>
-            </div>
-            {/* Section frame — labeled, resizable container behind nodes. */}
-            <div
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.setData("application/vrolen-frame", "1");
-                e.dataTransfer.effectAllowed = "move";
-              }}
-              className="border-sim-running/30 bg-sim-running/10 text-sim-running hover:border-sim-running/60 flex cursor-grab items-center gap-2 rounded-md border-2 border-dashed p-2 active:cursor-grabbing"
-              title="Labeled box that groups stations visually. Press F to drop one at the cursor."
-            >
-              <span className="text-base" aria-hidden>
-                ▢
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="text-foreground truncate text-sm font-medium">Section frame</div>
-                <div className="text-muted-foreground truncate text-xs">Group stations</div>
-              </div>
-              {/* VROL-784 — keyboard shortcut chip. */}
-              <kbd
-                aria-label="Press F to insert"
-                className="bg-sim-running/20 text-sim-running shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold"
-              >
-                F
-              </kbd>
-            </div>
-            {PALETTE.filter(
-              (p) =>
-                paletteSearch.trim() === "" ||
-                p.label.toLowerCase().includes(paletteSearch.trim().toLowerCase()) ||
-                p.summary.toLowerCase().includes(paletteSearch.trim().toLowerCase()),
-            ).map((p) => (
+          );
+          const paletteList = (
+            <div className="space-y-2">
               <div
-                key={p.stationType}
                 draggable
                 onDragStart={(e) => {
-                  e.dataTransfer.setData("application/vrolen-station", p.stationType);
+                  e.dataTransfer.setData("application/vrolen-sticky", "1");
                   e.dataTransfer.effectAllowed = "move";
                 }}
-                className="border-border bg-card hover:border-foreground/30 hover:bg-accent flex cursor-grab items-center gap-2 rounded-md border p-2 active:cursor-grabbing"
-                title={`${p.summary}. Press ${p.keyHint} to insert.`}
+                className="flex cursor-grab items-center gap-2 rounded-md border border-amber-300 bg-amber-100 p-2 text-amber-900 hover:border-amber-500 active:cursor-grabbing"
+                title="Free-text annotation. Press S to drop one at the cursor."
               >
-                <p.icon className="h-4 w-4 shrink-0" />
+                <span className="text-base" aria-hidden>
+                  ✎
+                </span>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{p.label}</div>
-                  <div className="text-muted-foreground truncate text-xs">{p.summary}</div>
+                  <div className="truncate text-sm font-medium">Sticky note</div>
+                  <div className="truncate text-xs opacity-70">Annotation / comment</div>
                 </div>
-                {/* VROL-784 — keyboard shortcut chip. */}
                 <kbd
-                  aria-label={`Press ${p.keyHint} to insert`}
-                  className="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold"
+                  aria-label="Press S to insert"
+                  className="shrink-0 rounded bg-amber-200/60 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-amber-900"
                 >
-                  {p.keyHint}
+                  S
                 </kbd>
               </div>
-            ))}
-          </CardContent>
-        </Card>
+              <div
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData("application/vrolen-frame", "1");
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+                className="border-sim-running/30 bg-sim-running/10 text-sim-running hover:border-sim-running/60 flex cursor-grab items-center gap-2 rounded-md border-2 border-dashed p-2 active:cursor-grabbing"
+                title="Labeled box that groups stations visually. Press F to drop one at the cursor."
+              >
+                <span className="text-base" aria-hidden>
+                  ▢
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-foreground truncate text-sm font-medium">Section frame</div>
+                  <div className="text-muted-foreground truncate text-xs">Group stations</div>
+                </div>
+                <kbd
+                  aria-label="Press F to insert"
+                  className="bg-sim-running/20 text-sim-running shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold"
+                >
+                  F
+                </kbd>
+              </div>
+              {PALETTE.filter(
+                (p) =>
+                  paletteSearch.trim() === "" ||
+                  p.label.toLowerCase().includes(paletteSearch.trim().toLowerCase()) ||
+                  p.summary.toLowerCase().includes(paletteSearch.trim().toLowerCase()),
+              ).map((p) => (
+                <div
+                  key={p.stationType}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("application/vrolen-station", p.stationType);
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
+                  className="border-border bg-card hover:border-foreground/30 hover:bg-accent flex cursor-grab items-center gap-2 rounded-md border p-2 active:cursor-grabbing"
+                  title={`${p.summary}. Press ${p.keyHint} to insert.`}
+                >
+                  <p.icon className="h-4 w-4 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{p.label}</div>
+                    <div className="text-muted-foreground truncate text-xs">{p.summary}</div>
+                  </div>
+                  <kbd
+                    aria-label={`Press ${p.keyHint} to insert`}
+                    className="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold"
+                  >
+                    {p.keyHint}
+                  </kbd>
+                </div>
+              ))}
+            </div>
+          );
+          return (
+            <>
+              <Card
+                className="hidden overflow-x-hidden overflow-y-auto lg:block"
+                data-tour="palette"
+              >
+                <CardHeader>
+                  <CardTitle className="font-heading text-base">Stations</CardTitle>
+                  <CardDescription>Drag onto the canvas</CardDescription>
+                  {renderPaletteSearch("palette-search")}
+                </CardHeader>
+                <CardContent>{paletteList}</CardContent>
+              </Card>
+              <Sheet open={mobilePaletteOpen} onOpenChange={setMobilePaletteOpen}>
+                <SheetContent
+                  side="left"
+                  className="w-80 max-w-[85vw] overflow-y-auto p-0"
+                  data-testid="mobile-palette-sheet"
+                >
+                  <SheetHeader className="border-border space-y-2 border-b p-4">
+                    <SheetTitle className="font-heading text-base">Stations</SheetTitle>
+                    <SheetDescription>Tap to insert at canvas center</SheetDescription>
+                    {renderPaletteSearch("mobile-palette-search")}
+                  </SheetHeader>
+                  <div className="p-4">{paletteList}</div>
+                </SheetContent>
+              </Sheet>
+            </>
+          );
+        })()}
 
         <div
           ref={wrapperRef}
