@@ -1028,13 +1028,16 @@ export function ResultPanel({
         {/* Backdrop sparklines were removed — they had no axis context
             and confused readers. The Throughput tab shows the proper
             chart with labeled axes. */}
-        <div className="text-muted-foreground flex items-center justify-between text-xs tracking-wide uppercase">
+        {/* VROL-1176 (UX audit H8) — tile label dialed down to
+            text-[10px] uppercase tracking-wide so the primary value
+            dominates the visual hierarchy. */}
+        <div className="text-muted-foreground flex items-center justify-between text-[10px] tracking-wide uppercase">
           <span>{term ? <GlossaryTerm term={term}>{label}</GlossaryTerm> : label}</span>
           {href ? (
             <a
               href={href}
               aria-label={`What is ${label}?`}
-              className="hover:text-foreground rounded-full px-1 text-[10px]"
+              className="hover:text-foreground rounded-full px-1 text-[9px]"
               title="Open glossary"
               onClick={(e) => e.stopPropagation()}
             >
@@ -1042,7 +1045,8 @@ export function ResultPanel({
             </a>
           ) : null}
         </div>
-        <div className="font-mono text-xl font-semibold tabular-nums">{value}</div>
+        {/* VROL-1176 — primary value text-xl → text-2xl. */}
+        <div className="font-mono text-2xl font-semibold tabular-nums">{value}</div>
         {/* VROL-844 — 95% CI band + caption, only when ≥2 replications. */}
         {repKpi && repKpi.values.length > 1 ? <KpiCiBand kpi={repKpi} /> : null}
         {hint ? <div className="text-muted-foreground mt-0.5 text-xs">{hint}</div> : null}
@@ -1186,6 +1190,18 @@ export function ResultPanel({
       />
       <InsightsBanner result={result} />
       {cycleStrip}
+      {/* VROL-1174 (UX audit H3) — ActionCard promoted from inside the
+          OEE Card to the second-slot position (under HeroResultCard,
+          before the KPI tiles). Tells the user the single next thing
+          to try without scrolling past 4 KPI tiles + 4 sustainability
+          tiles + per-station tables. */}
+      <ActionCard
+        result={result}
+        {...(onApplyActionCard ? { onApply: onApplyActionCard } : {})}
+        {...(runMeta.perStationBatchSize
+          ? { perStationBatchSize: runMeta.perStationBatchSize }
+          : {})}
+      />
       <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
         {tile(
           "Completed",
@@ -1238,57 +1254,89 @@ export function ResultPanel({
           (result.totalCO2eG ?? 0) > 0;
         if (!yieldShown && !sustainShown) return null;
         const energyKWh = (result.totalEnergyJ ?? 0) / 3_600_000;
+        // VROL-1175 (UX audit H3) — wrap the secondary tiles in a
+        // <details> disclosure so they're collapsible. Defaults to
+        // open when there's data; user can close to declutter.
         return (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {yieldShown ? (
-              <div className="border-border bg-card rounded-md border p-3">
-                <div className="text-muted-foreground text-xs tracking-wide uppercase">
-                  Theoretical yield
-                </div>
-                <div className="font-mono text-xl font-semibold tabular-nums">
-                  {fmt((result.theoreticalYield ?? 1) * 100)}%
-                </div>
-                <div className="text-muted-foreground text-xs">good / (good + scrap)</div>
-              </div>
-            ) : null}
-            {sustainShown ? (
-              <>
+          <details open data-testid="result-secondary-tiles" className="space-y-2">
+            <summary className="text-muted-foreground hover:text-foreground cursor-pointer text-xs tracking-wide uppercase select-none">
+              Quality + sustainability tiles
+            </summary>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {yieldShown ? (
                 <div className="border-border bg-card rounded-md border p-3">
                   <div className="text-muted-foreground text-xs tracking-wide uppercase">
-                    Energy
+                    Theoretical yield
                   </div>
                   <div className="font-mono text-xl font-semibold tabular-nums">
-                    {fmt(energyKWh, energyKWh > 100 ? 0 : 1)}
+                    {fmt((result.theoreticalYield ?? 1) * 100)}%
                   </div>
-                  <div className="text-muted-foreground text-xs">kWh total</div>
+                  <div className="text-muted-foreground text-xs">good / (good + scrap)</div>
                 </div>
-                <div className="border-border bg-card rounded-md border p-3">
-                  <div className="text-muted-foreground text-xs tracking-wide uppercase">Water</div>
-                  <div className="font-mono text-xl font-semibold tabular-nums">
-                    {fmt(result.totalWaterL ?? 0, 1)}
+              ) : null}
+              {sustainShown ? (
+                <>
+                  <div className="border-border bg-card rounded-md border p-3">
+                    <div className="text-muted-foreground text-xs tracking-wide uppercase">
+                      Energy
+                    </div>
+                    <div className="font-mono text-xl font-semibold tabular-nums">
+                      {fmt(energyKWh, energyKWh > 100 ? 0 : 1)}
+                    </div>
+                    <div className="text-muted-foreground text-xs">kWh total</div>
                   </div>
-                  <div className="text-muted-foreground text-xs">L total</div>
-                </div>
-                <div className="border-border bg-card rounded-md border p-3">
-                  <div className="text-muted-foreground text-xs tracking-wide uppercase">CO₂e</div>
-                  <div className="font-mono text-xl font-semibold tabular-nums">
-                    {fmt((result.totalCO2eG ?? 0) / 1000, 1)}
+                  <div className="border-border bg-card rounded-md border p-3">
+                    <div className="text-muted-foreground text-xs tracking-wide uppercase">
+                      Water
+                    </div>
+                    <div className="font-mono text-xl font-semibold tabular-nums">
+                      {fmt(result.totalWaterL ?? 0, 1)}
+                    </div>
+                    <div className="text-muted-foreground text-xs">L total</div>
                   </div>
-                  <div className="text-muted-foreground text-xs">kg total</div>
-                </div>
-              </>
-            ) : null}
-          </div>
+                  <div className="border-border bg-card rounded-md border p-3">
+                    <div className="text-muted-foreground text-xs tracking-wide uppercase">
+                      CO₂e
+                    </div>
+                    <div className="font-mono text-xl font-semibold tabular-nums">
+                      {fmt((result.totalCO2eG ?? 0) / 1000, 1)}
+                    </div>
+                    <div className="text-muted-foreground text-xs">kg total</div>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </details>
         );
       })()}
 
+      {/* VROL-1178 (UX audit H9) — below md, the 7-tab strip overflows
+          horizontally with no scrollbar indicator. Render a single
+          <select> dropdown there instead; keep the icon strip at md+
+          where it fits cleanly. */}
+      <div className="md:hidden" data-testid="result-tabs-select">
+        <select
+          value={activeTab}
+          onChange={(e) => {
+            setActiveTab(e.target.value as typeof activeTab);
+          }}
+          aria-label="Result details tab"
+          className="border-border bg-card w-full rounded-md border px-3 py-2 text-sm"
+        >
+          {tabs.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+      </div>
       {/* Tab strip — replaces the previous wall of stacked cards with
           progressive disclosure. Each tab renders a single focused view
           below; the user picks what they want to see. */}
       <div
         role="tablist"
         aria-label="Result details"
-        className="border-border bg-card flex flex-wrap gap-1 overflow-x-auto rounded-md border p-1"
+        className="border-border bg-card hidden flex-wrap gap-1 overflow-x-auto rounded-md border p-1 md:flex"
       >
         {tabs.map((t) => {
           const Icon = t.icon;
@@ -1635,13 +1683,9 @@ export function ResultPanel({
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <ActionCard
-              result={result}
-              {...(onApplyActionCard ? { onApply: onApplyActionCard } : {})}
-              {...(runMeta.perStationBatchSize
-                ? { perStationBatchSize: runMeta.perStationBatchSize }
-                : {})}
-            />
+            {/* VROL-1174 — ActionCard was here; promoted to slot 2
+                above the KPI grid so the recommendation isn't
+                buried inside the OEE Card. */}
             <OeeBreakdown result={result} replicationSummary={replicationSummary} />
             <SustainabilityCard
               result={result}

@@ -202,3 +202,86 @@ describe("ResultPanel — rework KPI surface (VROL-628)", () => {
     expect(screen.getByText(/Per-station state breakdown/i)).toBeInTheDocument();
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// UX audit batch 3 — H3 / H8 / H9 (Sprint 194).
+// ────────────────────────────────────────────────────────────────────────
+
+describe("UX audit H3 — ActionCard slot promotion", () => {
+  it("VROL-1174 — renders an ActionCard above the KPI grid (data-testid='action-card')", () => {
+    render(
+      <ResultPanel
+        result={fakeResult()}
+        runMeta={{ stationLabels: ["Filler", "Capper"] }}
+        horizonMs={60_000}
+        warmupMs={0}
+      />,
+    );
+    // ActionCard exposes data-testid="action-card" (used by OnboardingTour).
+    expect(screen.getByTestId("action-card")).toBeInTheDocument();
+  });
+
+  it("VROL-1175 — secondary tiles render inside the disclosure when sustainability data exists", () => {
+    render(
+      <ResultPanel
+        result={fakeResult({ totalEnergyJ: 5_000, totalWaterL: 0, totalCO2eG: 0 })}
+        runMeta={{ stationLabels: ["Filler", "Capper"] }}
+        horizonMs={60_000}
+        warmupMs={0}
+      />,
+    );
+    const disclosure = screen.getByTestId("result-secondary-tiles");
+    expect(disclosure.tagName.toLowerCase()).toBe("details");
+    // <details open> by default — so the energy tile inside should render.
+    expect(disclosure.hasAttribute("open")).toBe(true);
+  });
+
+  it("VROL-1175 — disclosure not rendered when no yield + no sustainability data", () => {
+    render(
+      <ResultPanel
+        result={fakeResult({ totalEnergyJ: 0, totalWaterL: 0, totalCO2eG: 0 })}
+        runMeta={{ stationLabels: ["Filler", "Capper"] }}
+        horizonMs={60_000}
+        warmupMs={0}
+      />,
+    );
+    expect(screen.queryByTestId("result-secondary-tiles")).toBeNull();
+  });
+});
+
+describe("UX audit H9 — tab strip mobile select", () => {
+  it("VROL-1178 — mobile select rendered (hidden via md:hidden at desktop sizes)", () => {
+    render(
+      <ResultPanel
+        result={fakeResult()}
+        runMeta={{ stationLabels: ["Filler", "Capper"] }}
+        horizonMs={60_000}
+        warmupMs={0}
+      />,
+    );
+    // Always present in the DOM; CSS controls visibility.
+    const wrapper = screen.getByTestId("result-tabs-select");
+    expect(wrapper.className).toContain("md:hidden");
+    const select = wrapper.querySelector("select");
+    expect(select).toBeTruthy();
+    // Tab list options match the tab buttons.
+    const options = Array.from(select?.querySelectorAll("option") ?? []);
+    expect(options.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("VROL-1178 — selecting a tab via mobile select switches the active tab", () => {
+    render(
+      <ResultPanel
+        result={fakeResult()}
+        runMeta={{ stationLabels: ["Filler", "Capper"] }}
+        horizonMs={60_000}
+        warmupMs={0}
+      />,
+    );
+    const select = screen
+      .getByTestId("result-tabs-select")
+      .querySelector("select") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "stations" } });
+    expect(screen.getByText(/Per-station completed/i)).toBeInTheDocument();
+  });
+});

@@ -42,6 +42,7 @@ Browser-based discrete-event simulator for industrial production lines. Sketch y
 - **Run-history helpers**: `filterRunHistory(entries, query, order)` for search + sort (recent / throughput-desc / oee-desc), `consecutiveRunDeltas(entries)` for adjacent-pair comparison chips (VROL-366).
 - **Run history**: last 10 runs persisted; click any cell to compare against the current canvas.
 - **Drilldowns**: station-level Sheet with state mix, throughput, buffer pressure, constraint counters, recommendation.
+- **Result panel layout**: action card promoted to slot 2 (under the headline, before KPI tiles); KPI tile typography hierarchy with small-caps labels + text-2xl tabular-nums values; secondary tiles (yield + sustainability) inside a `<details>` disclosure; tab strip collapses to a `<select>` below the `md` breakpoint.
 
 ### Canvas
 
