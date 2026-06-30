@@ -25,3 +25,19 @@ export type {
 } from "./mock-adapter";
 
 export { openAiChatRequestBody, parseOpenAiChatResponse } from "./openai-shape";
+
+// VROL-397 — NL → Scenario JSON flow.
+export {
+  scenarioGenerationSchema,
+  type GeneratedScenario,
+  type GeneratedStation,
+  type GeneratedEdge,
+} from "./scenario-schema";
+export { scenarioGenerationSystemPrompt, SCENARIO_PROMPT_VERSION } from "./scenario-prompt";
+export {
+  SCENARIO_TOOL_NAME,
+  createScenarioTool,
+  formatZodErrorForLlm,
+  generateScenarioFromNl,
+  type ScenarioGenerationResult,
+} from "./scenario-tool";
