@@ -13,10 +13,23 @@ import { meanOf, type Distribution } from "@/engine";
 import type { RunSettings } from "@/routes/editor-run-settings";
 
 export interface DiffRow {
-  readonly category: "Station" | "Edge" | "Setting" | "Products" | "ToolPools";
+  readonly category: "Station" | "Edge" | "Setting" | "Products" | "ToolPools" | "Output";
   readonly label: string;
   readonly aValue: string;
   readonly bValue: string;
+  /**
+   * VROL-1152 — optional signed delta. Output rows fill this with
+   * (b - a) so the UI can render a tone-coded chip (green if delta is
+   * "better" in the metric's natural direction; red if "worse").
+   * Input rows leave it undefined.
+   */
+  readonly delta?: number;
+  /**
+   * For Output rows only: which direction is "good". The renderer
+   * uses this to colour the delta chip green vs red. For input rows
+   * it's undefined.
+   */
+  readonly betterDirection?: "higher" | "lower";
 }
 
 function fmt(n: number, digits = 2): string {
@@ -234,4 +247,140 @@ export function diffScenarios(a: ScenarioInput, b: ScenarioInput): DiffRow[] {
   }
 
   return rows;
+}
+
+/**
+ * VROL-369 / VROL-1152 — derive Output-category DiffRow entries from
+ * two ChainResult objects. Each metric carries its direction so the
+ * UI can colour deltas (throughput up = good; scrap down = good).
+ *
+ * Imported lazily via `type` to avoid pulling ChainResult into the
+ * input-diff side of the file (no runtime cost).
+ */
+import type { ChainResult } from "@/engine";
+
+interface KpiSpec {
+  readonly label: string;
+  readonly extract: (r: ChainResult) => number;
+  readonly format: (v: number) => string;
+  readonly betterDirection: "higher" | "lower";
+}
+
+const KPI_SPECS: readonly KpiSpec[] = [
+  {
+    label: "Throughput (parts/h)",
+    extract: (r) => r.throughputLambda * 3_600_000,
+    format: (v) => Math.round(v).toLocaleString(),
+    betterDirection: "higher",
+  },
+  {
+    label: "Line OEE",
+    extract: (r) => r.lineOee,
+    format: (v) => `${(v * 100).toFixed(1)}%`,
+    betterDirection: "higher",
+  },
+  {
+    label: "Line scrap rate",
+    extract: (r) => r.lineScrapRate,
+    format: (v) => `${(v * 100).toFixed(2)}%`,
+    betterDirection: "lower",
+  },
+  {
+    label: "Avg time in system (ms)",
+    extract: (r) => r.avgTimeInSystemW,
+    format: (v) => Math.round(v).toLocaleString(),
+    betterDirection: "lower",
+  },
+  {
+    label: "Average WIP (parts)",
+    extract: (r) => r.averageWipL,
+    format: (v) => v.toFixed(1),
+    betterDirection: "lower",
+  },
+  {
+    label: "Energy per part (J)",
+    // Energy/part = totalEnergyJ / completed when sustainability inputs declared.
+    extract: (r) =>
+      (r.totalEnergyJ ?? 0) > 0 && r.completed > 0 ? r.totalEnergyJ / r.completed : 0,
+    format: (v) => (v > 0 ? Math.round(v).toLocaleString() : "—"),
+    betterDirection: "lower",
+  },
+];
+
+export function deriveKpiDeltaRows(a: ChainResult, b: ChainResult): DiffRow[] {
+  const rows: DiffRow[] = [];
+  for (const spec of KPI_SPECS) {
+    const av = spec.extract(a);
+    const bv = spec.extract(b);
+    // Skip energy row when both sides are 0 (no sustainability inputs).
+    if (spec.label.startsWith("Energy") && av === 0 && bv === 0) continue;
+    if (av === bv) continue;
+    rows.push({
+      category: "Output",
+      label: spec.label,
+      aValue: spec.format(av),
+      bValue: spec.format(bv),
+      delta: bv - av,
+      betterDirection: spec.betterDirection,
+    });
+  }
+  return rows;
+}
+
+/**
+ * VROL-369 / VROL-1153 — full input + output rollup. The UI compare
+ * sheet renders all four sections together; this helper bundles them
+ * + a one-sentence summary highlighting the most-changed output.
+ */
+export interface ScenarioComparisonSummary {
+  readonly inputRows: readonly DiffRow[];
+  readonly outputRows: readonly DiffRow[];
+  /** Short prose: "B beats A on throughput (+8 %) but uses more energy/part." */
+  readonly summary: string;
+}
+
+export function summarizeScenarioComparison(
+  a: ScenarioInput,
+  b: ScenarioInput,
+  aResult: ChainResult | null,
+  bResult: ChainResult | null,
+): ScenarioComparisonSummary {
+  const inputRows = diffScenarios(a, b);
+  const outputRows = aResult && bResult ? deriveKpiDeltaRows(aResult, bResult) : [];
+  const summary = buildComparisonSummary(outputRows);
+  return { inputRows, outputRows, summary };
+}
+
+function buildComparisonSummary(outputRows: readonly DiffRow[]): string {
+  if (outputRows.length === 0) return "Both runs produced identical KPIs.";
+  // Rank by relative magnitude of delta vs the A value. Throughput +8 %
+  // and energy +1 J/part should rank throughput higher.
+  const ranked = [...outputRows]
+    .filter((r) => r.delta !== undefined && r.delta !== 0)
+    .map((r) => {
+      const av = parseAsFloat(r.aValue);
+      const denom = Math.abs(av) > 1e-9 ? Math.abs(av) : 1;
+      return { row: r, score: Math.abs(r.delta ?? 0) / denom };
+    })
+    .sort((a, b) => b.score - a.score);
+  if (ranked.length === 0) return "Outputs match.";
+  const lead = ranked[0]!;
+  const dir =
+    lead.row.delta! > 0
+      ? lead.row.betterDirection === "higher"
+        ? "improves"
+        : "worsens"
+      : lead.row.betterDirection === "higher"
+        ? "worsens"
+        : "improves";
+  const pct = Math.round((lead.row.delta! / Math.max(1e-9, parseAsFloat(lead.row.aValue))) * 100);
+  const signed = pct > 0 ? `+${String(pct)} %` : `${String(pct)} %`;
+  return `B ${dir} ${lead.row.label.toLowerCase()} (${signed} vs A)${ranked.length > 1 ? `; ${String(ranked.length - 1)} other KPI${ranked.length - 1 === 1 ? "" : "s"} moved.` : "."}`;
+}
+
+function parseAsFloat(value: string): number {
+  // Best-effort: strip commas + "%" / "ms" suffixes the formatters add.
+  const stripped = value.replace(/,/g, "").replace(/[^0-9.-]/g, "");
+  const n = Number(stripped);
+  return Number.isFinite(n) ? n : 0;
 }
