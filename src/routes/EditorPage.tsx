@@ -91,6 +91,7 @@ import {
   useState,
 } from "react";
 
+import { DescribeFactorySheet } from "./DescribeFactorySheet";
 import { Accordion, AccordionStatus } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1072,6 +1073,8 @@ function EditorCanvas() {
   // VROL-1186 — mobile palette Sheet drawer. Below lg the docked palette
   // is hidden; this state opens a left-side Sheet with the same content.
   const [mobilePaletteOpen, setMobilePaletteOpen] = useState<boolean>(false);
+  // VROL-402 — "Describe your factory" AI sheet.
+  const [describeFactoryOpen, setDescribeFactoryOpen] = useState<boolean>(false);
   useEffect(() => {
     try {
       window.localStorage?.setItem?.(
@@ -4560,6 +4563,21 @@ function EditorCanvas() {
             {/* VROL-999 — collapse label below sm. */}
             <span className="hidden sm:inline">Wizard</span>
           </Button>
+          {/* VROL-402 — describe-your-factory NL prompt. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setDescribeFactoryOpen(true);
+            }}
+            className="gap-2"
+            title="Describe your factory in plain English; AI generates a scenario"
+            aria-label="Describe with AI"
+            data-testid="describe-factory-trigger"
+          >
+            <Sparkles className="h-4 w-4" />
+            <span className="hidden sm:inline">Describe with AI</span>
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -7081,6 +7099,27 @@ function EditorCanvas() {
           ) : null}
         </SheetContent>
       </Sheet>
+
+      {/* VROL-402 — describe-your-factory sheet. */}
+      <DescribeFactorySheet
+        open={describeFactoryOpen}
+        onOpenChange={setDescribeFactoryOpen}
+        onApply={(graph) => {
+          setNodes(ensureStationKeys(graph.nodes));
+          setEdges(graph.edges);
+          setSettings(graph.settings);
+          setSelectedNodeId(null);
+          setResult(null);
+          setRunMeta(null);
+          setActiveScenarioName(null);
+          nodeIdRef.current =
+            graph.nodes.reduce(
+              (max, n) => Math.max(max, parseInt(n.id.replace(/\D/g, ""), 10) || 0),
+              0,
+            ) + 1;
+          toast.success("AI scenario loaded onto canvas");
+        }}
+      />
 
       <Sheet open={scenariosOpen} onOpenChange={setScenariosOpen}>
         <SheetContent
