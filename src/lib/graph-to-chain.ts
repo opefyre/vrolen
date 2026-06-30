@@ -563,7 +563,23 @@ export function graphToChainOptions(
       );
       const topoEdges: ChainTopologyEdge[] = edges
         .filter((e) => topoSet.has(e.source) && topoSet.has(e.target) && e.source !== e.target)
-        .map((e) => ({ source: e.source, target: e.target }));
+        .map((e) => {
+          // VROL-1061 — pick up an optional per-edge buffer cap when
+          // the user has set one on the React Flow edge. Validation
+          // happens downstream in validateAndBuildTopology; here we
+          // only accept finite positive integers and silently drop
+          // anything else (matches how cycleDistribution etc handle
+          // bad input — a draft scenario shouldn't crash the run).
+          const edgeData = e.data as { bufferCapacity?: unknown } | undefined;
+          const raw = edgeData?.bufferCapacity;
+          const bufferCapacity =
+            typeof raw === "number" && Number.isInteger(raw) && raw >= 1 ? raw : undefined;
+          return {
+            source: e.source,
+            target: e.target,
+            ...(bufferCapacity !== undefined ? { bufferCapacity } : {}),
+          };
+        });
 
       // CRITICAL: emit `topology` for EVERY valid single-source/single-sink
       // graph, branching or linear. Previously we only set topology when

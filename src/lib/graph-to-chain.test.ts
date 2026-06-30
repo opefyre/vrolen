@@ -397,4 +397,28 @@ describe("graphToChainOptions", () => {
     expect(r.error).toBeNull();
     expect(r.perStationUnitsPerPart).toEqual([1, 1, 1]);
   });
+
+  it("VROL-1061 — per-edge bufferCapacity on edge.data is plumbed onto topology.edges", () => {
+    const nodes = [node("a", { cycleMs: 100 }), node("b", { cycleMs: 100 })];
+    const edges: Edge[] = [{ id: "a-b", source: "a", target: "b", data: { bufferCapacity: 5 } }];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.topology?.edges[0]?.bufferCapacity).toBe(5);
+  });
+
+  it("VROL-1061 — bufferCapacity omitted when edge.data lacks the field", () => {
+    const nodes = [node("a", { cycleMs: 100 }), node("b", { cycleMs: 100 })];
+    const edges: Edge[] = [{ id: "a-b", source: "a", target: "b" }];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.topology?.edges[0]?.bufferCapacity).toBeUndefined();
+  });
+
+  it("VROL-1061 — non-integer or non-positive bufferCapacity is silently dropped (validation lives in the engine)", () => {
+    const nodes = [node("a", { cycleMs: 100 }), node("b", { cycleMs: 100 })];
+    const edges: Edge[] = [{ id: "a-b", source: "a", target: "b", data: { bufferCapacity: 2.5 } }];
+    const r = graphToChainOptions(nodes, edges);
+    expect(r.error).toBeNull();
+    expect(r.topology?.edges[0]?.bufferCapacity).toBeUndefined();
+  });
 });

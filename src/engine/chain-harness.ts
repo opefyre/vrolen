@@ -762,6 +762,19 @@ export interface ChainTopologyEdge {
    * follow-up that needs a buffer-rate primitive.
    */
   readonly tankCapacityL?: number;
+  /**
+   * VROL-1061 — per-edge buffer capacity override (positive integer,
+   * parts-count). When set, this edge's buffer holds at most N parts
+   * before BlockingOut the upstream station. Lets users model lines
+   * where queue space is asymmetric — one stage might hold 50 parts,
+   * the next only 3 (floor space, WIP policy, etc.). Falls back to
+   * global interStationBufferCapacity when omitted. Lower precedence
+   * than tankCapacityL (tanks are L-denominated) and lower than the
+   * sink-feeding kanbanCap (a different intentional override). When
+   * set together with kanbanCap on the sink-feeding edge, the
+   * per-edge value wins because it's more specific.
+   */
+  readonly bufferCapacity?: number;
 }
 
 export interface ChainTopology {
@@ -975,6 +988,13 @@ interface NormalizedTopology {
    * (1 L ≈ 1 part minimum-viable continuous-flow modelling).
    */
   tankCapacityL: (number | undefined)[];
+  /**
+   * VROL-1061 — per-edge buffer capacity override (parts-count, integer ≥ 1).
+   * When undefined, the edge falls through to the sink kanbanCap (sink-feeding
+   * edge only) or the global interStationBufferCapacity. tankCapacityL takes
+   * higher precedence (tanks use litres, not parts).
+   */
+  bufferCapacity: (number | undefined)[];
   /** Edges in input order; each carries source + target as node-array indices. */
   edges: { sourceIdx: number; targetIdx: number }[];
   /** For each node index: the indices of nodes it sends parts to. */
@@ -1339,6 +1359,20 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
         }
         return l;
       }),
+      // VROL-1061 — per-edge buffer capacity override (positive int).
+      // Validated against the same 1..10_000 range we use for global
+      // interStationBufferCapacity. undefined falls through to the
+      // global default downstream.
+      bufferCapacity: edges.map((e) => {
+        const c = e.bufferCapacity;
+        if (c === undefined) return undefined;
+        if (!Number.isInteger(c) || c < 1 || c > 10_000) {
+          throw new Error(
+            `topology: edge ${e.source} → ${e.target} bufferCapacity must be integer 1..10000 (got ${String(c)})`,
+          );
+        }
+        return c;
+      }),
       edges: normalizedEdges,
       outgoing,
       incoming,
@@ -1395,6 +1429,7 @@ function buildTopology(opts: ChainOptions): NormalizedTopology {
     bundleSizes: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
     shelfLifeMs: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
     tankCapacityL: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
+    bufferCapacity: Array.from({ length: Math.max(0, n - 1) }, () => undefined),
     edges,
     outgoing,
     incoming,
@@ -1590,6 +1625,16 @@ function* simulationStream(
     const tankL = topology.tankCapacityL[idx];
     if (tankL && tankL > 0) {
       return new CountingTrackedBuffer<TrackedPart>(Math.max(1, Math.floor(tankL)));
+    }
+    // VROL-1061 — per-edge bufferCapacity override sits between the
+    // tank case (higher precedence — different unit) and the sink
+    // kanban override (lower — kanbanCap is a global modelling
+    // toggle). When the user has set BOTH a per-edge cap and the
+    // global kanbanCap on the sink-feeding edge, the per-edge value
+    // wins because it's more specific.
+    const perEdgeCap = topology.bufferCapacity[idx];
+    if (perEdgeCap && perEdgeCap > 0) {
+      return new CountingTrackedBuffer<TrackedPart>(perEdgeCap);
     }
     const feedsSink = edge.targetIdx === topology.sinkIdx;
     const cap =

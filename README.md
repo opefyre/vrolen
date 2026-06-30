@@ -15,7 +15,7 @@ Browser-based discrete-event simulator for industrial production lines. Sketch y
 
 ### Discrete-event engine
 
-- **Stations + buffers**: cycle-time distributions (constant, uniform, normal, triangular, exponential, lognormal, weibull, gamma, empirical), parallel capacity, defect roll, setup times, product-changeover matrices, rework targets with pass limits.
+- **Stations + buffers**: cycle-time distributions (constant, uniform, normal, triangular, exponential, lognormal, weibull, gamma, empirical), parallel capacity, defect roll, setup times, product-changeover matrices, rework targets with pass limits. Per-edge `bufferCapacity` overrides the global default so asymmetric queue space ("this stage holds 50, that one only 3") is first-class — tank capacity, kanban cap, and per-edge override compose in a documented precedence.
 - **Reliability**: stochastic breakdowns (MTBF/MTTR), planned maintenance windows, cycle-count-driven PM, recurring CIP cleaning, random-event library.
 - **Workers + materials**: per-shift workforce with skills, worker breaks, shift handovers; material recipes with replenishment + per-station overrides.
 - **Multi-SKU**: per-product cycle distributions, changeover matrices, weighted production plans, per-batch tagging, quality grades, per-SKU routing overrides (route or skip).
