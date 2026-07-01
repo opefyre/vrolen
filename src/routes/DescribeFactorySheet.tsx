@@ -243,7 +243,11 @@ export function DescribeFactorySheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-[28rem] flex-col gap-0 overflow-y-auto sm:max-w-md"
+        // VROL-1197 — z-[70] beats the default z-50 (backdrop, tooltips,
+        // toasts) and the wizard's z-[60]. Under the audit's original
+        // z-50 the sheet stacked BEHIND editor toolbars in some routes.
+        className="z-[70] flex w-[28rem] flex-col gap-0 overflow-y-auto sm:max-w-md"
+        overlayClassName="z-[65]"
         data-testid="describe-factory-sheet"
       >
         <SheetHeader className="space-y-1 pr-10">
