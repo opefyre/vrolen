@@ -89,10 +89,13 @@ export function PlaybackHud({
   const oeePct = result ? `${(result.lineOee * 100).toFixed(1)}%` : "—";
   const wipStr = result ? `${(result.lineAverageWipL ?? 0).toFixed(1)}` : "—";
 
-  // Anchor the arrow at the top-right corner of the HUD KPI panel so
-  // the reader's eye already lives there.
-  const anchor = { x: wrapperWidth - 24, y: 24 };
-  const arrowActive =
+  // VROL-1213 — the original dashed arrow from the HUD panel to the
+  // sprite mis-read as "pointing into empty canvas" whenever the camera
+  // hadn't fitted the topology yet (see VROL-1213 fit-view). Replaced
+  // with a pulsing ring directly around the target sprite plus a tiny
+  // "Bottleneck: X" label pinned above it. Reads as "look at THIS
+  // station" without depending on the arrow's straight-line endpoint.
+  const ringActive =
     bottleneckAt !== null &&
     wrapperWidth > 0 &&
     wrapperHeight > 0 &&
@@ -169,9 +172,10 @@ export function PlaybackHud({
         </button>
       </div>
 
-      {/* Bottleneck callout — SVG arrow from the HUD panel toward the
-          bottleneck station's screen position. */}
-      {arrowActive && bottleneckAt ? (
+      {/* VROL-1213 — bottleneck marker: pulsing ring on the target
+          sprite + a compact label above. Reads as "look at THIS
+          station" and never points into empty canvas. */}
+      {ringActive && bottleneckAt ? (
         <svg
           className="pointer-events-none absolute inset-0"
           width={wrapperWidth}
@@ -179,41 +183,61 @@ export function PlaybackHud({
           data-testid="playback-hud-bottleneck-arrow"
           aria-hidden
         >
-          <defs>
-            <marker
-              id="bottleneck-head"
-              viewBox="0 0 10 10"
-              refX="8"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
+          <g transform={`translate(${String(bottleneckAt.x)} ${String(bottleneckAt.y)})`}>
+            {/* Outer pulsing ring — CSS animation via inline style. */}
+            <circle
+              r={26}
+              fill="none"
+              stroke="#f97316"
+              strokeWidth={3}
+              strokeDasharray="6 4"
+              opacity={0.9}
             >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="#f97316" />
-            </marker>
-          </defs>
-          <line
-            x1={anchor.x}
-            y1={anchor.y}
-            x2={bottleneckAt.x}
-            y2={bottleneckAt.y}
-            stroke="#f97316"
-            strokeWidth={2}
-            strokeDasharray="6 4"
-            markerEnd="url(#bottleneck-head)"
-          />
-          {bottleneckLabel ? (
-            <text
-              x={(anchor.x + bottleneckAt.x) / 2}
-              y={(anchor.y + bottleneckAt.y) / 2 - 6}
-              fill="#9a3412"
-              fontSize={11}
-              fontFamily="ui-monospace, monospace"
-              textAnchor="middle"
-            >
-              Bottleneck: {bottleneckLabel}
-            </text>
-          ) : null}
+              <animate attributeName="r" values="24;32;24" dur="1.6s" repeatCount="indefinite" />
+              <animate
+                attributeName="opacity"
+                values="0.9;0.4;0.9"
+                dur="1.6s"
+                repeatCount="indefinite"
+              />
+            </circle>
+            {/* Solid inner ring so the target is legible even mid-pulse. */}
+            <circle r={22} fill="none" stroke="#f97316" strokeWidth={2} opacity={0.85} />
+            {bottleneckLabel
+              ? (() => {
+                  // Approximate label width — 7 px per glyph is close
+                  // enough for ui-monospace at 11 px.
+                  const labelText = `Bottleneck: ${bottleneckLabel}`;
+                  const w = Math.max(120, labelText.length * 7 + 12);
+                  const h = 20;
+                  return (
+                    <g transform="translate(0 -34)">
+                      <rect
+                        x={-w / 2}
+                        y={-h / 2}
+                        width={w}
+                        height={h}
+                        rx={4}
+                        fill="#fff"
+                        fillOpacity={0.92}
+                        stroke="#f97316"
+                        strokeWidth={1}
+                      />
+                      <text
+                        y={4}
+                        fill="#9a3412"
+                        fontSize={11}
+                        fontFamily="ui-monospace, monospace"
+                        textAnchor="middle"
+                        fontWeight={600}
+                      >
+                        {labelText}
+                      </text>
+                    </g>
+                  );
+                })()
+              : null}
+          </g>
         </svg>
       ) : null}
     </div>

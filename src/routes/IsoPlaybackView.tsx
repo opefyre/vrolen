@@ -156,9 +156,14 @@ export function IsoPlaybackView({
     };
   }, [nodes, edges, effectiveResult, cheatSheetOpen, selectedStationId]);
 
-  // Centre the scene on ready so the topology lands in the viewport
-  // instead of at the origin, which the world camera would show far
-  // off-screen.
+  // VROL-1213 — fit-to-view on Playback entry.
+  // Before this, we centred on the middle layer at zoom=1, which for a
+  // 6-station line rendered everything clustered in ~200px in the middle
+  // of a 1000+px canvas with overlapping click hitboxes. Now we project
+  // the world-bounds of all station positions to screen, pick a zoom
+  // that fits with a 15 % margin, and translate so the projected bbox
+  // centres in the wrapper. Only fires on `ready` — pan/zoom + node
+  // edits after entry preserve the user's current camera.
   useEffect(() => {
     if (!ready) return;
     const wrapper = wrapperRef.current;
@@ -166,19 +171,62 @@ export function IsoPlaybackView({
     if (!wrapper || !canvas) return;
     const rect = wrapper.getBoundingClientRect();
     const layout = scenarioToIsoLayout(nodes, edges);
-    const midLayer = layout.layerCount > 0 ? (layout.layerCount - 1) / 2 : 0;
-    // Tile-to-pixel: 64/2 per unit iso-x plus rough centre offset.
+    if (layout.positions.size === 0 || rect.width === 0 || rect.height === 0) return;
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const p of layout.positions.values()) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    // Extend the world bbox by one tile so sprites don't clip the edge.
+    minX -= 0.5;
+    maxX += 0.5;
+    minY -= 0.5;
+    maxY += 0.5;
+
+    // Project the four world-bbox corners at zoom=1, camera=(0,0) to get
+    // the raw screen bbox. worldToScreen is linear in x,y at z=0, so 4
+    // corners is enough.
+    const zeroCam = { x: 0, y: 0, zoom: 1 };
+    const corners = [
+      worldToScreen({ x: minX, y: minY }, zeroCam),
+      worldToScreen({ x: maxX, y: minY }, zeroCam),
+      worldToScreen({ x: minX, y: maxY }, zeroCam),
+      worldToScreen({ x: maxX, y: maxY }, zeroCam),
+    ];
+    let sMinX = Infinity;
+    let sMaxX = -Infinity;
+    let sMinY = Infinity;
+    let sMaxY = -Infinity;
+    for (const c of corners) {
+      if (c.sx < sMinX) sMinX = c.sx;
+      if (c.sx > sMaxX) sMaxX = c.sx;
+      if (c.sy < sMinY) sMinY = c.sy;
+      if (c.sy > sMaxY) sMaxY = c.sy;
+    }
+    const worldW = Math.max(1, sMaxX - sMinX);
+    const worldH = Math.max(1, sMaxY - sMinY);
+    const margin = 0.85;
+    const zoom = Math.max(
+      0.4,
+      Math.min(2.5, Math.min((rect.width * margin) / worldW, (rect.height * margin) / worldH)),
+    );
+    // Scaled bbox centre — translate so it lands at wrapper centre.
+    const scaledCx = ((sMinX + sMaxX) / 2) * zoom;
+    const scaledCy = ((sMinY + sMaxY) / 2) * zoom;
     const camera = {
-      x: rect.width / 2 - midLayer * 32,
-      y: rect.height / 2 - midLayer * 16,
-      zoom: 1,
+      x: rect.width / 2 - scaledCx,
+      y: rect.height / 2 - scaledCy,
+      zoom,
     };
     cameraRef.current = camera;
     setCameraState(camera);
     canvas.setCamera(camera);
-    // Intentionally only re-centres on ready. Nodes/edges changes
-    // rebuild the scene above but preserve the current camera so the
-    // user's pan isn't clobbered mid-inspection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
