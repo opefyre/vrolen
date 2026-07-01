@@ -34,7 +34,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { navigate, usePathname } from "@/lib/spa-nav";
+import { navigate, useSearch } from "@/lib/spa-nav";
 import { toast } from "@/lib/toast";
 
 interface Term {
@@ -189,12 +189,12 @@ function copyAnchorLink(anchor: string): void {
 }
 
 export default function LearnPage() {
-  // VROL-834 — re-render when the URL changes (back/forward) so the active
-  // tab follows. `usePathname` already subscribes to `popstate`, which is
-  // what `navigate(...)` dispatches when we update the search param. The
-  // section is derived from the URL on every render so the URL stays the
-  // source of truth — no useState mirror to drift out of sync.
-  usePathname();
+  // VROL-834 / VROL-1196 — re-render when the search string changes so the
+  // active tab follows ?section=. usePathname only fires on pathname
+  // changes; that's why the audit found /learn stuck on Glossary when
+  // clicking Concepts / Examples — the URL updated but this component
+  // wasn't subscribed.
+  useSearch();
   const section: LearnSection = readSection();
 
   const handleSectionChange = (next: string): void => {

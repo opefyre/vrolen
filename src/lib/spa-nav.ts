@@ -65,3 +65,21 @@ function subscribePathname(onChange: () => void): () => void {
 export function usePathname(): string {
   return useSyncExternalStore(subscribePathname, getPathnameSnapshot, getServerSnapshot);
 }
+
+/**
+ * VROL-1196 — subscribe to `window.location.search`. usePathname doesn't
+ * fire when only the query string changes (audit found /learn tabs
+ * silently stuck on Glossary even as ?section=examples was set). Consumers
+ * that care about search-param navigation should use this alongside
+ * usePathname.
+ */
+function getSearchSnapshot(): string {
+  if (typeof window === "undefined") return "";
+  return window.location.search;
+}
+function getSearchServerSnapshot(): string {
+  return "";
+}
+export function useSearch(): string {
+  return useSyncExternalStore(subscribePathname, getSearchSnapshot, getSearchServerSnapshot);
+}
