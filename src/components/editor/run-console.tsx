@@ -213,13 +213,13 @@ export function RunConsole({
         <span className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
           Run console
         </span>
-        <span className="text-muted-foreground font-mono text-[10px] tabular-nums">
+        <span className="text-muted-foreground font-mono text-[11px] tabular-nums">
           {entries.length}/{MAX_ENTRIES}
         </span>
         {/* VROL-910 — small indicator when the console is filtering by playhead. */}
         {typeof playheadTimeMs === "number" && hiddenCount > 0 ? (
           <span
-            className="bg-sim-running/15 text-sim-running rounded-full px-1.5 py-0.5 font-mono text-[10px]"
+            className="bg-sim-running/15 text-sim-running rounded-full px-1.5 py-0.5 font-mono text-[11px]"
             title={`${String(hiddenCount)} entr${hiddenCount === 1 ? "y" : "ies"} hidden — playhead before their sim time`}
           >
             +{hiddenCount} after playhead
@@ -227,7 +227,7 @@ export function RunConsole({
         ) : null}
         {errorCount > 0 ? (
           <span
-            className="bg-sim-down/15 text-sim-down-foreground rounded-full px-1.5 py-0.5 font-mono text-[10px]"
+            className="bg-sim-down/15 text-sim-down-foreground rounded-full px-1.5 py-0.5 font-mono text-[11px]"
             title={`${String(errorCount)} error${errorCount === 1 ? "" : "s"}`}
           >
             {errorCount} err
@@ -235,7 +235,7 @@ export function RunConsole({
         ) : null}
         {warningCount > 0 ? (
           <span
-            className="bg-sim-setup/20 text-sim-setup-foreground rounded-full px-1.5 py-0.5 font-mono text-[10px]"
+            className="bg-sim-setup/20 text-sim-setup-foreground rounded-full px-1.5 py-0.5 font-mono text-[11px]"
             title={`${String(warningCount)} warning${warningCount === 1 ? "" : "s"}`}
           >
             {warningCount} warn
@@ -244,7 +244,7 @@ export function RunConsole({
         {!expanded && latest ? (
           <div className="text-foreground/80 ml-2 flex min-w-0 items-center gap-1.5 text-[11px]">
             <SeverityIcon severity={latest.severity} />
-            <span className="text-muted-foreground font-mono text-[10px] tabular-nums">
+            <span className="text-muted-foreground font-mono text-[11px] tabular-nums">
               {latest.clock}
             </span>
             <span className="truncate">{latest.message}</span>
@@ -296,7 +296,7 @@ export function RunConsole({
                   key={`${String(e.tMs)}-${String(i)}`}
                   className="flex items-start gap-2 px-3 py-1.5 text-[11px]"
                 >
-                  <span className="text-muted-foreground mt-0.5 font-mono text-[10px] tabular-nums">
+                  <span className="text-muted-foreground mt-0.5 font-mono text-[11px] tabular-nums">
                     {e.clock}
                   </span>
                   <SeverityIcon severity={e.severity} />

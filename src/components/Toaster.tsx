@@ -9,8 +9,11 @@ const MOBILE_BREAKPOINT = 640;
  * Project-styled wrapper around Sonner's Toaster.
  *
  * Conventions baked in:
- *   - position: top-right on desktop, top-center on mobile (VROL-758) so
- *     toasts don't get clipped or overlap canvas controls on small screens.
+ *   - position: bottom-right on desktop (VROL-1200 — the previous
+ *     top-right placement covered the ⌘K palette + theme toggle for
+ *     the first 5 seconds on every cold load, so those controls were
+ *     unclickable exactly when a new user would try them). Top-center
+ *     on mobile so toasts don't fight the narrow-viewport toolbar.
  *   - duration: 5s for success/info; error toasts override per-call
  *   - matches the active theme (light / dark) via useTheme()
  *   - reduced-motion friendly (Sonner handles this automatically)
@@ -34,7 +37,7 @@ export function Toaster() {
 
   return (
     <SonnerToaster
-      position={isMobile ? "top-center" : "top-right"}
+      position={isMobile ? "top-center" : "bottom-right"}
       theme={resolved}
       richColors
       closeButton

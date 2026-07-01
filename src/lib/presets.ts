@@ -867,7 +867,7 @@ const PER_EDGE_BUFFER_DEMO: Preset = {
   title: "Per-edge buffer cap",
   blurb:
     "Three-station line with a 1-slot buffer ONLY between Mid and Downstream. Upstream blocks out while the rest of the chain has room. Open the run and watch Mid's BlockedOut grow.",
-  highlight: "Per-edge bufferCapacity override (S178)",
+  highlight: "Per-edge buffer override — one tight link constrains the whole line",
   tags: ["starter"],
   graph: {
     nodes: [
@@ -896,8 +896,8 @@ const ENERGY_BUDGET_SQUEEZE: Preset = {
   id: "energy-budget-squeeze",
   title: "Energy budget squeeze",
   blurb:
-    "Sustainability-input line: the slow Reactor is also the energy hotspot. Try the optimization card with a tight energy/part budget to see the budget-infeasible coach tip fire.",
-  highlight: "Sustainability + tight energy ceiling (S172/173/174)",
+    "Sustainability-input line: the slow Reactor is also the energy hotspot. Try the optimization card with a tight energy/part budget to see when the target is out of reach.",
+  highlight: "Sustainability targets + tight energy ceiling",
   tags: ["sustainability"],
   graph: {
     nodes: [
@@ -941,8 +941,8 @@ const WIP_PILEUP: Preset = {
   id: "wip-pileup",
   title: "WIP pile-up",
   blurb:
-    "Fast source (50ms) feeding slow downstream (200ms) with a roomy 200-slot buffer. Parts queue up — average WIP swells. Coach tip 'high-wip-warning' fires after the run.",
-  highlight: "Demonstrates buffer swelling without throttling",
+    "Fast source (50ms) feeding slow downstream (200ms) with a roomy 200-slot buffer. Parts queue up — average WIP swells. Coach flags it after the run.",
+  highlight: "Buffer swells when upstream outpaces downstream",
   tags: ["starter"],
   graph: {
     nodes: [
@@ -969,7 +969,7 @@ const UPSTREAM_LIMITED: Preset = {
   id: "upstream-limited",
   title: "Upstream-limited line",
   blurb:
-    "Slow source (300ms) with fast downstream (50ms). Downstream is idle most of the run waiting for supply. Coach tip 'idle-source' fires — speed up the source, not the mid-chain stations.",
+    "Slow source (300ms) with fast downstream (50ms). Downstream is idle most of the run waiting for supply. The fix is to speed up the source, not the mid-chain stations — the coach walks you through it.",
   highlight: "Upstream-limited vs bottleneck-limited diagnosis",
   tags: ["source-rate"],
   graph: {
@@ -1022,7 +1022,7 @@ const CHANGEOVER_HEAVY: Preset = {
   title: "Changeover-heavy mixed-model",
   blurb:
     "Fast 50ms cycles paired with 400ms changeovers on a 2-product line. Throughput is governed by how often you switch products, not how fast each cycle runs.",
-  highlight: "Setup dominates cycle (S182 advisor)",
+  highlight: "Setup time dominates the cycle — great for stress-testing changeover-heavy lines",
   tags: ["multi-product"],
   graph: {
     nodes: [

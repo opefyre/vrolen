@@ -189,43 +189,43 @@ function ShapePreview({ kind }: { readonly kind: ShapeKind }) {
           <path d="M0,0 L8,4 L0,8 z" fill="var(--muted-foreground)" />
         </marker>
       </defs>
-      {kind === "single-line"
-        ? [
-            line(20, 24, 60, 24),
-            line(60, 24, 110, 24),
-            line(110, 24, 160, 24),
-            <g key="d">{[20, 60, 110, 160].map((x) => dot(x, 24))}</g>,
-          ]
-        : null}
-      {kind === "two-lines"
-        ? [
-            line(20, 12, 70, 12),
-            line(70, 12, 130, 24),
-            line(20, 36, 70, 36),
-            line(70, 36, 130, 24),
-            <g key="d">
-              {dot(20, 12)}
-              {dot(70, 12)}
-              {dot(20, 36)}
-              {dot(70, 36)}
-              {dot(130, 24)}
-            </g>,
-          ]
-        : null}
-      {kind === "branching"
-        ? [
-            line(20, 24, 70, 12),
-            line(20, 24, 70, 36),
-            line(70, 12, 130, 24),
-            line(70, 36, 130, 24),
-            <g key="d">
-              {dot(20, 24)}
-              {dot(70, 12)}
-              {dot(70, 36)}
-              {dot(130, 24)}
-            </g>,
-          ]
-        : null}
+      {/* VROL-1209 — wrap each branch in <g> instead of a bare array
+          so React doesn't demand keys on the individual lines / dots. */}
+      {kind === "single-line" ? (
+        <g>
+          {line(20, 24, 60, 24)}
+          {line(60, 24, 110, 24)}
+          {line(110, 24, 160, 24)}
+          {[20, 60, 110, 160].map((x) => (
+            <g key={`d-${String(x)}`}>{dot(x, 24)}</g>
+          ))}
+        </g>
+      ) : null}
+      {kind === "two-lines" ? (
+        <g>
+          {line(20, 12, 70, 12)}
+          {line(70, 12, 130, 24)}
+          {line(20, 36, 70, 36)}
+          {line(70, 36, 130, 24)}
+          {dot(20, 12)}
+          {dot(70, 12)}
+          {dot(20, 36)}
+          {dot(70, 36)}
+          {dot(130, 24)}
+        </g>
+      ) : null}
+      {kind === "branching" ? (
+        <g>
+          {line(20, 24, 70, 12)}
+          {line(20, 24, 70, 36)}
+          {line(70, 12, 130, 24)}
+          {line(70, 36, 130, 24)}
+          {dot(20, 24)}
+          {dot(70, 12)}
+          {dot(70, 36)}
+          {dot(130, 24)}
+        </g>
+      ) : null}
       {kind === "custom" ? <g>{dot(90, 24)}</g> : null}
     </svg>
   );

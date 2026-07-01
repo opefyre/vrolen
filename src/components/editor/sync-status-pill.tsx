@@ -72,9 +72,12 @@ export function SyncStatusPill({
   let label: string;
   let tone: string;
   if (!scenarioName) {
-    dotClass = "bg-sim-down";
-    label = "Not saved";
-    tone = "text-sim-down-foreground bg-sim-down/10";
+    // VROL-1204 — was red ("Not saved" bg-sim-down). Red reads as
+    // danger, but autosave keeps state safe — nothing is at risk here,
+    // the scenario just doesn't have a name yet. Amber + softer copy.
+    dotClass = "bg-sim-setup";
+    label = "Autosaved · Name this";
+    tone = "text-sim-setup-foreground bg-sim-setup/15";
   } else if (isModified) {
     dotClass = "bg-sim-setup";
     label = diff
@@ -108,14 +111,14 @@ export function SyncStatusPill({
       >
         <div className="space-y-2">
           <div>
-            <div className="text-muted-foreground text-[10px] tracking-wide uppercase">
+            <div className="text-muted-foreground text-[11px] tracking-wide uppercase">
               {scenarioName ? "Scenario" : "Unsaved scenario"}
             </div>
             <div className="text-foreground font-medium">{scenarioName ?? "Untitled"}</div>
           </div>
           {lastSavedAtMs ? (
             <div>
-              <div className="text-muted-foreground text-[10px] tracking-wide uppercase">
+              <div className="text-muted-foreground text-[11px] tracking-wide uppercase">
                 Last saved
               </div>
               <div className="font-mono tabular-nums">{formatRelative(lastSavedAtMs, now)}</div>
@@ -158,7 +161,7 @@ export function SyncStatusPill({
             ) : null}
           </div>
           {!scenarioName ? (
-            <p className="text-muted-foreground text-[10px]">
+            <p className="text-muted-foreground text-[11px]">
               Save now to name this scenario. Cmd+S also opens the name dialog.
             </p>
           ) : null}

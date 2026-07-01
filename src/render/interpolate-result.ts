@@ -121,8 +121,14 @@ function rollingRunningPct(
 }
 
 function pickBottleneckIdx(runningPcts: readonly number[]): number {
+  // VROL-1205 — start at 0 so a station with 0% running-pct never
+  // "wins". Before this, an all-zero window (t=0 or during warmup) fell
+  // back to station index 0 — usually the source Input — and the HUD
+  // showed "Bottleneck: Input". Returning -1 in that case lets the
+  // caller fall back to result.bottleneckStationIdx from the finished
+  // run, which points at a real bottleneck (e.g. Capper).
   let best = -1;
-  let bestVal = -1;
+  let bestVal = 0;
   for (let i = 0; i < runningPcts.length; i++) {
     const v = runningPcts[i] ?? 0;
     if (v > bestVal) {
