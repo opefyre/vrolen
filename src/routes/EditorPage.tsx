@@ -4688,8 +4688,10 @@ function EditorCanvas() {
             }}
             className="gap-2"
             data-tour="run-settings"
-            aria-label="Run settings"
-            title="Run settings"
+            /* VROL-1220 — descriptive title (was echoing the visible
+               label, which the audit called out as unhelpful). */
+            aria-label="Run settings — horizon, warmup, replications, buffer defaults"
+            title="Horizon, warmup, replications, buffer defaults"
           >
             <Settings2 className="h-4 w-4" />
             {/* VROL-999 — collapse label below sm. */}
@@ -4704,8 +4706,9 @@ function EditorCanvas() {
             }}
             className="gap-2"
             data-tour="scenarios"
-            aria-label="Scenarios"
-            title="Scenarios"
+            /* VROL-1220 — descriptive title. */
+            aria-label="Scenarios — load a preset or a saved scenario"
+            title="Load a preset or a saved scenario"
           >
             <FolderOpen className="h-4 w-4" />
             {/* VROL-999 — collapse label below sm. */}
@@ -4721,6 +4724,10 @@ function EditorCanvas() {
               aria-haspopup="menu"
               aria-expanded={moreOpen}
               aria-label="More actions"
+              /* VROL-1220 — icon-only affordance previously had no
+                 hover hint; added a native title so a mouse user can
+                 discover the menu without clicking blindly. */
+              title="More actions — import / export / duplicate"
             >
               <MoreHorizontal className="h-4 w-4" />
             </Button>
