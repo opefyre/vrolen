@@ -13,7 +13,10 @@
 import type { ChainResult } from "@/engine";
 
 function pct(v: number): string {
-  return `${(v * 100).toFixed(0)} %`;
+  // VROL-1219 — normalised "N %" → "N%" to match the rest of the app
+  // (KPI cards, header pill, coach tips). Audit called out the mixed
+  // spacing as trust-eroding.
+  return `${(v * 100).toFixed(0)}%`;
 }
 
 function fmtPerHour(throughputPerMs: number): string {
@@ -93,7 +96,7 @@ export function narrateOee(result: ChainResult): readonly NarrationPart[] {
     const pctMaint = (maintMs / result.elapsedMs) * 100;
     parts.push({
       key: "planned-downtime",
-      text: `Planned downtime (Setup + Maintenance + CIP) was ${pctMaint.toFixed(0)} % of the horizon — that's NOT counted in Availability. Use Util or TEEP for an inclusive view.`,
+      text: `Planned downtime (Setup + Maintenance + CIP) was ${pctMaint.toFixed(0)}% of the horizon — that's NOT counted in Availability. Use Util or TEEP for an inclusive view.`,
     });
   }
 
@@ -105,7 +108,7 @@ export function narrateOee(result: ChainResult): readonly NarrationPart[] {
   if (totalCycles > 0 && clamps / totalCycles > 0.01) {
     parts.push({
       key: "clamp-warning",
-      text: `${clamps.toLocaleString()} cycle-time samples were floor-clamped (≥ 1 % of cycles). A Normal distribution with a wide stddev relative to its mean drifts upward via this clamp. Switch to truncatedNormal for an unbiased fit.`,
+      text: `${clamps.toLocaleString()} cycle-time samples were floor-clamped (≥ 1% of cycles). A Normal distribution with a wide stddev relative to its mean drifts upward via this clamp. Switch to truncatedNormal for an unbiased fit.`,
     });
   }
 

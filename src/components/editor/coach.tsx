@@ -89,7 +89,12 @@ export function Coach({ tips, className }: CoachProps): ReactNode {
       role="status"
       aria-live="polite"
       className={cn(
-        "absolute right-3 bottom-20 z-30 max-w-[280px] shadow-md",
+        // VROL-1219 — was at `bottom-20 right-3` which sat directly under
+        // the bottom-right toast (VROL-1200 moved toasts there in
+        // Sprint 203). The two overlapped by ~90 px, chopping half the
+        // coach body. Bumped to `bottom-36` (~9 rem = 144 px, clears a
+        // 100-px toast + 16-px inset with room to spare).
+        "absolute right-3 bottom-36 z-30 max-w-[280px] shadow-md",
         reducedMotion ? null : "animate-in slide-in-from-right-2 fade-in-0 duration-300",
         className,
       )}

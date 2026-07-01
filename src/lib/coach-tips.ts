@@ -277,8 +277,13 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
     // Quality before chasing cycle time.
     {
       id: "low-line-oee-warning",
-      title: "Line OEE is below 50 %",
-      body: `Line OEE is ${((deps.lineOee ?? 0) * 100).toFixed(0)} %. Open the OEE breakdown card to see which factor — Availability (breakdowns / maintenance), Performance (slow cycles, micro-stops), or Quality (scrap) — is the slim one before chasing cycle time changes.`,
+      // VROL-1219 — audit called the old copy a wall-of-text with em-dash
+      // parentheticals and inconsistent "50 %" / "0 %" spacing. Rewritten
+      // as two short sentences with normalised "%" (no space) matching the
+      // rest of the app; still points the reader at the OEE breakdown
+      // for the diagnosis, just with less friction.
+      title: "Line OEE is below 50%",
+      body: `Line OEE is ${((deps.lineOee ?? 0) * 100).toFixed(0)}%. Open the OEE breakdown — it splits Availability, Performance, and Quality so you know where to look before tuning cycle times.`,
       whenVisible: () =>
         hasRun &&
         (deps.lineOee ?? 1) < 0.5 &&
@@ -292,7 +297,8 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
     {
       id: "high-scrap-warning",
       title: "Scrap rate is above 5 %",
-      body: `Line scrap rate is ${((deps.lineScrapRate ?? 0) * 100).toFixed(1)} %. At this level, defect root-cause work outpaces cycle tuning — open per-station Inspector → Defects to see which station drives the loss.`,
+      // VROL-1219 — normalised "%" spacing to match the rest of the app.
+      body: `Line scrap rate is ${((deps.lineScrapRate ?? 0) * 100).toFixed(1)}%. At this level, defect root-cause work outpaces cycle tuning — open per-station Inspector → Defects to see which station drives the loss.`,
       whenVisible: () =>
         hasRun &&
         (deps.lineScrapRate ?? 0) > 0.05 &&
@@ -307,7 +313,7 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
     {
       id: "warmup-too-short",
       title: "Warmup may be too short",
-      body: `Warmup is ${((deps.warmupFractionOfHorizon ?? 0) * 100).toFixed(0)} % of the horizon — the run is measuring startup transients alongside steady state. Raise warmupMs to ~20 % of horizon (or extend the horizon) so the early WIP build-up doesn't bias the numbers.`,
+      body: `Warmup is ${((deps.warmupFractionOfHorizon ?? 0) * 100).toFixed(0)}% of the horizon — the run is measuring startup transients alongside steady state. Raise warmupMs to ~20% of horizon (or extend the horizon) so the early WIP build-up doesn't bias the numbers.`,
       whenVisible: () => hasRun && (deps.warmupFractionOfHorizon ?? 1) < 0.1,
     },
     // VROL-1067 — single-rep on stochastic input hides the variance.
