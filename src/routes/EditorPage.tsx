@@ -1088,6 +1088,21 @@ function EditorCanvas() {
       return "editor";
     }
   });
+
+  // VROL-1202 — first-click station feedback. When the user picks a
+  // station while the Inspector rail is collapsed, pop it open so they
+  // see its details land in the panel instead of wondering if the
+  // click registered. Bulk selections don't auto-open — the bulk-edit
+  // shape is a different-enough surface that the collapsed state stays
+  // the user's choice. React 19's set-state-in-effect lint rule fires
+  // here because setting UI state from state is normally derivable at
+  // render time; here it's a one-shot open that the user can then
+  // collapse manually. Suppress rather than restructure.
+  useEffect(() => {
+    if (selectedNodeId === null) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setInspectorPaneOpen(true);
+  }, [selectedNodeId]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
