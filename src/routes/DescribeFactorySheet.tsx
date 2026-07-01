@@ -40,8 +40,13 @@ import {
   type ProviderKey,
   type ProviderKeyStore,
 } from "@/ai/provider-keys";
-import { generateScenarioFromNl, type ScenarioGenerationResult } from "@/ai/scenario-tool";
+import {
+  generateScenarioFromNl,
+  type PriorClarificationContext,
+  type ScenarioGenerationResult,
+} from "@/ai/scenario-tool";
 import type { GeneratedScenario } from "@/ai/scenario-schema";
+import type { ClarificationAnswer, ClarificationQuestion } from "@/ai/clarification-schema";
 import { createSharedOpenAiAdapter, sharedOpenAiAvailable } from "@/ai/shared-openai";
 
 import { aiScenarioToGraph, type AiScenarioGraph } from "@/lib/scenario-from-ai";
@@ -87,6 +92,11 @@ type Status =
       readonly message: string;
     }
   | {
+      readonly kind: "questions";
+      readonly questions: readonly ClarificationQuestion[];
+      readonly priorContext: PriorClarificationContext;
+    }
+  | {
       readonly kind: "success";
       readonly scenario: GeneratedScenario;
       readonly graph: AiScenarioGraph;
@@ -130,7 +140,12 @@ export function DescribeFactorySheet({
     prompt.trim().length > 0 &&
     status.kind !== "running";
 
-  const runGenerate = async () => {
+  const runGenerate = async (
+    opts: {
+      priorContext?: PriorClarificationContext;
+      skipClarification?: boolean;
+    } = {},
+  ) => {
     setStatus({ kind: "running" });
     const trimmedKey = apiKey.trim();
     const providerKey: ProviderKey = {
@@ -140,21 +155,27 @@ export function DescribeFactorySheet({
     };
     if (keySource === "byo" && rememberKey) {
       try {
-        // Refresh addedAt so the dashboard can sort by last-used later.
         store.upsert({ ...providerKey, addedAt: 0 });
       } catch {
         // private mode / quota — ignore, generation still works
       }
     }
     try {
+      // Test-only injected `generate` predates the clarification flow;
+      // it always returns a scenario or an error, never questions.
       const result =
         generate !== undefined
           ? await generate(providerKey, prompt.trim())
           : keySource === "shared"
             ? await generateScenarioFromNl(createSharedOpenAiAdapter(), prompt.trim(), {
                 model: "gpt-4o-mini",
+                ...(opts.priorContext ? { priorContext: opts.priorContext } : {}),
+                ...(opts.skipClarification ? { skipClarification: true } : {}),
               })
-            : await generateScenarioFromNl(createAdapterForProvider(providerKey), prompt.trim());
+            : await generateScenarioFromNl(createAdapterForProvider(providerKey), prompt.trim(), {
+                ...(opts.priorContext ? { priorContext: opts.priorContext } : {}),
+                ...(opts.skipClarification ? { skipClarification: true } : {}),
+              });
       if (!result.ok) {
         setStatus({
           kind: "error",
@@ -162,11 +183,21 @@ export function DescribeFactorySheet({
         });
         return;
       }
+      // VROL-1211 — LLM asked for clarification instead of emitting.
+      if ("needsClarification" in result && result.needsClarification) {
+        setStatus({
+          kind: "questions",
+          questions: result.questions,
+          priorContext: {
+            conversation: result.conversation,
+            questions: result.questions,
+          },
+        });
+        return;
+      }
       const graph = aiScenarioToGraph(result.scenario);
-      // VROL-1210 — belt-and-suspenders: even if schema + retries
-      // pass, run the same engine validation the editor uses on the
-      // converted graph. If a topology error snuck through, block
-      // Apply and show the user exactly what's wrong.
+      // VROL-1210 — belt-and-suspenders engine validation on the
+      // converted graph. Blocks Apply if a topology error snuck through.
       const validation = validateScenario(graph.nodes, graph.edges, graph.settings);
       setStatus({
         kind: "success",
@@ -179,6 +210,21 @@ export function DescribeFactorySheet({
       const msg = e instanceof Error ? e.message : String(e);
       setStatus({ kind: "error", message: msg });
     }
+  };
+
+  // VROL-1211 — user submits their answers or skips.
+  const submitAnswers = (answers: readonly ClarificationAnswer[]) => {
+    if (status.kind !== "questions") return;
+    void runGenerate({
+      priorContext: { ...status.priorContext, answers },
+    });
+  };
+  const skipClarification = () => {
+    if (status.kind !== "questions") return;
+    void runGenerate({
+      priorContext: status.priorContext,
+      skipClarification: true,
+    });
   };
 
   const handleApply = () => {
@@ -384,6 +430,13 @@ export function DescribeFactorySheet({
               {status.message}
             </div>
           ) : null}
+          {status.kind === "questions" ? (
+            <QuestionsPanel
+              questions={status.questions}
+              onSubmit={submitAnswers}
+              onSkip={skipClarification}
+            />
+          ) : null}
           {status.kind === "success" ? (
             <div
               className="border-sim-running/40 bg-sim-running/5 space-y-2 rounded-md border p-3 text-xs"
@@ -461,5 +514,85 @@ export function DescribeFactorySheet({
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/**
+ * VROL-1211 — inline form the LLM's questions render into. One text
+ * input per question, prefilled with suggestedAnswer when the model
+ * provided one. Two buttons: "Answer & continue" submits back to the
+ * LLM; "Continue anyway" tells the LLM to use defaults.
+ */
+function QuestionsPanel({
+  questions,
+  onSubmit,
+  onSkip,
+}: {
+  readonly questions: readonly ClarificationQuestion[];
+  readonly onSubmit: (answers: readonly ClarificationAnswer[]) => void;
+  readonly onSkip: () => void;
+}): ReactElement {
+  const [drafts, setDrafts] = useState<Record<string, string>>(() => {
+    const out: Record<string, string> = {};
+    for (const q of questions) out[q.id] = q.suggestedAnswer ?? "";
+    return out;
+  });
+  const anyAnswered = Object.values(drafts).some((v) => v.trim().length > 0);
+  return (
+    <div
+      className="border-sim-setup/40 bg-sim-setup/5 space-y-3 rounded-md border p-3 text-xs"
+      data-testid="describe-factory-questions"
+      role="region"
+      aria-label="Clarification questions"
+    >
+      <div className="space-y-1">
+        <strong className="text-foreground text-sm">A few quick questions</strong>
+        <p className="text-muted-foreground text-[11px] leading-snug">
+          Answering makes the scenario match your line more precisely. Or skip and I&apos;ll pick
+          sensible defaults.
+        </p>
+      </div>
+      <div className="space-y-2.5">
+        {questions.map((q, i) => (
+          <div key={q.id} className="space-y-1">
+            <label htmlFor={`dfs-q-${q.id}`} className="text-foreground text-xs font-medium">
+              {String(i + 1)}. {q.question}
+            </label>
+            <Input
+              id={`dfs-q-${q.id}`}
+              type="text"
+              value={drafts[q.id] ?? ""}
+              placeholder={q.hint ?? ""}
+              onChange={(e) => {
+                setDrafts((prev) => ({ ...prev, [q.id]: e.target.value }));
+              }}
+              data-testid={`describe-factory-question-${q.id}`}
+              className="h-8 text-xs"
+              autoComplete="off"
+            />
+            {q.hint ? <p className="text-muted-foreground text-[10px]">{q.hint}</p> : null}
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          onClick={() => {
+            const answers: ClarificationAnswer[] = questions.map((q) => ({
+              id: q.id,
+              answer: drafts[q.id] ?? "",
+            }));
+            onSubmit(answers);
+          }}
+          disabled={!anyAnswered}
+          data-testid="describe-factory-questions-submit"
+          className="flex-1"
+        >
+          Answer &amp; continue
+        </Button>
+        <Button variant="outline" onClick={onSkip} data-testid="describe-factory-questions-skip">
+          Continue anyway
+        </Button>
+      </div>
+    </div>
   );
 }

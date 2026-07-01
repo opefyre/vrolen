@@ -36,11 +36,15 @@ export {
 export { scenarioGenerationSystemPrompt, SCENARIO_PROMPT_VERSION } from "./scenario-prompt";
 export {
   SCENARIO_TOOL_NAME,
+  CLARIFICATION_TOOL_NAME,
   createScenarioTool,
+  createClarificationTool,
   formatZodErrorForLlm,
   generateScenarioFromNl,
   type ScenarioGenerationResult,
+  type PriorClarificationContext,
 } from "./scenario-tool";
+export type { ClarificationQuestion, ClarificationAnswer } from "./clarification-schema";
 
 // VROL-410 — auto-narration of a sim run.
 export {

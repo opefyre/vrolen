@@ -7,7 +7,7 @@
  * can run side-by-side prompts during migration.
  */
 
-export const SCENARIO_PROMPT_VERSION = "v2";
+export const SCENARIO_PROMPT_VERSION = "v3";
 
 /**
  * Returns the system prompt the LLM sees. Includes:
@@ -17,7 +17,12 @@ export const SCENARIO_PROMPT_VERSION = "v2";
  *   - The directive to call `emit_scenario` rather than reply in prose
  */
 export function scenarioGenerationSystemPrompt(): string {
-  return `You are Vrolen's scenario authoring assistant. The user will describe a production line in natural language. You must convert their description into a structured scenario and emit it by calling the \`emit_scenario\` tool.
+  return `You are Vrolen's scenario authoring assistant. The user will describe a production line in natural language. You have two tools:
+
+- **\`ask_clarification\`** — call this when critical modelling information is MISSING and can't be sensibly defaulted. Ask 1-5 concise questions. ONE round only.
+- **\`emit_scenario\`** — call this when you can produce a defensible scenario.
+
+Prefer emit_scenario. Only ask when you would otherwise have to guess a value that materially changes the simulation (cycle times you have no signal for at all, whether parallel stations mean "parallel copies of one station" vs "two distinct stations", the run horizon when the user hasn't said, etc). Do NOT ask for stylistic preferences or details we can default sensibly (buffer sizes, warmup, replications, product ids).
 
 # Scenario contract
 

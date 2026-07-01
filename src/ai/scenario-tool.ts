@@ -18,8 +18,14 @@ import { z } from "zod";
 import type { ChatAdapter, ChatMessage, ChatTool, ChatToolCall } from "./types";
 import { scenarioGenerationSchema, type GeneratedScenario } from "./scenario-schema";
 import { scenarioGenerationSystemPrompt } from "./scenario-prompt";
+import {
+  clarificationSchema,
+  type Clarification,
+  type ClarificationAnswer,
+} from "./clarification-schema";
 
 export const SCENARIO_TOOL_NAME = "emit_scenario";
+export const CLARIFICATION_TOOL_NAME = "ask_clarification";
 
 /**
  * Tool definition the LLM sees. Schema mirrors scenarioGenerationSchema
@@ -99,6 +105,47 @@ export function createScenarioTool(): ChatTool {
 }
 
 /**
+ * VROL-1211 — clarification tool. LLM picks this when critical info
+ * for the scenario is missing from the user's prompt (cycle times,
+ * capacity, defect rates, horizon). Host renders the questions as an
+ * inline form; user answers or skips.
+ */
+export function createClarificationTool(): ChatTool {
+  return {
+    name: CLARIFICATION_TOOL_NAME,
+    description:
+      "Ask the user 1-5 concise clarifying questions when the description is missing information critical to modelling the line (per-station cycle times, capacity for parallel stations, defect rates, horizon). Prefer emit_scenario when you can make a defensible guess. NEVER ask more than one round of questions per prompt.",
+    parameters: {
+      type: "object",
+      required: ["questions"],
+      properties: {
+        questions: {
+          type: "array",
+          minItems: 1,
+          maxItems: 5,
+          items: {
+            type: "object",
+            required: ["id", "question"],
+            properties: {
+              id: { type: "string", description: "stable kebab-case slug" },
+              question: { type: "string", description: "concise question" },
+              hint: {
+                type: "string",
+                description: "optional example / hint, e.g. 'e.g. 2s per bottle'",
+              },
+              suggestedAnswer: {
+                type: "string",
+                description: "optional prefilled suggested answer",
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+/**
  * VROL-1122 — format a Zod ZodError into a structured feedback
  * message the LLM can act on. Lists `path: message` per issue so the
  * model can fix the SPECIFIC field, not just retry blindly.
@@ -118,9 +165,23 @@ export function formatZodErrorForLlm(error: z.ZodError): string {
 /**
  * Discriminated-union return so the host can handle success +
  * failure modes without try/catch.
+ *
+ * VROL-1211 — `needsClarification` is added: LLM decided the prompt
+ * was under-specified and emitted questions instead of a scenario.
+ * The host renders them; user can answer + re-call generateScenarioFromNl
+ * with `priorContext` set, or click Continue anyway which flips the
+ * `skipClarification` flag.
  */
 export type ScenarioGenerationResult =
   | { readonly ok: true; readonly scenario: GeneratedScenario; readonly attempts: number }
+  | {
+      readonly ok: true;
+      readonly needsClarification: true;
+      readonly questions: Clarification["questions"];
+      readonly attempts: number;
+      /** Opaque; pass back verbatim via priorContext.conversation. */
+      readonly conversation: readonly ChatMessage[];
+    }
   | {
       readonly ok: false;
       readonly kind: "max-retries" | "no-tool-call" | "invalid-json";
@@ -132,12 +193,44 @@ interface GenerateOptions {
   readonly maxRetries?: number;
   readonly model?: string;
   readonly temperature?: number;
+  /**
+   * VROL-1211 — when the user answered a prior clarification round or
+   * clicked Continue anyway, pass this so the LLM keeps the earlier
+   * questions + answers in context. The host doesn't need to know
+   * the internal turn shape; just forward what we return.
+   */
+  readonly priorContext?: PriorClarificationContext;
+  /**
+   * VROL-1211 — when true, the LLM is told the user declined to
+   * answer clarifying questions; it must call emit_scenario with
+   * best-effort defaults. Ignored when priorContext is absent.
+   */
+  readonly skipClarification?: boolean;
 }
 
 /**
- * VROL-1121 — main entry point. Calls adapter.chat() up to maxRetries
- * times; on each Zod failure, feeds the error back as a follow-up
- * user turn. Returns ok=true on success or a structured failure.
+ * VROL-1211 — opaque conversational context carried between rounds.
+ * Contains the earlier assistant/tool turns so the LLM can see what
+ * it asked and how the user answered.
+ */
+export interface PriorClarificationContext {
+  readonly conversation: readonly ChatMessage[];
+  readonly questions: Clarification["questions"];
+  readonly answers?: readonly ClarificationAnswer[];
+}
+
+/**
+ * VROL-1121 + VROL-1211 — main entry point.
+ *
+ * First round: LLM sees both `ask_clarification` and `emit_scenario`
+ * tools and picks. If it emits questions, we return them and the host
+ * shows a form. If it emits a scenario, we validate + return it.
+ *
+ * Second round (after user answers or skips): the LLM is forced to
+ * call `emit_scenario` — the questions round is single-shot. This
+ * prevents infinite question loops.
+ *
+ * Zod-failure retries stay in place inside each round.
  */
 export async function generateScenarioFromNl(
   adapter: ChatAdapter,
@@ -146,32 +239,55 @@ export async function generateScenarioFromNl(
 ): Promise<ScenarioGenerationResult> {
   const maxRetries = Math.max(1, Math.floor(opts.maxRetries ?? 3));
   const model = opts.model ?? "gemini-flash";
-  const tool = createScenarioTool();
-  const conversation: ChatMessage[] = [{ role: "user", content: prompt }];
+  const scenarioTool = createScenarioTool();
+  const clarifyTool = createClarificationTool();
+
+  // Build the starting conversation. When priorContext is present the
+  // user has either answered or skipped a prior question round; we
+  // preserve the earlier turns and append a new user turn describing
+  // the outcome, then force emit_scenario.
+  const conversation: ChatMessage[] = opts.priorContext
+    ? [...opts.priorContext.conversation]
+    : [{ role: "user", content: prompt }];
+  const isSecondRound = opts.priorContext !== undefined;
+  if (isSecondRound) {
+    conversation.push({
+      role: "user",
+      content: opts.skipClarification
+        ? "I'd rather not answer those questions — please emit_scenario now using best-effort defaults for anything unspecified."
+        : formatAnswersForLlm(opts.priorContext!.questions, opts.priorContext!.answers ?? []),
+    });
+  }
+
   let lastError = "";
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // First round exposes both tools; second round forces emit_scenario.
+    const tools = isSecondRound ? [scenarioTool] : [scenarioTool, clarifyTool];
+    const toolChoice = isSecondRound ? ({ name: SCENARIO_TOOL_NAME } as const) : ("auto" as const);
     const response = await adapter.chat(conversation, {
       model,
       ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
-      tools: [tool],
-      toolChoice: { name: SCENARIO_TOOL_NAME },
+      tools,
+      toolChoice,
       systemPrompt: scenarioGenerationSystemPrompt(),
     });
-    const toolCall = response.toolCalls.find((tc) => tc.name === SCENARIO_TOOL_NAME);
+
+    const scenarioCall = response.toolCalls.find((tc) => tc.name === SCENARIO_TOOL_NAME);
+    const clarifyCall = response.toolCalls.find((tc) => tc.name === CLARIFICATION_TOOL_NAME);
+    const toolCall = scenarioCall ?? clarifyCall;
     if (!toolCall) {
-      // Model didn't call the tool; record + return immediately.
       return {
         ok: false,
         kind: "no-tool-call",
         attempts: attempt,
-        lastError: "The model replied in prose instead of calling emit_scenario.",
+        lastError:
+          "The model replied in prose instead of calling emit_scenario or ask_clarification.",
       };
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(toolCall.arguments);
     } catch (e) {
-      // Invalid JSON in the tool-call arguments — log + retry with feedback.
       const message = e instanceof Error ? e.message : String(e);
       lastError = `Tool-call arguments were not valid JSON: ${message}.`;
       if (attempt === maxRetries) {
@@ -180,6 +296,36 @@ export async function generateScenarioFromNl(
       appendRetryTurn(conversation, response.toolCalls, toolCall, lastError);
       continue;
     }
+
+    if (toolCall === clarifyCall && !isSecondRound) {
+      // First-round clarification path.
+      const parsedClar = clarificationSchema.safeParse(parsed);
+      if (parsedClar.success) {
+        // Persist the assistant's tool-call turn + a tool-role
+        // acknowledgement so the LLM can see its own questions when
+        // we resume next round.
+        conversation.push({ role: "assistant", content: "", toolCalls: response.toolCalls });
+        conversation.push({
+          role: "tool",
+          content: "Questions delivered to the user.",
+          toolCallId: toolCall.id,
+        });
+        return {
+          ok: true,
+          needsClarification: true,
+          questions: parsedClar.data.questions,
+          attempts: attempt,
+          conversation: [...conversation],
+        };
+      }
+      lastError = formatZodErrorForLlm(parsedClar.error);
+      if (attempt === maxRetries) {
+        return { ok: false, kind: "max-retries", attempts: attempt, lastError };
+      }
+      appendRetryTurn(conversation, response.toolCalls, toolCall, lastError);
+      continue;
+    }
+
     const result = scenarioGenerationSchema.safeParse(parsed);
     if (result.success) {
       return { ok: true, scenario: result.data, attempts: attempt };
@@ -190,14 +336,27 @@ export async function generateScenarioFromNl(
     }
     appendRetryTurn(conversation, response.toolCalls, toolCall, lastError);
   }
-  // Loop exit shouldn't be reachable (each branch returns); satisfy
-  // the type checker.
   return {
     ok: false,
     kind: "max-retries",
     attempts: maxRetries,
     lastError: lastError || "unknown",
   };
+}
+
+function formatAnswersForLlm(
+  questions: Clarification["questions"],
+  answers: readonly ClarificationAnswer[],
+): string {
+  const byId = new Map(answers.map((a) => [a.id, a.answer]));
+  const lines = ["Here are my answers to your questions. Please call emit_scenario now.", ""];
+  for (const q of questions) {
+    const ans = byId.get(q.id)?.trim();
+    lines.push(
+      `- ${q.question} → ${ans && ans.length > 0 ? ans : "(no answer — pick a sensible default)"}`,
+    );
+  }
+  return lines.join("\n");
 }
 
 function appendRetryTurn(

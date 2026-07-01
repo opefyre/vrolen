@@ -125,13 +125,13 @@ describe("generateScenarioFromNl — happy path (VROL-1123)", () => {
     expect(adapter.calls[0]?.options.temperature).toBe(0.2);
   });
 
-  it("forces the emit_scenario tool choice", async () => {
+  it("uses auto tool choice on round 1 so the LLM can pick clarify or emit (VROL-1211)", async () => {
     const adapter = createMockChatAdapter([
       { when: always(), toolCalls: [toolCallFor(VALID_LINEAR)] },
     ]);
     await generateScenarioFromNl(adapter, "Anything.");
     const choice = adapter.calls[0]?.options.toolChoice;
-    expect(choice).toEqual({ name: SCENARIO_TOOL_NAME });
+    expect(choice).toBe("auto");
   });
 });
 
