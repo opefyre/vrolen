@@ -85,6 +85,7 @@ import {
   type MainToWorker,
   type RenderEdge,
   type RenderStation,
+  type RenderWorker,
   type WorkerToMain,
 } from "./protocol";
 import { buildPlaceholderAtlas, loadManifestAtlas } from "./sprite-atlas";
@@ -104,6 +105,9 @@ let edgeLayer: Container | null = null;
 // container so the checkered isometric grid reads as the ground plane
 // under the stations + edges.
 let floorLayer: Container | null = null;
+// VROL-212 — worker layer. Above stations so walking workers occlude
+// station bodies from the front.
+let workerLayer: Container | null = null;
 // VROL-933 — sprite trails. Dots travel along each edge at a speed
 // proportional to flowRate so the live playback shows visible motion.
 let dotLayer: Container | null = null;
@@ -130,6 +134,37 @@ const MAX_DOTS_PER_EDGE = 12;
 // scrubber attached; advance auto per-frame. Number = position dots
 // deterministically from that time so scrub/seek is reproducible.
 let simTimeMs: number | null = null;
+
+// VROL-212 — worker sprite tracking. Each worker keeps a target
+// world position (where the last scene said it should be) + a
+// current world position that eases toward the target every frame.
+// Interpolation gives smooth walks between stations without needing
+// the caller to stream continuous positions.
+interface WorkerNode {
+  readonly container: Container;
+  readonly body: Graphics;
+  targetX: number;
+  targetY: number;
+  currentX: number;
+  currentY: number;
+  mode: RenderWorker["mode"];
+  palette: number;
+}
+const workerNodes = new Map<string, WorkerNode>();
+// Worker sprite palettes — cycles through so multiple workers on
+// screen are visually distinguishable without needing real skill
+// data from the engine yet.
+const WORKER_PALETTES: readonly number[] = [
+  0x8b5cf6, // violet
+  0x14b8a6, // teal
+  0xf59e0b, // amber
+  0xec4899, // pink
+  0x0ea5e9, // sky
+];
+// Interpolation constant: fraction of remaining distance to cover
+// each frame. 0.15 ≈ smooth walk over ~10 frames = ~1/6 second
+// at 60fps, which reads as a brisk step without teleporting.
+const WORKER_STEP_ALPHA = 0.15;
 // Convert RenderEdge.flowRate (parts/sec at the playback's notional
 // scale) into a t-advance per frame. The visual goal: a part/sec of 1
 // completes the edge in ~2 seconds at 60 fps.
@@ -200,6 +235,12 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
     world.addChild(edgeLayer);
     world.addChild(dotLayer);
     world.addChild(stationLayer);
+    // VROL-212 — workers on the top layer so a walking worker occludes
+    // the station container they're heading to.
+    workerLayer = new Container();
+    workerLayer.label = "workers";
+    workerLayer.sortableChildren = true;
+    world.addChild(workerLayer);
     app.stage.addChild(world);
 
     // VROL-195 — load the sprite atlas. Prefers public/sprites/manifest.json
@@ -233,6 +274,7 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
     app.ticker.add(() => {
       frameCount += 1;
       advanceTrails();
+      advanceWorkers();
       const now = performance.now();
       if (now - lastFpsPostMs > 1000) {
         const fps = app?.ticker.FPS ?? 0;
@@ -491,6 +533,87 @@ function advanceTrails(): void {
   }
 }
 
+// VROL-212 — worker sprite. Small circle body + a smaller "head" so
+// the shape reads as a person from the top-down iso angle. Palette
+// tints the body; mode drives the wobble in advanceWorkers.
+function makeWorkerBody(palette: number): Graphics {
+  const color = WORKER_PALETTES[palette % WORKER_PALETTES.length] ?? WORKER_PALETTES[0]!;
+  const g = new Graphics();
+  g.circle(0, -4, 5).fill({ color }).stroke({ color: 0x0f172a, width: 0.75, alpha: 0.9 });
+  g.circle(0, -12, 3.5)
+    .fill({ color: 0xfef3c7 })
+    .stroke({ color: 0x0f172a, width: 0.75, alpha: 0.9 });
+  return g;
+}
+
+function upsertWorker(w: RenderWorker): void {
+  if (!workerLayer) return;
+  const target = worldToScreen({ x: w.x, y: w.y, z: w.z });
+  let node = workerNodes.get(w.id);
+  if (!node) {
+    const container = new Container();
+    container.label = `worker:${w.id}`;
+    const body = makeWorkerBody(w.palette);
+    container.addChild(body);
+    // Land on target so a newly-added worker doesn't drift in from
+    // (0, 0) — only pre-existing workers ease.
+    container.x = target.sx;
+    container.y = target.sy;
+    container.zIndex = depthKey({ x: w.x, y: w.y, z: w.z }) * 1000 + 500;
+    workerLayer.addChild(container);
+    node = {
+      container,
+      body,
+      targetX: target.sx,
+      targetY: target.sy,
+      currentX: target.sx,
+      currentY: target.sy,
+      mode: w.mode,
+      palette: w.palette,
+    };
+    workerNodes.set(w.id, node);
+    return;
+  }
+  node.targetX = target.sx;
+  node.targetY = target.sy;
+  node.mode = w.mode;
+  if (node.palette !== w.palette) {
+    node.body.removeFromParent();
+    const body = makeWorkerBody(w.palette);
+    node.container.addChild(body);
+    node.palette = w.palette;
+  }
+  node.container.zIndex = depthKey({ x: w.x, y: w.y, z: w.z }) * 1000 + 500;
+}
+
+/** Ease worker positions toward their targets + apply idle-bob wobble. */
+function advanceWorkers(): void {
+  for (const node of workerNodes.values()) {
+    const dx = node.targetX - node.currentX;
+    const dy = node.targetY - node.currentY;
+    // Snap when close enough to avoid endless sub-pixel drift.
+    if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) {
+      node.currentX = node.targetX;
+      node.currentY = node.targetY;
+    } else {
+      node.currentX += dx * WORKER_STEP_ALPHA;
+      node.currentY += dy * WORKER_STEP_ALPHA;
+    }
+    let x = node.currentX;
+    let y = node.currentY;
+    // Idle bob: subtle sinusoidal wobble via frame count. Working
+    // adds a smaller lateral shake. Walking has no extra wobble
+    // beyond the ease so the motion reads as directed.
+    if (node.mode === "idle") {
+      y += Math.sin(frameCount * 0.1) * 0.75;
+    } else if (node.mode === "working") {
+      x += Math.sin(frameCount * 0.4) * 0.6;
+    }
+    node.container.x = x;
+    node.container.y = y;
+  }
+}
+
 function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
   if (!appReady || !app || !stationLayer || !edgeLayer) return;
   try {
@@ -558,6 +681,21 @@ function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
       for (const d of trail.dots) d.removeFromParent();
       edgeTrails.delete(id);
     }
+
+    // VROL-212 — workers. Optional in the scene msg; when omitted the
+    // existing worker sprites persist (compatibility with old callers).
+    if (msg.workers) {
+      const seenWorkers = new Set<string>();
+      for (const w of msg.workers) {
+        upsertWorker(w);
+        seenWorkers.add(w.id);
+      }
+      for (const [id, node] of workerNodes) {
+        if (seenWorkers.has(id)) continue;
+        node.container.removeFromParent();
+        workerNodes.delete(id);
+      }
+    }
   } catch (err) {
     reportError("scene", err);
   }
@@ -571,9 +709,12 @@ function handleDispose(): void {
   stationLayer = null;
   edgeLayer = null;
   dotLayer = null;
+  floorLayer = null;
+  workerLayer = null;
   stationNodes.clear();
   edgeNodes.clear();
   edgeTrails.clear();
+  workerNodes.clear();
   scope.close();
 }
 

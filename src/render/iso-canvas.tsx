@@ -21,7 +21,13 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 import { TILE_HEIGHT, TILE_WIDTH, worldToScreen } from "./isometric";
-import type { MainToWorker, RenderEdge, RenderStation, WorkerToMain } from "./protocol";
+import type {
+  MainToWorker,
+  RenderEdge,
+  RenderStation,
+  RenderWorker,
+  WorkerToMain,
+} from "./protocol";
 import RenderWorker from "./render.worker?worker";
 
 export interface IsoCanvasHandle {
@@ -32,6 +38,8 @@ export interface IsoCanvasHandle {
       /** VROL-856 — playback scrubber time in ms. When provided,
        *  edge dots position deterministically from it. */
       readonly simTimeMs?: number;
+      /** VROL-212 — worker sprites on the top layer. */
+      readonly workers?: readonly RenderWorker[];
     },
   ): void;
   setCamera(camera: { x: number; y: number; zoom: number }): void;
@@ -53,6 +61,7 @@ interface WorkerBridge {
     stations: readonly RenderStation[],
     edges: readonly RenderEdge[],
     simTimeMs?: number,
+    workers?: readonly RenderWorker[],
   ): void;
   postCamera(camera: { x: number; y: number; zoom: number }): void;
   postResize(width: number, height: number, dpr: number): void;
@@ -109,7 +118,7 @@ export const IsoCanvas = forwardRef<IsoCanvasHandle, IsoCanvasProps>(function Is
     ref,
     () => ({
       setScene(stations, edges, options) {
-        bridgeRef.current?.postScene(stations, edges, options?.simTimeMs);
+        bridgeRef.current?.postScene(stations, edges, options?.simTimeMs, options?.workers);
         setLabels(stations);
       },
       setCamera(nextCamera) {
@@ -219,11 +228,10 @@ export const IsoCanvas = forwardRef<IsoCanvasHandle, IsoCanvasProps>(function Is
 
     const bridge: WorkerBridge = {
       worker,
-      postScene(stations, edges, simTimeMs) {
-        const msg: MainToWorker =
-          simTimeMs !== undefined
-            ? { kind: "scene", stations, edges, simTimeMs }
-            : { kind: "scene", stations, edges };
+      postScene(stations, edges, simTimeMs, workers) {
+        const msg: MainToWorker = { kind: "scene", stations, edges };
+        if (simTimeMs !== undefined) msg.simTimeMs = simTimeMs;
+        if (workers !== undefined) msg.workers = workers;
         post(msg);
       },
       postCamera(camera) {

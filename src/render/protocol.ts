@@ -34,6 +34,24 @@ export interface RenderEdge {
   readonly flowRate: number;
 }
 
+/**
+ * VROL-212 — one worker on the floor. Position is tile-space, same
+ * as RenderStation. Palette indexes into WORKER_PALETTES for a colour
+ * (proxy for skill group until real skill data feeds in).
+ */
+export interface RenderWorker {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  /** idle = subtle bob, working = at station, walking = between two stations. */
+  readonly mode: "idle" | "working" | "walking";
+  /** Colour palette index — differentiates skill groups visually. */
+  readonly palette: number;
+  /** Optional label overlay (name / role). */
+  readonly label?: string;
+}
+
 /** Main → worker messages. */
 export type MainToWorker =
   | {
@@ -58,6 +76,9 @@ export type MainToWorker =
        * Absent = auto-advance at 60fps (default demo behaviour).
        */
       simTimeMs?: number;
+      /** VROL-212 — optional worker layer. Absent = don't touch existing
+       *  worker sprites (compatible with older callers). */
+      workers?: readonly RenderWorker[];
     }
   | { kind: "camera"; x: number; y: number; zoom: number }
   | { kind: "dispose" };

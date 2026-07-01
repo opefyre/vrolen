@@ -18,6 +18,7 @@ import { IsoCanvas, type IsoCanvasHandle } from "@/render/iso-canvas";
 import { worldToScreen } from "@/render/isometric";
 import { scenarioToIsoLayout } from "@/render/scenario-to-iso-layout";
 import { scenarioToRender } from "@/render/scenario-to-render";
+import { scenarioToWorkers, topologyIndexToNodeIdMap } from "@/render/scenario-to-workers";
 import type { ChainResult } from "@/engine";
 
 import { PlaybackHud } from "./PlaybackHud";
@@ -64,7 +65,16 @@ export function IsoPlaybackView({
       const p = layout.positions.get(s.id);
       return p ? { ...s, x: p.x, y: p.y } : s;
     });
-    canvas.setScene(laidOut, render.edges, simTimeMs !== undefined ? { simTimeMs } : undefined);
+    // VROL-212 — worker sprites derived from perStationRunningPct.
+    const idxToNodeId = topologyIndexToNodeIdMap(nodes, result?.perStationLabels ?? []);
+    const workers = scenarioToWorkers(layout, result, idxToNodeId);
+    const options: {
+      simTimeMs?: number;
+      workers?: readonly (typeof workers)[number][];
+    } = {};
+    if (simTimeMs !== undefined) options.simTimeMs = simTimeMs;
+    if (workers.length > 0) options.workers = workers;
+    canvas.setScene(laidOut, render.edges, options);
   }, [ready, nodes, edges, result, simTimeMs]);
 
   // VROL-217 — F key focuses the bottleneck (or first station) so the
