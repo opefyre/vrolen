@@ -4626,8 +4626,8 @@ function EditorCanvas() {
             onClick={() => {
               setTourOpen(true);
             }}
-            aria-label="Restart the tour"
-            title="Tour"
+            aria-label="Restart the guided tour"
+            title="Restart the guided tour"
           >
             <HelpCircle className="h-4 w-4" />
           </Button>
@@ -4965,17 +4965,17 @@ function EditorCanvas() {
             )}
             {isRunning ? "Running" : "Run"}
           </Button>
-          {/* VROL-689 + VROL-892 — re-roll the PRNG seed and immediately
-              re-run. Reframed as "Try another draw" — non-technical users
-              don't care that there's a seed; they care that they can
-              shake the dice and see if the result holds up. */}
+          {/* VROL-689 + VROL-892 + VROL-1201 — re-roll the PRNG seed and
+              re-run. "Try a different run" beats the earlier "Try another
+              draw" — the audit found "draw" reads as jargon to non-
+              technical users. */}
           <Button
             variant="outline"
             size="sm"
             disabled={isRunning}
             className="gap-2"
-            aria-label="Re-run with a new random draw"
-            title="Same setup, different random draw — useful for sanity-checking whether your result is robust or lucky"
+            aria-label="Re-run with a new random seed"
+            title="Same setup, new random seed — sanity-check whether your result is robust or just lucky."
             onClick={() => {
               const next = Math.floor(Math.random() * 1_000_000);
               setSettings((s) => ({ ...s, seed: next }));
@@ -4985,7 +4985,7 @@ function EditorCanvas() {
             }}
           >
             <Sparkles className="h-4 w-4" />
-            Try another draw
+            Try a different run
           </Button>
         </div>
       </div>
@@ -8130,7 +8130,7 @@ function EditorCanvas() {
                   <p className="text-muted-foreground text-[11px]">
                     The random seed controls every stochastic decision in the engine — same seed,
                     same numbers. Each scenario gets a fresh seed automatically. Use the toolbar
-                    "Try another draw" to roll a new one without opening this section.
+                    "Try a different run" to roll a new one without opening this section.
                   </p>
                   <div className="flex items-center gap-2">
                     <div className="flex-1">
