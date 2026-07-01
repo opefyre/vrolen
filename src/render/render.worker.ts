@@ -116,13 +116,16 @@ interface EdgeTrail {
   readonly dots: readonly Graphics[];
   readonly positions: number[];
   flowRate: number;
+  /** VROL-207 — freeze in place while the source station is Down. */
+  frozen: boolean;
   from: { x: number; y: number };
   to: { x: number; y: number };
 }
 const edgeTrails = new Map<string, EdgeTrail>();
-// Cap the dot pool per edge — high flowRates don't get linearly more
-// dots, the eye can't follow more than ~8 anyway. Density throttle.
-const MAX_DOTS_PER_EDGE = 8;
+// Cap the dot pool per edge — the AC calls for 10 parts in flight to
+// stay smooth, but the eye can't follow more than ~12 dots per edge
+// anyway. Density throttle.
+const MAX_DOTS_PER_EDGE = 12;
 // Convert RenderEdge.flowRate (parts/sec at the playback's notional
 // scale) into a t-advance per frame. The visual goal: a part/sec of 1
 // completes the edge in ~2 seconds at 60 fps.
@@ -401,14 +404,17 @@ function dotCountFor(flowRate: number): number {
 }
 
 function makeDot(): Graphics {
+  // VROL-207 — part sprite. Filled disc + darker outline so it reads
+  // against both light floor tiles and darker edge strokes at any zoom.
   const g = new Graphics();
-  g.circle(0, 0, 3).fill({ color: 0x22c55e });
+  g.circle(0, 0, 4).fill({ color: 0x22c55e }).stroke({ color: 0x14532d, width: 0.75, alpha: 0.9 });
   return g;
 }
 
 function syncTrail(
   edgeId: string,
   flowRate: number,
+  frozen: boolean,
   from: { x: number; y: number },
   to: { x: number; y: number },
 ): void {
@@ -424,6 +430,7 @@ function syncTrail(
   }
   if (existing && existing.dots.length === wanted) {
     existing.flowRate = flowRate;
+    existing.frozen = frozen;
     existing.from = from;
     existing.to = to;
     return;
@@ -439,12 +446,15 @@ function syncTrail(
     dots.push(d);
     positions.push(i / wanted);
   }
-  edgeTrails.set(edgeId, { dots, positions, flowRate, from, to });
+  edgeTrails.set(edgeId, { dots, positions, flowRate, frozen, from, to });
 }
 
 function advanceTrails(): void {
   for (const trail of edgeTrails.values()) {
-    const advance = trail.flowRate * T_ADVANCE_PER_FRAME_PER_FLOW;
+    // VROL-207 — frozen edges (source station Down) keep the dot pool
+    // in place mid-flight rather than looping. Positions stay, sprites
+    // stay, only the advance skips.
+    const advance = trail.frozen ? 0 : trail.flowRate * T_ADVANCE_PER_FRAME_PER_FLOW;
     for (let i = 0; i < trail.dots.length; i++) {
       let t = (trail.positions[i] ?? 0) + advance;
       while (t >= 1) t -= 1;
@@ -464,14 +474,16 @@ function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
     const placeholder = app.stage.getChildByLabel("placeholder", true);
     if (placeholder) placeholder.removeFromParent();
 
-    // Cache projected screen positions so the edge pass can connect line
-    // endpoints without re-projecting (and so we never disagree about
-    // where a station "is" between the two passes).
+    // Cache projected screen positions + state so the edge pass can
+    // connect line endpoints without re-projecting and can freeze the
+    // dot trail when the source is Down (VROL-207).
     const positions = new Map<string, { x: number; y: number }>();
+    const states = new Map<string, RenderStation["state"]>();
     const seenStations = new Set<string>();
     for (const s of msg.stations) {
       const screen = worldToScreen({ x: s.x, y: s.y, z: s.z });
       positions.set(s.id, { x: screen.sx, y: screen.sy });
+      states.set(s.id, s.state);
       seenStations.add(s.id);
       const existing = stationNodes.get(s.id);
       if (existing && existing.lastState === s.state) {
@@ -507,7 +519,10 @@ function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
       edgeLayer.addChild(g);
       edgeNodes.set(e.id, g);
       seenEdges.add(e.id);
-      syncTrail(e.id, e.flowRate, a, b);
+      // VROL-207 — freeze the trail when the source station is Down
+      // so parts on the belt stop mid-flight instead of continuing.
+      const frozen = states.get(e.sourceId) === "down";
+      syncTrail(e.id, e.flowRate, frozen, a, b);
     }
     for (const id of [...edgeTrails.keys()]) {
       if (seenEdges.has(id)) continue;
