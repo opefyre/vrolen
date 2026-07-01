@@ -1,11 +1,11 @@
 /**
- * VROL-834 — /learn route + tab sync tests.
- *
- * Covers the route redirect (/help → /learn), the tab-strip render, and the
- * search-yields-zero EmptyState that aligns with VROL-804.
+ * VROL-834 — /learn route + search tests.
+ * VROL-1216 — second-pass polish removed the Concepts + Examples tabs
+ * (v1.1 placeholders that undermined trust). Tests updated to assert the
+ * single-glossary layout + legacy `?section=` deep-link normalisation.
  */
 
-import { act, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import App from "@/App";
@@ -19,36 +19,35 @@ describe("LearnPage + /help redirect (VROL-834)", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("redirects /help to /learn?section=glossary on mount", () => {
+  it("redirects /help to /learn on mount", () => {
     window.history.replaceState(null, "", "/help");
     render(<App />);
-    // useEffect runs after first paint — under act, RTL flushes both.
     expect(window.location.pathname).toBe("/learn");
-    expect(window.location.search).toBe("?section=glossary");
+    // VROL-1216 — no ?section param anymore; the redirect drops it.
+    expect(window.location.search).toBe("");
   });
 
-  it("renders the Learn heading and three tabs on /learn", () => {
-    window.history.replaceState(null, "", "/learn?section=glossary");
+  it("renders the Learn heading and glossary content on /learn", () => {
+    window.history.replaceState(null, "", "/learn");
     render(<App />);
     expect(screen.getByRole("heading", { level: 1, name: /^Learn$/ })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Glossary/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Concepts/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Examples/i })).toBeInTheDocument();
+    // Glossary content is inlined — no tab strip.
+    expect(screen.queryByRole("tab", { name: /Glossary/i })).toBeNull();
+    expect(screen.getByRole("searchbox", { name: /search glossary/i })).toBeInTheDocument();
   });
 
-  it("deep-links to ?section=concepts and shows the Concepts EmptyState", () => {
+  it("normalises legacy ?section=concepts to /learn with no section param", () => {
     window.history.replaceState(null, "", "/learn?section=concepts");
     render(<App />);
-    expect(screen.getByText(/Concepts coming soon/i)).toBeInTheDocument();
+    // VROL-1216 — old deep links to the removed tabs silently redirect.
+    expect(window.location.pathname).toBe("/learn");
+    expect(window.location.search).toBe("");
   });
 
-  it("syncs the URL when the user changes tabs", () => {
-    window.history.replaceState(null, "", "/learn?section=glossary");
+  it("normalises legacy ?section=examples to /learn with no section param", () => {
+    window.history.replaceState(null, "", "/learn?section=examples");
     render(<App />);
-    const examplesTab = screen.getByRole("tab", { name: /Examples/i });
-    act(() => {
-      examplesTab.click();
-    });
-    expect(window.location.search).toBe("?section=examples");
+    expect(window.location.pathname).toBe("/learn");
+    expect(window.location.search).toBe("");
   });
 });

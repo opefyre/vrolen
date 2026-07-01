@@ -5378,11 +5378,26 @@ function EditorCanvas() {
           >
             <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
             <CanvasControls />
+            {/* VROL-1215 — MiniMap defaults render a solid white rectangle in
+                dark mode because react-flow hard-codes its bg. Read the theme
+                CSS vars so the mini-map picks up dark card / border / muted
+                colours automatically. */}
             <MiniMap
               pannable
               zoomable
               position="top-right"
-              style={{ marginTop: 12, marginRight: 12 }}
+              style={{
+                marginTop: 12,
+                marginRight: 12,
+                backgroundColor: "var(--card)",
+                border: "1px solid var(--border)",
+                borderRadius: "6px",
+              }}
+              maskColor="color-mix(in oklab, var(--background) 60%, transparent)"
+              maskStrokeColor="var(--border)"
+              nodeColor={() => "var(--sim-running)"}
+              nodeStrokeColor="var(--border)"
+              nodeBorderRadius={4}
             />
             <AlignmentGuidesOverlay guideLines={alignmentGuides.guideLines} />
             {nodesForFlow.length === 0 ? (

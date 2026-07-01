@@ -34,13 +34,12 @@ export default function App() {
   // history.pushState (no full reload) re-render the page tree.
   const pathname = usePathname();
 
-  // VROL-834 — /help is the legacy route. Redirect to /learn?section=glossary
-  // and replace the entry so back doesn't bounce. Runs as an effect so the
-  // first render still mounts a valid page (the LearnPage) instead of an
-  // intermediate blank frame.
+  // VROL-834 — /help is the legacy route; redirect to /learn.
+  // VROL-1216 — dropped ?section=glossary now that concepts/examples tabs
+  // have been removed and there is nothing else to deep-link to.
   useEffect(() => {
     if (pathname === "/help") {
-      navigate("/learn?section=glossary", { replace: true });
+      navigate("/learn", { replace: true });
     }
   }, [pathname]);
 

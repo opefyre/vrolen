@@ -21,19 +21,16 @@ import {
   Gauge,
   Layers,
   Link as LinkIcon,
-  Lightbulb,
   SearchX,
-  Sparkles,
   Timer,
   Wrench,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { EmptyState } from "@/components/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { navigate, useSearch } from "@/lib/spa-nav";
 import { toast } from "@/lib/toast";
 
@@ -147,16 +144,15 @@ const STATE_TERMS: readonly { readonly name: string; readonly definition: string
   { name: "Idle", definition: "Station is outside its scheduled shift or is off-shift." },
 ];
 
-type LearnSection = "glossary" | "concepts" | "examples";
-
-function isLearnSection(value: string | null): value is LearnSection {
-  return value === "glossary" || value === "concepts" || value === "examples";
-}
-
-function readSection(): LearnSection {
-  if (typeof window === "undefined") return "glossary";
-  const raw = new URLSearchParams(window.location.search).get("section");
-  return isLearnSection(raw) ? raw : "glossary";
+/**
+ * VROL-1216 — second-pass audit found the "Concepts / Examples coming
+ * soon" tabs shipped as noise: portfolio-facing product with two of
+ * three tabs displaying v1.1 promises reads worse than a single-tab
+ * glossary. Tabs stripped for now; old `?section=concepts|examples`
+ * deep links silently normalise to glossary and rewrite the URL.
+ */
+function isLegacySection(value: string | null): boolean {
+  return value === "concepts" || value === "examples";
 }
 
 function slugify(title: string): string {
@@ -189,21 +185,22 @@ function copyAnchorLink(anchor: string): void {
 }
 
 export default function LearnPage() {
-  // VROL-834 / VROL-1196 — re-render when the search string changes so the
-  // active tab follows ?section=. usePathname only fires on pathname
-  // changes; that's why the audit found /learn stuck on Glossary when
-  // clicking Concepts / Examples — the URL updated but this component
-  // wasn't subscribed.
   useSearch();
-  const section: LearnSection = readSection();
 
-  const handleSectionChange = (next: string): void => {
-    if (!isLearnSection(next)) return;
+  // VROL-1216 — normalise legacy ?section=concepts|examples deep links to
+  // ?section=glossary so old bookmarks land on real content instead of
+  // (previously) an empty state. Rewrites the URL in place.
+  useEffect(() => {
     if (typeof window === "undefined") return;
-    const url = new URL(window.location.href);
-    url.searchParams.set("section", next);
-    navigate(`${url.pathname}${url.search}${url.hash}`, { replace: true });
-  };
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get("section");
+    if (!isLegacySection(raw)) return;
+    params.delete("section");
+    const search = params.toString();
+    navigate(`${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`, {
+      replace: true,
+    });
+  }, []);
 
   const [query, setQuery] = useState<string>("");
   const trimmed = query.trim();
@@ -238,143 +235,76 @@ export default function LearnPage() {
         </p>
       </div>
 
-      {/* VROL-834 — tab strip drives `?section=` for deep linking + back/forward. */}
-      <Tabs value={section} onValueChange={handleSectionChange}>
-        <TabsList>
-          <TabsTrigger value="glossary">Glossary</TabsTrigger>
-          <TabsTrigger value="concepts">Concepts</TabsTrigger>
-          <TabsTrigger value="examples">Examples</TabsTrigger>
-        </TabsList>
+      {/* VROL-1216 — tab strip dropped in second-pass polish: Concepts +
+          Examples were placeholder "coming soon in v1.1" and undermined
+          trust. Content moved out of Tabs; single-glossary layout below. */}
+      <div className="space-y-6">
+        {/* VROL-805 — client-side search across KPI + state terms. */}
+        <div>
+          <label htmlFor="glossary-search" className="sr-only">
+            Search glossary
+          </label>
+          <Input
+            id="glossary-search"
+            type="search"
+            placeholder="Search glossary (e.g. throughput, bottleneck)"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+            }}
+            autoComplete="off"
+          />
+        </div>
 
-        <TabsContent value="glossary" className="space-y-6">
-          {/* VROL-805 — client-side search across KPI + state terms. */}
-          <div>
-            <label htmlFor="glossary-search" className="sr-only">
-              Search glossary
-            </label>
-            <Input
-              id="glossary-search"
-              type="search"
-              placeholder="Search glossary (e.g. throughput, bottleneck)"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-              }}
-              autoComplete="off"
-            />
-          </div>
+        {!hasResults ? (
+          <EmptyState
+            icon={SearchX}
+            title="No matches"
+            body={
+              <>
+                No glossary entries match &ldquo;{trimmed}&rdquo;. Try a shorter or different query.
+              </>
+            }
+            action={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setQuery("");
+                }}
+              >
+                Clear search
+              </Button>
+            }
+          />
+        ) : null}
 
-          {!hasResults ? (
-            <EmptyState
-              icon={SearchX}
-              title="No matches"
-              body={
-                <>
-                  No glossary entries match &ldquo;{trimmed}&rdquo;. Try a shorter or different
-                  query.
-                </>
-              }
-              action={
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setQuery("");
-                  }}
-                >
-                  Clear search
-                </Button>
-              }
-            />
-          ) : null}
-
-          {kpiMatches.length > 0 ? (
-            <Card id="kpis">
-              <CardHeader>
-                <CardTitle className="font-heading flex items-center gap-2 text-lg">
-                  <span className="bg-sim-running inline-block h-2 w-2 rounded-full" aria-hidden />
-                  KPIs
-                </CardTitle>
-                <CardDescription>What every number in the results panel means.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <dl className="space-y-4">
-                  {kpiMatches.map((t) => {
-                    const Icon = t.icon;
-                    const anchor = slugify(t.title);
-                    return (
-                      <div key={t.title} id={anchor} className="group flex scroll-mt-4 gap-3">
-                        <Icon
-                          className="text-muted-foreground mt-0.5 h-5 w-5 shrink-0"
-                          aria-hidden
-                        />
-                        <div className="flex-1 space-y-1">
-                          <dt className="flex items-center gap-1.5 text-sm font-semibold">
-                            <span>{t.title}</span>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-xs"
-                              aria-label={`Copy link to ${t.title}`}
-                              onClick={() => {
-                                copyAnchorLink(anchor);
-                              }}
-                              className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                            >
-                              <LinkIcon aria-hidden />
-                            </Button>
-                          </dt>
-                          <dd className="text-foreground/80 text-sm leading-relaxed">
-                            {t.definition}
-                          </dd>
-                          {t.formula ? (
-                            <code className="bg-muted inline-block rounded px-1.5 py-0.5 text-xs">
-                              {t.formula}
-                            </code>
-                          ) : null}
-                          {t.learnMore ? (
-                            <a
-                              href={t.learnMore}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-muted-foreground hover:text-foreground ml-2 inline-flex items-center gap-0.5 text-[11px] underline-offset-2 hover:underline"
-                            >
-                              Learn more
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </dl>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {stateMatches.length > 0 ? (
-            <Card id="states">
-              <CardHeader>
-                <CardTitle className="font-heading flex items-center gap-2 text-lg">
-                  <span className="bg-sim-setup inline-block h-2 w-2 rounded-full" aria-hidden />
-                  Station states
-                </CardTitle>
-                <CardDescription>What each colored band in the state Pareto means.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <dl className="space-y-3">
-                  {stateMatches.map((s) => {
-                    const anchor = slugify(s.name);
-                    return (
-                      <div key={s.name} id={anchor} className="group scroll-mt-4">
+        {kpiMatches.length > 0 ? (
+          <Card id="kpis">
+            <CardHeader>
+              <CardTitle className="font-heading flex items-center gap-2 text-lg">
+                <span className="bg-sim-running inline-block h-2 w-2 rounded-full" aria-hidden />
+                KPIs
+              </CardTitle>
+              <CardDescription>What every number in the results panel means.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <dl className="space-y-4">
+                {kpiMatches.map((t) => {
+                  const Icon = t.icon;
+                  const anchor = slugify(t.title);
+                  return (
+                    <div key={t.title} id={anchor} className="group flex scroll-mt-4 gap-3">
+                      <Icon className="text-muted-foreground mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+                      <div className="flex-1 space-y-1">
                         <dt className="flex items-center gap-1.5 text-sm font-semibold">
-                          <span>{s.name}</span>
+                          <span>{t.title}</span>
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon-xs"
-                            aria-label={`Copy link to ${s.name}`}
+                            aria-label={`Copy link to ${t.title}`}
                             onClick={() => {
                               copyAnchorLink(anchor);
                             }}
@@ -383,58 +313,77 @@ export default function LearnPage() {
                             <LinkIcon aria-hidden />
                           </Button>
                         </dt>
-                        <dd className="text-foreground/80 text-sm">{s.definition}</dd>
+                        <dd className="text-foreground/80 text-sm leading-relaxed">
+                          {t.definition}
+                        </dd>
+                        {t.formula ? (
+                          <code className="bg-muted inline-block rounded px-1.5 py-0.5 text-xs">
+                            {t.formula}
+                          </code>
+                        ) : null}
+                        {t.learnMore ? (
+                          <a
+                            href={t.learnMore}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-muted-foreground hover:text-foreground ml-2 inline-flex items-center gap-0.5 text-[11px] underline-offset-2 hover:underline"
+                          >
+                            Learn more
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        ) : null}
                       </div>
-                    );
-                  })}
-                </dl>
-              </CardContent>
-            </Card>
-          ) : null}
-        </TabsContent>
+                    </div>
+                  );
+                })}
+              </dl>
+            </CardContent>
+          </Card>
+        ) : null}
 
-        <TabsContent value="concepts">
-          <EmptyState
-            icon={Lightbulb}
-            title="Concepts coming soon"
-            body="Worked walkthroughs of bottlenecks, Little's Law, and buffer sizing will land in v1.1."
-            action={
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  handleSectionChange("glossary");
-                }}
-              >
-                Back to glossary
-              </Button>
-            }
-          />
-        </TabsContent>
+        {stateMatches.length > 0 ? (
+          <Card id="states">
+            <CardHeader>
+              <CardTitle className="font-heading flex items-center gap-2 text-lg">
+                <span className="bg-sim-setup inline-block h-2 w-2 rounded-full" aria-hidden />
+                Station states
+              </CardTitle>
+              <CardDescription>What each colored band in the state Pareto means.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <dl className="space-y-3">
+                {stateMatches.map((s) => {
+                  const anchor = slugify(s.name);
+                  return (
+                    <div key={s.name} id={anchor} className="group scroll-mt-4">
+                      <dt className="flex items-center gap-1.5 text-sm font-semibold">
+                        <span>{s.name}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={`Copy link to ${s.name}`}
+                          onClick={() => {
+                            copyAnchorLink(anchor);
+                          }}
+                          className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                        >
+                          <LinkIcon aria-hidden />
+                        </Button>
+                      </dt>
+                      <dd className="text-foreground/80 text-sm">{s.definition}</dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            </CardContent>
+          </Card>
+        ) : null}
+      </div>
 
-        <TabsContent value="examples">
-          <EmptyState
-            icon={Sparkles}
-            title="Examples coming soon"
-            body="Step-by-step worked examples — load a preset, run, interpret — will land in v1.1."
-            action={
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  navigate("/templates");
-                }}
-              >
-                Browse templates
-              </Button>
-            }
-          />
-        </TabsContent>
-      </Tabs>
-
-      {/* VROL-754 — footer link back to the editor. */}
+      {/* VROL-754 — footer link back to the editor.
+          VROL-1216 — "/editor" reads as URL jargon in a portfolio product;
+          swapped to "Back to editor" (plain English). */}
       <div className="text-muted-foreground flex items-center justify-end text-xs">
         <a
           href="/editor"
@@ -446,7 +395,7 @@ export default function LearnPage() {
           }}
           className="hover:text-foreground underline-offset-2 hover:underline"
         >
-          Back to /editor →
+          Back to editor →
         </a>
       </div>
     </div>
