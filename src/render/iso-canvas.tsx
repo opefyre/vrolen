@@ -20,6 +20,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 
+import { worldToScreen } from "./isometric";
 import type { MainToWorker, RenderEdge, RenderStation, WorkerToMain } from "./protocol";
 import RenderWorker from "./render.worker?worker";
 
@@ -50,15 +51,26 @@ export const IsoCanvas = forwardRef<IsoCanvasHandle, IsoCanvasProps>(function Is
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<WorkerBridge | null>(null);
   const [unsupported, setUnsupported] = useState<string | null>(null);
+  // VROL-857 — HTML label overlay state. Labels ride on top of the
+  // WebGL canvas as absolutely-positioned divs so we can use real
+  // CSS + i18n + a11y without pulling `document` into the worker.
+  const [labels, setLabels] = useState<readonly RenderStation[]>([]);
+  const [camera, setCameraState] = useState<{ x: number; y: number; zoom: number }>({
+    x: 0,
+    y: 0,
+    zoom: 1,
+  });
 
   useImperativeHandle(
     ref,
     () => ({
       setScene(stations, edges) {
         bridgeRef.current?.postScene(stations, edges);
+        setLabels(stations);
       },
-      setCamera(camera) {
-        bridgeRef.current?.postCamera(camera);
+      setCamera(nextCamera) {
+        bridgeRef.current?.postCamera(nextCamera);
+        setCameraState(nextCamera);
       },
     }),
     [],
@@ -207,5 +219,30 @@ export const IsoCanvas = forwardRef<IsoCanvasHandle, IsoCanvasProps>(function Is
     );
   }
 
-  return <div ref={wrapperRef} className={`relative ${className ?? ""}`} />;
+  return (
+    <div ref={wrapperRef} className={`relative ${className ?? ""}`}>
+      {/* VROL-857 — HTML label overlay. Absolutely-positioned divs
+          projected through the same worldToScreen the worker uses so
+          the labels track sprites through camera pan/zoom. Pointer
+          events off so clicks pass through to the canvas. */}
+      <div
+        className="pointer-events-none absolute inset-0 overflow-hidden"
+        data-testid="iso-labels"
+      >
+        {labels.map((s) => {
+          const p = worldToScreen({ x: s.x, y: s.y, z: s.z }, camera);
+          return (
+            <div
+              key={s.id}
+              className="absolute -translate-x-1/2 rounded-sm bg-white/85 px-1.5 py-0.5 text-[10px] font-medium text-gray-800 shadow-sm ring-1 ring-gray-200"
+              style={{ left: p.sx, top: p.sy + 22 }}
+              data-testid={`iso-label-${s.id}`}
+            >
+              {s.label}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 });

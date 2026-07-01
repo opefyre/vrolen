@@ -77,7 +77,7 @@ if (typeof scopeAny.document === "undefined") {
 
 // Geometry-only — text labels overlay on the main thread via HTML in
 // IsoCanvas, so the renderer never needs `document` for font measurement.
-import { Application, Container, Graphics } from "pixi.js";
+import { Application, Container, Graphics, Sprite, Texture } from "pixi.js";
 
 import { TILE_HEIGHT, TILE_WIDTH, depthKey, worldToScreen } from "./isometric";
 import {
@@ -318,27 +318,63 @@ function drawFloorGrid(layer: Container): void {
   layer.addChild(outline);
 }
 
+// VROL-857 — sprite-based station body. Prefers the atlas texture
+// ('machine-idle' as a neutral base — state signal is carried by the
+// ring), falls back to a Graphics rounded-rect when the atlas hasn't
+// registered any textures (e.g. tests / cold init).
+const STATION_BASE_SPRITE = "machine-idle";
+const STATION_HALF_W = 40;
+const STATION_HALF_H = 16;
+const STATION_RING_PAD = 4;
+
+function buildStationBody(): Container {
+  if (Texture.from(STATION_BASE_SPRITE)) {
+    const tex = Texture.from(STATION_BASE_SPRITE);
+    // Texture.from returns the empty-white 1×1 stub when the name isn't
+    // registered — that would render as a tiny dot. Detect and fall back.
+    if (tex.width > 1 && tex.height > 1) {
+      const sprite = new Sprite(tex);
+      sprite.anchor.set(0.5);
+      sprite.width = STATION_HALF_W * 2;
+      sprite.height = STATION_HALF_H * 2;
+      return sprite;
+    }
+  }
+  const g = new Graphics();
+  g.roundRect(-STATION_HALF_W, -STATION_HALF_H, STATION_HALF_W * 2, STATION_HALF_H * 2, 6)
+    .fill({ color: 0xf3f4f6 })
+    .stroke({ color: 0x111827, width: 1 });
+  return g;
+}
+
 function drawStation(s: RenderStation): Container {
   const c = new Container();
   c.label = `station:${s.id}`;
-  // Body — rounded rect tinted by state. PixiJS Graphics v8 API.
-  // No text label here; labels overlay on the main thread (HTML) so we
-  // can use real CSS + a11y + i18n without dragging `document` into the
-  // worker. The container's screen position drives where the label sits.
-  const body = new Graphics();
-  body
-    .roundRect(-40, -16, 80, 32, 6)
-    .fill({ color: STATION_COLORS[s.state] })
-    .stroke({ color: s.isBottleneck ? 0xf97316 : 0x111827, width: s.isBottleneck ? 2 : 1 });
-  c.addChild(body);
-  // Project world tile coords → screen px via the isometric helper
-  // (VROL-191). The world container's own transform handles camera pan/zoom,
-  // so per-sprite math uses the IDENTITY camera here.
+  // VROL-857 — state-colored ring around the body; bottleneck bumps
+  // stroke width so it reads at a glance across a busy grid.
+  const ring = new Graphics();
+  ring
+    .roundRect(
+      -(STATION_HALF_W + STATION_RING_PAD),
+      -(STATION_HALF_H + STATION_RING_PAD),
+      (STATION_HALF_W + STATION_RING_PAD) * 2,
+      (STATION_HALF_H + STATION_RING_PAD) * 2,
+      8,
+    )
+    .stroke({
+      color: STATION_COLORS[s.state],
+      width: s.isBottleneck ? 3 : 2,
+      alpha: 0.95,
+    });
+  c.addChild(ring);
+  c.addChild(buildStationBody());
+  // Text labels overlay on the main thread (HTML) via IsoCanvas so we
+  // can use real CSS + a11y + i18n without dragging `document` into
+  // the worker. The container's screen position drives where the
+  // label sits.
   const screen = worldToScreen({ x: s.x, y: s.y, z: s.z });
   c.x = screen.sx;
   c.y = screen.sy;
-  // Depth-sort key carried on the container so the parent layer can
-  // sortChildren() to resolve occlusion.
   c.zIndex = depthKey({ x: s.x, y: s.y, z: s.z }) * 1000;
   return c;
 }
