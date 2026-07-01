@@ -3296,6 +3296,11 @@ function EditorCanvas() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      // VROL-1198 — palette insert shortcuts are editor-only. In Playback
+      // view the same keys promise different things (F=focus bottleneck,
+      // H=heatmap …); pressing F used to silently insert a Section Frame
+      // while the user watched the run play back.
+      if (viewMode !== "editor") return;
       const t = e.target as HTMLElement | null;
       if (
         t &&
@@ -3395,7 +3400,7 @@ function EditorCanvas() {
     return () => {
       window.removeEventListener("keydown", onKey);
     };
-  }, [flow, setNodes]);
+  }, [flow, setNodes, viewMode]);
 
   // VROL-304 — click a validation issue → pan + zoom the canvas to its node.
   const focusValidationIssue = useCallback(
