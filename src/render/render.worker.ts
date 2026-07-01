@@ -79,7 +79,7 @@ if (typeof scopeAny.document === "undefined") {
 // IsoCanvas, so the renderer never needs `document` for font measurement.
 import { Application, Container, Graphics } from "pixi.js";
 
-import { depthKey, worldToScreen } from "./isometric";
+import { TILE_HEIGHT, TILE_WIDTH, depthKey, worldToScreen } from "./isometric";
 import {
   isMainToWorker,
   type MainToWorker,
@@ -100,6 +100,10 @@ let appReady = false;
 let world: Container | null = null;
 let stationLayer: Container | null = null;
 let edgeLayer: Container | null = null;
+// VROL-199 — floor tile layer. Sits below every other layer in the world
+// container so the checkered isometric grid reads as the ground plane
+// under the stations + edges.
+let floorLayer: Container | null = null;
 // VROL-933 — sprite trails. Dots travel along each edge at a speed
 // proportional to flowRate so the live playback shows visible motion.
 let dotLayer: Container | null = null;
@@ -177,6 +181,13 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
     // which keeps closer-to-camera sprites in front of those behind them.
     stationLayer.sortableChildren = true;
     edgeLayer.sortableChildren = true;
+    // VROL-199 — floor tile layer under everything else. Drawn once
+    // in init; camera pan/zoom on the world container moves it with
+    // the rest of the scene.
+    floorLayer = new Container();
+    floorLayer.label = "floor";
+    drawFloorGrid(floorLayer);
+    world.addChild(floorLayer);
     // Edges below stations so connections don't draw over node faces.
     // Dots sit between edges and stations.
     world.addChild(edgeLayer);
@@ -260,6 +271,52 @@ const STATION_COLORS: Record<RenderStation["state"], number> = {
   down: 0xef4444,
   setup: 0x3b82f6,
 };
+
+// VROL-199 — floor tile grid config. Half-size in tiles on each axis;
+// the grid renders [-RADIUS, +RADIUS] × [-RADIUS, +RADIUS] so 40 fills
+// most of the visible viewport at zoom=1 without paying for tiles the
+// camera will never see. Two shades alternated by (x+y)%2 for a subtle
+// checkerboard; near-white so the grid recedes behind sprites.
+const FLOOR_RADIUS = 20;
+const FLOOR_TINT_A = 0xeef2f7;
+const FLOOR_TINT_B = 0xe4e9f0;
+const FLOOR_STROKE = 0xd1d8e0;
+
+function drawFloorGrid(layer: Container): void {
+  // Single Graphics per parity so PixiJS can batch the fills instead
+  // of allocating 1600+ tile containers. Two draws (A + B tint) keep
+  // the checker readable without a per-tile overdraw.
+  const halfW = TILE_WIDTH / 2;
+  const halfH = TILE_HEIGHT / 2;
+  const tileA = new Graphics();
+  const tileB = new Graphics();
+  const outline = new Graphics();
+  for (let ty = -FLOOR_RADIUS; ty <= FLOOR_RADIUS; ty++) {
+    for (let tx = -FLOOR_RADIUS; tx <= FLOOR_RADIUS; tx++) {
+      const center = worldToScreen({ x: tx, y: ty });
+      const isA = ((tx + ty) & 1) === 0;
+      const target = isA ? tileA : tileB;
+      target
+        .moveTo(center.sx, center.sy - halfH)
+        .lineTo(center.sx + halfW, center.sy)
+        .lineTo(center.sx, center.sy + halfH)
+        .lineTo(center.sx - halfW, center.sy)
+        .closePath();
+      outline
+        .moveTo(center.sx, center.sy - halfH)
+        .lineTo(center.sx + halfW, center.sy)
+        .lineTo(center.sx, center.sy + halfH)
+        .lineTo(center.sx - halfW, center.sy)
+        .closePath();
+    }
+  }
+  tileA.fill({ color: FLOOR_TINT_A });
+  tileB.fill({ color: FLOOR_TINT_B });
+  outline.stroke({ color: FLOOR_STROKE, width: 0.5, alpha: 0.6 });
+  layer.addChild(tileA);
+  layer.addChild(tileB);
+  layer.addChild(outline);
+}
 
 function drawStation(s: RenderStation): Container {
   const c = new Container();
