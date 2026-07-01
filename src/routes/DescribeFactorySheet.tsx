@@ -45,11 +45,12 @@ import type { GeneratedScenario } from "@/ai/scenario-schema";
 import { createSharedOpenAiAdapter, sharedOpenAiAvailable } from "@/ai/shared-openai";
 
 import { aiScenarioToGraph, type AiScenarioGraph } from "@/lib/scenario-from-ai";
+import { validateScenario, type ValidationIssue } from "@/lib/validate-scenario";
 
 const EXAMPLE_PROMPTS: readonly { readonly title: string; readonly body: string }[] = [
   {
-    title: "Bottling line with rework",
-    body: "A bottling line with two parallel fillers, each 5s per bottle, feeding a capper that takes 3s. A QC station after the capper rejects 8% of bottles back to the capper for rework. Labeler and packer at the end.",
+    title: "Bottling line with QC",
+    body: "A bottling line: one shared input, two parallel fillers (each 5s per bottle) feeding a single capper (3s), then QC with 8% defect rate, then labeler (2s), then packer (4s).",
   },
   {
     title: "Bakery dough → oven → cooling",
@@ -57,7 +58,7 @@ const EXAMPLE_PROMPTS: readonly { readonly title: string; readonly body: string 
   },
   {
     title: "Electronics SMT line",
-    body: "SMT pick-and-place line: solder paste printer (10s), SMT placement (12s, 2 in parallel), reflow oven (90s), AOI inspection (15s, 3% defect), test (20s).",
+    body: "SMT pick-and-place line: solder paste printer (10s), SMT placement (12s, capacity 2), reflow oven (90s), AOI inspection (15s, 3% defect), test (20s).",
   },
 ];
 
@@ -89,6 +90,9 @@ type Status =
       readonly kind: "success";
       readonly scenario: GeneratedScenario;
       readonly graph: AiScenarioGraph;
+      /** VROL-1210 — post-schema engine checks (single-source, cycles, …). */
+      readonly engineErrors: readonly ValidationIssue[];
+      readonly engineWarnings: readonly ValidationIssue[];
     };
 
 export function DescribeFactorySheet({
@@ -159,7 +163,18 @@ export function DescribeFactorySheet({
         return;
       }
       const graph = aiScenarioToGraph(result.scenario);
-      setStatus({ kind: "success", scenario: result.scenario, graph });
+      // VROL-1210 — belt-and-suspenders: even if schema + retries
+      // pass, run the same engine validation the editor uses on the
+      // converted graph. If a topology error snuck through, block
+      // Apply and show the user exactly what's wrong.
+      const validation = validateScenario(graph.nodes, graph.edges, graph.settings);
+      setStatus({
+        kind: "success",
+        scenario: result.scenario,
+        graph,
+        engineErrors: validation.errors,
+        engineWarnings: validation.warnings,
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setStatus({ kind: "error", message: msg });
@@ -395,8 +410,48 @@ export function DescribeFactorySheet({
                 Horizon {Math.round(status.scenario.settings.horizonMs / 1000)} s · replications{" "}
                 {status.scenario.settings.replications}
               </p>
-              <Button onClick={handleApply} data-testid="describe-factory-apply" className="w-full">
-                Replace canvas with this scenario
+              {status.engineErrors.length > 0 ? (
+                <div
+                  className="border-sim-down/40 bg-sim-down/5 text-sim-down-foreground space-y-1 rounded-md border p-2 text-[11px]"
+                  data-testid="describe-factory-engine-errors"
+                  role="alert"
+                >
+                  <strong className="text-foreground text-xs">
+                    {status.engineErrors.length} topology issue
+                    {status.engineErrors.length === 1 ? "" : "s"} — needs a regen
+                  </strong>
+                  <ul className="list-disc space-y-0.5 pl-4">
+                    {status.engineErrors.slice(0, 4).map((e, i) => (
+                      <li key={`${e.code}-${String(i)}`}>{e.message}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {status.engineWarnings.length > 0 ? (
+                <div
+                  className="border-sim-setup/40 bg-sim-setup/5 text-muted-foreground space-y-1 rounded-md border p-2 text-[11px]"
+                  data-testid="describe-factory-engine-warnings"
+                >
+                  <strong className="text-foreground text-xs">
+                    {status.engineWarnings.length} warning
+                    {status.engineWarnings.length === 1 ? "" : "s"}
+                  </strong>
+                  <ul className="list-disc space-y-0.5 pl-4">
+                    {status.engineWarnings.slice(0, 3).map((w, i) => (
+                      <li key={`${w.code}-${String(i)}`}>{w.message}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              <Button
+                onClick={handleApply}
+                disabled={status.engineErrors.length > 0}
+                data-testid="describe-factory-apply"
+                className="w-full"
+              >
+                {status.engineErrors.length > 0
+                  ? "Fix errors before applying"
+                  : "Replace canvas with this scenario"}
               </Button>
               <p className="text-muted-foreground text-[10px]">
                 This wipes the current canvas. Save it first if you want to keep it.

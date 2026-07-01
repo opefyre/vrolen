@@ -107,6 +107,108 @@ export const scenarioGenerationSchema = z
         path: ["settings", "warmupMs"],
       });
     }
+
+    // VROL-1210 — topology constraints the engine also enforces at
+    // run time. Hoisting them into the schema so the LLM retry loop
+    // can feed the specific violation back and get a fixed scenario.
+    const incoming = new Map<string, string[]>();
+    const outgoing = new Map<string, string[]>();
+    for (const n of s.stations) {
+      incoming.set(n.id, []);
+      outgoing.set(n.id, []);
+    }
+    for (const e of s.edges) {
+      // Skip malformed refs — already flagged above.
+      if (!ids.has(e.source) || !ids.has(e.target)) continue;
+      outgoing.get(e.source)?.push(e.target);
+      incoming.get(e.target)?.push(e.source);
+    }
+
+    // Exactly one source (station with no incoming edge).
+    const sources = s.stations.filter((n) => (incoming.get(n.id) ?? []).length === 0);
+    if (sources.length !== 1) {
+      const labels = sources
+        .map((n) => `"${n.id}"`)
+        .slice(0, 6)
+        .join(", ");
+      ctx.addIssue({
+        code: "custom",
+        message: `Topology must have exactly one source station (no incoming edges). Found ${String(sources.length)}${labels ? ` (${labels})` : ""}. Merge extra sources downstream of a single shared input station.`,
+        path: ["stations"],
+      });
+    }
+    // Exactly one sink (station with no outgoing edge).
+    const sinks = s.stations.filter((n) => (outgoing.get(n.id) ?? []).length === 0);
+    if (sinks.length !== 1) {
+      const labels = sinks
+        .map((n) => `"${n.id}"`)
+        .slice(0, 6)
+        .join(", ");
+      ctx.addIssue({
+        code: "custom",
+        message: `Topology must have exactly one sink station (no outgoing edges). Found ${String(sinks.length)}${labels ? ` (${labels})` : ""}. Merge extra sinks upstream of a single shared output station.`,
+        path: ["stations"],
+      });
+    }
+
+    // No cycles — rework loops aren't modeled in the v1 schema, so any
+    // cycle is either a modelling mistake or a hallucinated back-edge
+    // trying to fake rework. Report the smallest cycle for grounding.
+    const visited = new Set<string>();
+    const stack = new Set<string>();
+    const cycleNodes = new Set<string>();
+    const dfs = (id: string): void => {
+      if (stack.has(id)) {
+        cycleNodes.add(id);
+        return;
+      }
+      if (visited.has(id)) return;
+      visited.add(id);
+      stack.add(id);
+      for (const next of outgoing.get(id) ?? []) {
+        dfs(next);
+        if (cycleNodes.has(next)) cycleNodes.add(id);
+      }
+      stack.delete(id);
+    };
+    for (const n of s.stations) dfs(n.id);
+    if (cycleNodes.size > 0) {
+      const preview = Array.from(cycleNodes)
+        .slice(0, 6)
+        .map((id) => `"${id}"`)
+        .join(", ");
+      ctx.addIssue({
+        code: "custom",
+        message: `Cycle detected involving ${String(cycleNodes.size)} station(s): ${preview}. This schema does not model rework loops; if the user described rework, keep the flow one-directional and set defectRate on the QC station instead of adding a back-edge.`,
+        path: ["edges"],
+      });
+    }
+
+    // Reachability — every station should be reachable from the source
+    // and able to reach the sink. Isolated fragments silently drop
+    // work at runtime.
+    if (sources.length === 1) {
+      const src = sources[0]!.id;
+      const reachable = new Set<string>();
+      const stack2 = [src];
+      while (stack2.length > 0) {
+        const cur = stack2.pop()!;
+        if (reachable.has(cur)) continue;
+        reachable.add(cur);
+        for (const n of outgoing.get(cur) ?? []) stack2.push(n);
+      }
+      const unreachable = s.stations.filter((n) => !reachable.has(n.id));
+      if (unreachable.length > 0) {
+        ctx.addIssue({
+          code: "custom",
+          message: `${String(unreachable.length)} station(s) are unreachable from the source: ${unreachable
+            .map((n) => `"${n.id}"`)
+            .slice(0, 6)
+            .join(", ")}. Wire them into the chain or drop them.`,
+          path: ["stations"],
+        });
+      }
+    }
   });
 
 export type GeneratedScenario = z.infer<typeof scenarioGenerationSchema>;

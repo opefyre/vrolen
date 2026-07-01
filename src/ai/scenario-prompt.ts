@@ -7,7 +7,7 @@
  * can run side-by-side prompts during migration.
  */
 
-export const SCENARIO_PROMPT_VERSION = "v1";
+export const SCENARIO_PROMPT_VERSION = "v2";
 
 /**
  * Returns the system prompt the LLM sees. Includes:
@@ -55,6 +55,21 @@ A scenario has:
   }
 }
 \`\`\`
+
+# Topology rules (STRICT — will be rejected otherwise)
+
+The engine only accepts scenarios with a single-source, single-sink, acyclic topology. When you emit \`edges\`:
+
+1. **Exactly one source station** — one and only one station has no incoming edge. If the user describes multiple "inputs" (e.g. "two feeders and a hopper"), merge them into ONE shared upstream input station and let the two feed-lines start from it.
+2. **Exactly one sink station** — one and only one station has no outgoing edge. Same rule for multiple "outputs" — merge into one shared final station.
+3. **No cycles / no back-edges.** If the user describes rework ("QC sends bad parts back to the capper"), do NOT model it as a back-edge. Keep the flow one-directional and set the QC station's \`defectRate\` (e.g. 0.08 for 8% rejection). The engine's rework loop lives inside the QC station, not as an edge.
+4. **Every station must be reachable from the source** and able to reach the sink. No isolated fragments.
+
+## Rewriting patterns
+
+- User says "two parallel fillers feeding a capper" → one upstream Input → two Filler stations (each with an edge Input→FillerA and Input→FillerB) → one Capper (edges FillerA→Capper and FillerB→Capper). Capacity on Filler doesn't matter here — that's ONE station with capacity=2.
+- User says "capper QC rejects 8% back to capper" → do NOT add QC→Capper. Instead: Capper → QC (with defectRate=0.08) → next station. The 8% is time-cost inside QC.
+- User says "two output SKUs" → one upstream Input → shared line → one shared Packer sink. Modeling per-SKU divergence is out of scope for the v1 schema.
 
 # Rules
 
