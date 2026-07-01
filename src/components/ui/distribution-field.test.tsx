@@ -91,11 +91,57 @@ describe("DistributionField (VROL-289)", () => {
       />,
     );
     const minInput = screen.getByLabelText("Min (ms)") as HTMLInputElement;
+    // VROL-1223 — Min (ms) is now a HumanMsField that commits on blur
+    // (not change) so it can parse "80s" as 80000. Simulate the full
+    // focus → type → blur cycle. The field goes uncontrolled while
+    // focused; onFocus seeds the draft from the current fieldValue.
+    fireEvent.focus(minInput);
     fireEvent.change(minInput, { target: { value: "80" } });
+    fireEvent.blur(minInput);
     const next = onChange.mock.calls[0]?.[0] as Distribution;
     const u = next as Extract<Distribution, { kind: "uniform" }>;
     expect(u.min).toBe(80);
-    // max is unchanged here; the next change will clamp on the max field
-    // input call. Verified separately on its own setter.
+  });
+
+  // VROL-1223 — new: users can type human units and the parser converts.
+  it("VROL-1223: humanised ms field accepts '90s' / '1.5 min' on blur", () => {
+    const onChange = vi.fn();
+    render(
+      <DistributionField id="d" value={{ kind: "constant", value: 100 }} onChange={onChange} />,
+    );
+    const input = screen.getByLabelText("Value (ms)") as HTMLInputElement;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "90s" } });
+    fireEvent.blur(input);
+    const next = onChange.mock.calls[0]?.[0] as Distribution;
+    expect(next.kind).toBe("constant");
+    const c = next as Extract<Distribution, { kind: "constant" }>;
+    expect(c.value).toBe(90_000);
+  });
+
+  it("VROL-1223: humanised ms field parses minutes", () => {
+    const onChange = vi.fn();
+    render(
+      <DistributionField id="d" value={{ kind: "constant", value: 100 }} onChange={onChange} />,
+    );
+    const input = screen.getByLabelText("Value (ms)") as HTMLInputElement;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "1.5 min" } });
+    fireEvent.blur(input);
+    const c = onChange.mock.calls[0]?.[0] as Extract<Distribution, { kind: "constant" }>;
+    expect(c.value).toBe(90_000);
+  });
+
+  it("VROL-1223: plain numbers still commit as ms (backwards compatible)", () => {
+    const onChange = vi.fn();
+    render(
+      <DistributionField id="d" value={{ kind: "constant", value: 100 }} onChange={onChange} />,
+    );
+    const input = screen.getByLabelText("Value (ms)") as HTMLInputElement;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "500" } });
+    fireEvent.blur(input);
+    const c = onChange.mock.calls[0]?.[0] as Extract<Distribution, { kind: "constant" }>;
+    expect(c.value).toBe(500);
   });
 });

@@ -8,7 +8,7 @@
  *   - Reusable in places beyond the Inspector
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { Input } from "@/components/ui/input";
 import { type Distribution, meanOf, SeededPrng, sample } from "@/engine";
@@ -124,6 +124,131 @@ function meanGuessOf(d: Distribution): number {
   }
 }
 
+/**
+ * VROL-1223 — friendly ms → human string. 90000 → "90 s"; 45000 → "45 s";
+ * 900000 → "15 min"; 7200000 → "2 h". Keeps ms in the input (backwards
+ * compatible + unambiguous) but surfaces the human unit as a hint under
+ * the label so 6-digit ms numbers stop reading as intimidating.
+ */
+export function humanizeMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0 s";
+  if (ms < 1000) return `${ms.toFixed(0)} ms`;
+  const seconds = ms / 1000;
+  if (seconds < 90) {
+    const rounded = seconds >= 10 ? Math.round(seconds) : Math.round(seconds * 10) / 10;
+    return `${String(rounded)} s`;
+  }
+  const minutes = seconds / 60;
+  if (minutes < 90) {
+    const rounded = minutes >= 10 ? Math.round(minutes) : Math.round(minutes * 10) / 10;
+    return `${String(rounded)} min`;
+  }
+  const hours = minutes / 60;
+  const rounded = hours >= 10 ? Math.round(hours) : Math.round(hours * 10) / 10;
+  return `${String(rounded)} h`;
+}
+
+/**
+ * VROL-1223 — parse a human-typed cycle time. Accepts plain numbers
+ * (treated as ms for backwards compatibility) plus units the audit
+ * called out: "90s", "1.5 min", "2h". Returns null on unrecognised
+ * strings so callers can bail without clobbering the field.
+ */
+export function parseHumanMs(raw: string): number | null {
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed.length === 0) return null;
+  const match =
+    /^([+-]?\d*\.?\d+)\s*(ms|s|sec|second|seconds|m|min|minute|minutes|h|hr|hour|hours)?$/.exec(
+      trimmed,
+    );
+  if (!match) return null;
+  const n = Number(match[1]);
+  if (!Number.isFinite(n)) return null;
+  const unit = match[2];
+  if (!unit || unit === "ms") return n;
+  if (unit === "s" || unit === "sec" || unit === "second" || unit === "seconds") return n * 1000;
+  if (unit === "m" || unit === "min" || unit === "minute" || unit === "minutes") return n * 60_000;
+  if (unit === "h" || unit === "hr" || unit === "hour" || unit === "hours") return n * 3_600_000;
+  return null;
+}
+
+/**
+ * VROL-1223 — dedicated ms field that lets users type "90s" / "1.5 min"
+ * / "2h". Keeps ms in the underlying model (existing scenarios + JSON
+ * exports unchanged); parses human units on blur; echoes the resolved
+ * value under the label so 6-digit ms numbers stop reading as
+ * intimidating. Isolated as a component so the local input string
+ * doesn't fight the parent's controlled prop while the user is typing.
+ */
+function HumanMsField({
+  fieldId,
+  fieldLabel,
+  fieldValue,
+  setter,
+  min,
+}: {
+  readonly fieldId: string;
+  readonly fieldLabel: string;
+  readonly fieldValue: number;
+  readonly setter: (n: number) => void;
+  readonly min?: number;
+}) {
+  // React 19 flags in-effect setState as cascading — derive the shown
+  // string from `fieldValue` while unfocused and hand control to `draft`
+  // only while the user is typing. That avoids a sync-effect entirely.
+  const [draft, setDraft] = useState<string>("");
+  const [focused, setFocused] = useState<boolean>(false);
+  const [invalid, setInvalid] = useState<boolean>(false);
+  const shown = focused ? draft : String(fieldValue);
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-baseline justify-between gap-2">
+        {/* Keep the <label> element as pure text so
+            getByLabelText("Min (ms)") from RTL / a11y still resolves the
+            associated input. The humanised hint sits as a separate span
+            outside the label so it doesn't get concatenated into the
+            accessible name. */}
+        <label htmlFor={fieldId} className="text-muted-foreground text-xs font-medium">
+          {fieldLabel}
+        </label>
+        <span
+          className="text-muted-foreground/70 font-mono text-[10px] font-normal tabular-nums"
+          aria-hidden
+        >
+          = {humanizeMs(fieldValue)}
+        </span>
+      </div>
+      <Input
+        id={fieldId}
+        type="text"
+        inputMode="decimal"
+        value={shown}
+        aria-invalid={invalid || undefined}
+        onFocus={() => {
+          setDraft(String(fieldValue));
+          setFocused(true);
+          setInvalid(false);
+        }}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          if (invalid) setInvalid(false);
+        }}
+        onBlur={() => {
+          setFocused(false);
+          const parsed = parseHumanMs(draft);
+          if (parsed === null || !Number.isFinite(parsed)) {
+            setInvalid(true);
+            return;
+          }
+          const bounded = min !== undefined ? Math.max(min, parsed) : parsed;
+          if (bounded !== fieldValue) setter(bounded);
+        }}
+        className={`font-mono tabular-nums ${invalid ? "border-destructive" : ""}`}
+      />
+    </div>
+  );
+}
+
 export function DistributionField({ value, onChange, label, id }: DistributionFieldProps) {
   const histogram = useMemo(() => buildHistogram(value), [value]);
 
@@ -132,27 +257,40 @@ export function DistributionField({ value, onChange, label, id }: DistributionFi
     fieldId: string,
     fieldValue: number,
     setter: (n: number) => void,
-    extras: { min?: number; max?: number; step?: number } = {},
-  ) => (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={fieldId} className="text-muted-foreground text-xs font-medium">
-        {fieldLabel}
-      </label>
-      <Input
-        id={fieldId}
-        type="number"
-        min={extras.min}
-        max={extras.max}
-        step={extras.step ?? 1}
-        value={fieldValue}
-        onChange={(e) => {
-          const n = Number(e.target.value);
-          if (Number.isFinite(n)) setter(n);
-        }}
-        className="font-mono tabular-nums"
-      />
-    </div>
-  );
+    extras: { min?: number; max?: number; step?: number; humanUnit?: boolean } = {},
+  ) => {
+    if (extras.humanUnit) {
+      return (
+        <HumanMsField
+          fieldId={fieldId}
+          fieldLabel={fieldLabel}
+          fieldValue={fieldValue}
+          setter={setter}
+          {...(extras.min !== undefined ? { min: extras.min } : {})}
+        />
+      );
+    }
+    return (
+      <div className="flex flex-col gap-1">
+        <label htmlFor={fieldId} className="text-muted-foreground text-xs font-medium">
+          {fieldLabel}
+        </label>
+        <Input
+          id={fieldId}
+          type="number"
+          min={extras.min}
+          max={extras.max}
+          step={extras.step ?? 1}
+          value={fieldValue}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (Number.isFinite(n)) setter(n);
+          }}
+          className="font-mono tabular-nums"
+        />
+      </div>
+    );
+  };
 
   const handleKindChange = (kind: Distribution["kind"]): void => {
     const m = meanGuessOf(value);
@@ -235,7 +373,7 @@ export function DistributionField({ value, onChange, label, id }: DistributionFi
             (n) => {
               onChange({ kind: "constant", value: Math.max(1, n) });
             },
-            { min: 1 },
+            { min: 1, humanUnit: true },
           )
         : null}
       {value.kind === "uniform" ? (
@@ -247,7 +385,7 @@ export function DistributionField({ value, onChange, label, id }: DistributionFi
             (n) => {
               onChange({ kind: "uniform", min: Math.max(1, n), max: value.max });
             },
-            { min: 1 },
+            { min: 1, humanUnit: true },
           )}
           {numberField(
             "Max (ms)",
@@ -256,7 +394,7 @@ export function DistributionField({ value, onChange, label, id }: DistributionFi
             (n) => {
               onChange({ kind: "uniform", min: value.min, max: Math.max(value.min + 1, n) });
             },
-            { min: value.min + 1 },
+            { min: value.min + 1, humanUnit: true },
           )}
         </div>
       ) : null}
@@ -269,7 +407,7 @@ export function DistributionField({ value, onChange, label, id }: DistributionFi
             (n) => {
               onChange({ kind: "normal", mean: Math.max(1, n), stddev: value.stddev });
             },
-            { min: 1 },
+            { min: 1, humanUnit: true },
           )}
           {numberField(
             "Std dev (ms)",
@@ -296,7 +434,7 @@ export function DistributionField({ value, onChange, label, id }: DistributionFi
                 max: value.max,
               });
             },
-            { min: 1 },
+            { min: 1, humanUnit: true },
           )}
           {numberField(
             "Mode",
@@ -310,7 +448,7 @@ export function DistributionField({ value, onChange, label, id }: DistributionFi
                 max: value.max,
               });
             },
-            { min: value.min },
+            { min: value.min, humanUnit: true },
           )}
           {numberField(
             "Max",
@@ -324,7 +462,7 @@ export function DistributionField({ value, onChange, label, id }: DistributionFi
                 max: Math.max(value.mode, n),
               });
             },
-            { min: value.mode },
+            { min: value.mode, humanUnit: true },
           )}
         </div>
       ) : null}
@@ -337,7 +475,7 @@ export function DistributionField({ value, onChange, label, id }: DistributionFi
             (n) => {
               onChange({ kind: "exponential", rate: 1 / Math.max(1, n) });
             },
-            { min: 1 },
+            { min: 1, humanUnit: true },
           )}
           <p className="text-muted-foreground text-xs">
             Implied rate: <span className="font-mono tabular-nums">{value.rate.toFixed(6)}</span>{" "}
