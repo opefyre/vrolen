@@ -20,6 +20,14 @@ import type { ChainResult } from "@/engine";
 
 interface Props {
   readonly result: ChainResult | null;
+  /**
+   * VROL-1214 — run-average result (pre-interpolation). When provided the
+   * HUD labels the primary throughput as AVG (matching the header pill and
+   * KPI cards) and shows the interpolated 5-second rolling value as INST.
+   * Prevents the "HUD shows 0.0/h while KPI shows 13.9k/h" mismatch when
+   * no parts complete in the current 5s window.
+   */
+  readonly runResult?: ChainResult | null;
   readonly simTimeMs?: number;
   /** Screen coords (px in the wrapper) of the current bottleneck. */
   readonly bottleneckAt: { readonly x: number; readonly y: number } | null;
@@ -52,6 +60,7 @@ function fmtRate(perMs: number): string {
 
 export function PlaybackHud({
   result,
+  runResult,
   simTimeMs,
   bottleneckAt,
   bottleneckLabel,
@@ -61,7 +70,22 @@ export function PlaybackHud({
   onToggleHeatmap,
 }: Props) {
   const showClock = simTimeMs !== undefined;
-  const throughput = result ? fmtRate(result.throughputLambda) : "—";
+  // VROL-1214 — primary throughput is the run average (matches the header
+  // pill + KPI card). When the caller passes runResult we surface the
+  // 5-second rolling instantaneous value as a smaller secondary chip so
+  // the reader sees BOTH signals honestly labelled — never a naked "0.0/h"
+  // sitting next to a populated OEE.
+  const primarySource = runResult ?? result;
+  const throughputPrimary = primarySource ? fmtRate(primarySource.throughputLambda) : "—";
+  const primaryLabel = runResult ? "Avg / h" : "Throughput";
+  const instLambda = result?.throughputLambda;
+  const hasSeparateInst =
+    runResult !== undefined &&
+    runResult !== null &&
+    result !== null &&
+    instLambda !== undefined &&
+    Math.abs(instLambda - runResult.throughputLambda) > 1e-9;
+  const throughputInst = hasSeparateInst && instLambda !== undefined ? fmtRate(instLambda) : null;
   const oeePct = result ? `${(result.lineOee * 100).toFixed(1)}%` : "—";
   const wipStr = result ? `${(result.lineAverageWipL ?? 0).toFixed(1)}` : "—";
 
@@ -97,11 +121,28 @@ export function PlaybackHud({
             </span>
           </div>
         ) : null}
-        <div className="flex items-baseline gap-1.5">
+        <div
+          className="flex items-baseline gap-1.5"
+          title={
+            hasSeparateInst
+              ? "Avg = run-average throughput (matches the header pill and KPI card). Inst = 5-second rolling instantaneous."
+              : "Run-average throughput."
+          }
+        >
           <span className="text-muted-foreground text-[10px] tracking-wide uppercase">
-            Throughput
+            {primaryLabel}
           </span>
-          <span className="text-foreground font-mono font-semibold tabular-nums">{throughput}</span>
+          <span className="text-foreground font-mono font-semibold tabular-nums">
+            {throughputPrimary}
+          </span>
+          {throughputInst ? (
+            <span
+              className="text-muted-foreground/80 ml-1 font-mono text-[10px] tabular-nums"
+              data-testid="playback-hud-inst-throughput"
+            >
+              inst {throughputInst}
+            </span>
+          ) : null}
         </div>
         <div className="flex items-baseline gap-1.5">
           <span className="text-muted-foreground text-[10px] tracking-wide uppercase">OEE</span>

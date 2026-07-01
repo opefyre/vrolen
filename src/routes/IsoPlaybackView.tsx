@@ -344,6 +344,7 @@ export function IsoPlaybackView({
       <PlaybackReplayBanner hasResult={result !== null} isLive={simTimeMs !== undefined} />
       <PlaybackHud
         result={effectiveResult}
+        runResult={result}
         {...(simTimeMs !== undefined ? { simTimeMs } : {})}
         bottleneckAt={bottleneck.at}
         {...(bottleneck.label ? { bottleneckLabel: bottleneck.label } : {})}
