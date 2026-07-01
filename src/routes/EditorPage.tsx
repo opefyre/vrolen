@@ -3479,6 +3479,24 @@ function EditorCanvas() {
     setSavedComparisons(listComparisons());
   }, []);
 
+  // VROL-1218 — after a preset or scenario loads, fit-view so the whole
+  // topology lands in the viewport instead of the previous camera. Runs
+  // on the frame AFTER setNodes so react-flow has already reconciled the
+  // node measurements (fitView on the same frame sees stale bounds and
+  // no-ops). 400 ms tween mirrors the existing fitView button.
+  const scheduleFitView = useCallback((): void => {
+    if (typeof window === "undefined") return;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        try {
+          flow.fitView({ duration: 400, padding: 0.2 });
+        } catch {
+          /* fitView throws when the flow isn't mounted yet — safe to ignore. */
+        }
+      });
+    });
+  }, [flow]);
+
   const loadScenarioInto = useCallback(
     (name: string): boolean => {
       const payload = loadScenario(name);
@@ -3505,10 +3523,11 @@ function EditorCanvas() {
           0,
         ) + 1;
       setScenariosOpen(false);
+      scheduleFitView();
       toast.success(`Loaded "${name}"`);
       return true;
     },
-    [setNodes, setEdges, setSettings],
+    [setNodes, setEdges, setSettings, scheduleFitView],
   );
 
   // VROL-630 — load a Preset by deep-copying its graph + settings. Presets
@@ -3529,9 +3548,10 @@ function EditorCanvas() {
         nodesCopy.reduce((max, n) => Math.max(max, parseInt(n.id.replace(/\D/g, ""), 10) || 0), 0) +
         1;
       setScenariosOpen(false);
+      scheduleFitView();
       toast.success(`Loaded preset "${preset.title}"`);
     },
-    [setNodes, setEdges, setSettings],
+    [setNodes, setEdges, setSettings, scheduleFitView],
   );
 
   // VROL-630 — surface a toast so the user knows they're looking at a
