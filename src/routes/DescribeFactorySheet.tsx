@@ -42,6 +42,7 @@ import {
 } from "@/ai/provider-keys";
 import { generateScenarioFromNl, type ScenarioGenerationResult } from "@/ai/scenario-tool";
 import type { GeneratedScenario } from "@/ai/scenario-schema";
+import { createSharedOpenAiAdapter, sharedOpenAiAvailable } from "@/ai/shared-openai";
 
 import { aiScenarioToGraph, type AiScenarioGraph } from "@/lib/scenario-from-ai";
 
@@ -98,6 +99,10 @@ export function DescribeFactorySheet({
   generate,
 }: Props): ReactElement {
   const store = useMemo(() => keyStore ?? createLocalStorageProviderKeyStore(), [keyStore]);
+  const sharedAvailable = sharedOpenAiAvailable();
+  // Preselect the shared key mode when available so a new user gets a
+  // zero-friction AI experience; BYO stays a click away.
+  const [keySource, setKeySource] = useState<"shared" | "byo">(sharedAvailable ? "shared" : "byo");
   const [providerId, setProviderId] = useState<ProviderId>("openai");
   const [apiKey, setApiKey] = useState<string>("");
   const [prompt, setPrompt] = useState<string>("");
@@ -117,7 +122,9 @@ export function DescribeFactorySheet({
   }, [open, providerId, store]);
 
   const canGenerate =
-    apiKey.trim().length > 0 && prompt.trim().length > 0 && status.kind !== "running";
+    (keySource === "shared" || apiKey.trim().length > 0) &&
+    prompt.trim().length > 0 &&
+    status.kind !== "running";
 
   const runGenerate = async () => {
     setStatus({ kind: "running" });
@@ -127,7 +134,7 @@ export function DescribeFactorySheet({
       apiKey: trimmedKey,
       addedAt: 0, // overwritten by store on persist; not used by the adapter
     };
-    if (rememberKey) {
+    if (keySource === "byo" && rememberKey) {
       try {
         // Refresh addedAt so the dashboard can sort by last-used later.
         store.upsert({ ...providerKey, addedAt: 0 });
@@ -139,7 +146,11 @@ export function DescribeFactorySheet({
       const result =
         generate !== undefined
           ? await generate(providerKey, prompt.trim())
-          : await generateScenarioFromNl(createAdapterForProvider(providerKey), prompt.trim());
+          : keySource === "shared"
+            ? await generateScenarioFromNl(createSharedOpenAiAdapter(), prompt.trim(), {
+                model: "gpt-4o-mini",
+              })
+            : await generateScenarioFromNl(createAdapterForProvider(providerKey), prompt.trim());
       if (!result.ok) {
         setStatus({
           kind: "error",
@@ -183,71 +194,122 @@ export function DescribeFactorySheet({
           </SheetDescription>
         </SheetHeader>
         <div className="flex flex-col gap-4 p-4">
-          <div className="space-y-2">
-            <label className="text-xs font-medium tracking-wide uppercase" htmlFor="dfs-provider">
-              Provider
-            </label>
-            <Select
-              value={providerId}
-              onValueChange={(v) => {
-                setProviderId(v as ProviderId);
-              }}
+          {sharedAvailable ? (
+            <div
+              className="border-border bg-muted/30 space-y-2 rounded-md border p-3"
+              data-testid="describe-factory-key-source"
             >
-              <SelectTrigger id="dfs-provider" data-testid="describe-factory-provider">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {listProviders().map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-muted-foreground text-xs">
-              Default model: <code>{PROVIDER_CATALOGUE[providerId].defaultModel}</code>
-            </p>
-          </div>
-          <div className="space-y-2">
-            <label className="text-xs font-medium tracking-wide uppercase" htmlFor="dfs-key">
-              API key
-            </label>
-            <div className="flex gap-2">
-              <Input
-                id="dfs-key"
-                type="password"
-                value={apiKey}
-                placeholder="sk-…"
-                onChange={(e) => {
-                  setApiKey(e.target.value);
-                }}
-                data-testid="describe-factory-key"
-                autoComplete="off"
-                className="flex-1 font-mono text-xs"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleClearKey}
-                disabled={apiKey.length === 0}
-                aria-label="Remove stored key"
-                title="Remove stored key"
-              >
-                <Trash2 className="h-3.5 w-3.5" aria-hidden />
-              </Button>
+              <div className="flex items-baseline justify-between">
+                <span className="text-xs font-medium tracking-wide uppercase">Key</span>
+                <div className="border-border bg-card inline-flex items-center gap-0.5 rounded-md border p-0.5 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setKeySource("shared");
+                    }}
+                    aria-pressed={keySource === "shared"}
+                    data-testid="describe-factory-key-source-shared"
+                    className={`rounded-sm px-2 py-0.5 font-medium transition-colors ${
+                      keySource === "shared"
+                        ? "bg-sim-running/15 text-sim-running"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Use Vrolen's
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setKeySource("byo");
+                    }}
+                    aria-pressed={keySource === "byo"}
+                    data-testid="describe-factory-key-source-byo"
+                    className={`rounded-sm px-2 py-0.5 font-medium transition-colors ${
+                      keySource === "byo"
+                        ? "bg-sim-running/15 text-sim-running"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Bring your own
+                  </button>
+                </div>
+              </div>
+              <p className="text-muted-foreground text-[11px] leading-snug">
+                {keySource === "shared"
+                  ? "Runs through Vrolen's OpenAI key — no signup needed."
+                  : "Paste your own OpenAI, Anthropic, OpenRouter, Gemini, or Cloudflare key. Stored locally, not encrypted."}
+              </p>
             </div>
-            <label className="text-muted-foreground flex items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                checked={rememberKey}
-                onChange={(e) => {
-                  setRememberKey(e.target.checked);
+          ) : null}
+          {keySource === "byo" ? (
+            <div className="space-y-2">
+              <label className="text-xs font-medium tracking-wide uppercase" htmlFor="dfs-provider">
+                Provider
+              </label>
+              <Select
+                value={providerId}
+                onValueChange={(v) => {
+                  setProviderId(v as ProviderId);
                 }}
-                data-testid="describe-factory-remember"
-              />
-              Remember on this device (localStorage, not encrypted)
-            </label>
-          </div>
+              >
+                <SelectTrigger id="dfs-provider" data-testid="describe-factory-provider">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {listProviders().map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-muted-foreground text-xs">
+                Default model: <code>{PROVIDER_CATALOGUE[providerId].defaultModel}</code>
+              </p>
+            </div>
+          ) : null}
+          {keySource === "byo" ? (
+            <div className="space-y-2">
+              <label className="text-xs font-medium tracking-wide uppercase" htmlFor="dfs-key">
+                API key
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  id="dfs-key"
+                  type="password"
+                  value={apiKey}
+                  placeholder="sk-…"
+                  onChange={(e) => {
+                    setApiKey(e.target.value);
+                  }}
+                  data-testid="describe-factory-key"
+                  autoComplete="off"
+                  className="flex-1 font-mono text-xs"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleClearKey}
+                  disabled={apiKey.length === 0}
+                  aria-label="Remove stored key"
+                  title="Remove stored key"
+                >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                </Button>
+              </div>
+              <label className="text-muted-foreground flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={rememberKey}
+                  onChange={(e) => {
+                    setRememberKey(e.target.checked);
+                  }}
+                  data-testid="describe-factory-remember"
+                />
+                Remember on this device (localStorage, not encrypted)
+              </label>
+            </div>
+          ) : null}
           <div className="space-y-2">
             <label className="text-xs font-medium tracking-wide uppercase" htmlFor="dfs-prompt">
               Describe the line

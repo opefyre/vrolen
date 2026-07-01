@@ -17,6 +17,14 @@ const okScenario: GeneratedScenario = {
 
 const okResult: ScenarioGenerationResult = { ok: true, scenario: okScenario, attempts: 1 };
 
+/** Vitest respects vite.config's `define`, so the shared-key toggle
+ *  can be present in tests. Switch to BYO mode so the tests exercise
+ *  the API-key-driven flow. */
+function switchToByo() {
+  const byo = screen.queryByTestId("describe-factory-key-source-byo");
+  if (byo) fireEvent.click(byo);
+}
+
 describe("DescribeFactorySheet (VROL-402)", () => {
   it("disables Generate until both API key + prompt are filled", () => {
     const store = createInMemoryProviderKeyStore();
@@ -29,6 +37,7 @@ describe("DescribeFactorySheet (VROL-402)", () => {
         generate={async () => okResult}
       />,
     );
+    switchToByo();
     const btn = screen.getByTestId("describe-factory-generate");
     expect(btn).toBeDisabled();
     fireEvent.change(screen.getByTestId("describe-factory-key"), { target: { value: "sk-x" } });
@@ -51,6 +60,7 @@ describe("DescribeFactorySheet (VROL-402)", () => {
         generate={async () => okResult}
       />,
     );
+    switchToByo();
     fireEvent.change(screen.getByTestId("describe-factory-key"), { target: { value: "sk-x" } });
     fireEvent.change(screen.getByTestId("describe-factory-prompt"), {
       target: { value: "A line." },
@@ -85,6 +95,7 @@ describe("DescribeFactorySheet (VROL-402)", () => {
         })}
       />,
     );
+    switchToByo();
     fireEvent.change(screen.getByTestId("describe-factory-key"), { target: { value: "k" } });
     fireEvent.change(screen.getByTestId("describe-factory-prompt"), { target: { value: "x" } });
     fireEvent.click(screen.getByTestId("describe-factory-generate"));
@@ -105,11 +116,35 @@ describe("DescribeFactorySheet (VROL-402)", () => {
         generate={async () => okResult}
       />,
     );
+    switchToByo();
     fireEvent.change(screen.getByTestId("describe-factory-key"), { target: { value: "sk-abc" } });
     fireEvent.change(screen.getByTestId("describe-factory-prompt"), { target: { value: "p" } });
     fireEvent.click(screen.getByTestId("describe-factory-generate"));
     await waitFor(() => {
       expect(store.get("openai")?.apiKey).toBe("sk-abc");
     });
+  });
+
+  it("VROL — when shared key mode is available, Generate enables from prompt alone", () => {
+    const store = createInMemoryProviderKeyStore();
+    render(
+      <DescribeFactorySheet
+        open
+        onOpenChange={() => undefined}
+        onApply={() => undefined}
+        keyStore={store}
+        generate={async () => okResult}
+      />,
+    );
+    // Default when shared is available = shared; API key field hidden.
+    if (screen.queryByTestId("describe-factory-key-source")) {
+      expect(screen.queryByTestId("describe-factory-key")).toBeNull();
+      const btn = screen.getByTestId("describe-factory-generate");
+      expect(btn).toBeDisabled();
+      fireEvent.change(screen.getByTestId("describe-factory-prompt"), {
+        target: { value: "A line." },
+      });
+      expect(btn).toBeEnabled();
+    }
   });
 });

@@ -76,6 +76,9 @@ export {
 } from "./gemini-adapter";
 export { createAdapterForProvider, type AdapterFactoryOptions } from "./adapter-factory";
 
+// VROL — shared OpenAI key via Vite dev proxy (no BYO required in dev).
+export { createSharedOpenAiAdapter, sharedOpenAiAvailable } from "./shared-openai";
+
 // VROL-389 — BYO-key storage + provider catalogue.
 export {
   PROVIDER_CATALOGUE,

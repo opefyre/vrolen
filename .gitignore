@@ -43,6 +43,16 @@ test-results/
 *credentials*.json
 service-account*.json
 auth-key*.json
+# Known credential .txt files (workspace-root convention — belt-and-suspenders)
+openai.txt
+jiratoken.txt
+cloudflare.txt
+supabase.txt
+supabasedbpw.txt
+sentry.txt
+resend.txt
+gemini.txt
+google-oauth.txt
 
 # === IDE / Editor ===
 .idea/

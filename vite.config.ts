@@ -2,7 +2,30 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+
+/**
+ * VROL — dev-only OpenAI proxy. Reads the shared key from
+ * ../openai.txt (workspace root, outside the git repo) at Vite
+ * startup and lets the dev server proxy /api/openai/* requests to
+ * api.openai.com with the Authorization header injected server-side.
+ *
+ * The browser code hits /api/openai/... with no key of its own; the
+ * key lives ONLY in Node during `pnpm dev`. Production builds don't
+ * carry the key — production needs a real edge-function proxy (future
+ * infra work). If the file is missing we no-op the proxy so the app
+ * still builds + tests still pass.
+ */
+function loadSharedOpenAiKey(): string | null {
+  try {
+    const raw = readFileSync(resolve(import.meta.dirname, "../openai.txt"), "utf-8").trim();
+    return raw.length > 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+const SHARED_OPENAI_KEY = loadSharedOpenAiKey();
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -36,6 +59,27 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: false,
+    proxy: SHARED_OPENAI_KEY
+      ? {
+          "/api/openai": {
+            target: "https://api.openai.com",
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api\/openai/, ""),
+            configure: (proxy) => {
+              proxy.on("proxyReq", (proxyReq) => {
+                // Inject the bearer AFTER any client-set Authorization
+                // so nothing the browser sends can leak through.
+                proxyReq.setHeader("Authorization", `Bearer ${SHARED_OPENAI_KEY}`);
+              });
+            },
+          },
+        }
+      : undefined,
+  },
+  // Surface at build/dev time whether the shared key is available so
+  // the app can offer "Use Vrolen's key" vs. BYO based on reality.
+  define: {
+    __VROL_SHARED_OPENAI_AVAILABLE__: JSON.stringify(SHARED_OPENAI_KEY !== null),
   },
   test: {
     environment: "happy-dom",
