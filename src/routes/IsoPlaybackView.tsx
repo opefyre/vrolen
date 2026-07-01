@@ -11,13 +11,16 @@
  * Camera pan by drag, zoom by wheel — inherited from IsoCanvas.
  */
 
-import { useEffect, useRef, useState, type ReactElement } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import type { Edge, Node } from "@xyflow/react";
 
 import { IsoCanvas, type IsoCanvasHandle } from "@/render/iso-canvas";
+import { worldToScreen } from "@/render/isometric";
 import { scenarioToIsoLayout } from "@/render/scenario-to-iso-layout";
 import { scenarioToRender } from "@/render/scenario-to-render";
 import type { ChainResult } from "@/engine";
+
+import { PlaybackHud } from "./PlaybackHud";
 
 interface Props {
   readonly nodes: readonly Node[];
@@ -42,6 +45,11 @@ export function IsoPlaybackView({
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [ready, setReady] = useState<boolean>(false);
   const cameraRef = useRef({ x: 0, y: 0, zoom: 1 });
+  // VROL-232 — mirror the camera + wrapper rect into React state so
+  // the HUD's SVG arrow can retrace to the bottleneck's projected
+  // position whenever either changes.
+  const [cameraState, setCameraState] = useState({ x: 0, y: 0, zoom: 1 });
+  const [wrapperSize, setWrapperSize] = useState({ w: 0, h: 0 });
 
   useEffect(() => {
     if (!ready) return;
@@ -106,6 +114,7 @@ export function IsoPlaybackView({
       zoom: 1,
     };
     cameraRef.current = camera;
+    setCameraState(camera);
     canvas.setCamera(camera);
     // Intentionally only re-centres on ready. Nodes/edges changes
     // rebuild the scene above but preserve the current camera so the
@@ -137,6 +146,7 @@ export function IsoPlaybackView({
       const cam = cameraRef.current;
       const next = { x: cam.x + dx, y: cam.y + dy, zoom: cam.zoom };
       cameraRef.current = next;
+      setCameraState(next);
       canvasRef.current?.setCamera(next);
     };
     const onUp = (e: PointerEvent): void => {
@@ -159,6 +169,7 @@ export function IsoPlaybackView({
       const wy = (py - cam.y) / cam.zoom;
       const next = { x: px - wx * zoom, y: py - wy * zoom, zoom };
       cameraRef.current = next;
+      setCameraState(next);
       canvasRef.current?.setCamera(next);
     };
     wrapper.addEventListener("pointerdown", onDown);
@@ -175,11 +186,42 @@ export function IsoPlaybackView({
     };
   }, [ready]);
 
+  // VROL-232 — track wrapper size for the HUD SVG layer.
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const update = (): void => {
+      const rect = wrapper.getBoundingClientRect();
+      setWrapperSize({ w: rect.width, h: rect.height });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(wrapper);
+    return () => {
+      ro.disconnect();
+    };
+  }, []);
+
+  // VROL-232 — compute bottleneck station's screen position from the
+  // iso layout + current camera. Memoised so the HUD only rebuilds
+  // when a genuine input changes.
+  const bottleneck = useMemo(() => {
+    const layout = scenarioToIsoLayout(nodes, edges);
+    const render = scenarioToRender(nodes, edges, result);
+    const b = render.stations.find((s) => s.isBottleneck);
+    if (!b) return { at: null, label: undefined };
+    const world = layout.positions.get(b.id);
+    if (!world) return { at: null, label: b.label };
+    const screen = worldToScreen({ x: world.x, y: world.y }, cameraState);
+    return { at: { x: screen.sx, y: screen.sy }, label: b.label };
+  }, [nodes, edges, result, cameraState]);
+
   return (
     <div
       ref={wrapperRef}
       className={`bg-muted/20 relative h-full w-full overflow-hidden rounded-md border ${className ?? ""}`}
       data-testid="iso-playback-view"
+      style={{ touchAction: "none" }}
     >
       <IsoCanvas
         ref={canvasRef}
@@ -188,8 +230,16 @@ export function IsoPlaybackView({
           setReady(true);
         }}
       />
+      <PlaybackHud
+        result={result}
+        {...(simTimeMs !== undefined ? { simTimeMs } : {})}
+        bottleneckAt={bottleneck.at}
+        {...(bottleneck.label ? { bottleneckLabel: bottleneck.label } : {})}
+        wrapperWidth={wrapperSize.w}
+        wrapperHeight={wrapperSize.h}
+      />
       <div className="text-muted-foreground pointer-events-none absolute right-3 bottom-3 rounded bg-white/85 px-2 py-1 text-[10px] shadow-sm ring-1 ring-gray-200">
-        Playback view · read-only
+        Playback view · read-only · F to focus bottleneck
       </div>
     </div>
   );
