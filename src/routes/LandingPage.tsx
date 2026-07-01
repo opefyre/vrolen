@@ -21,24 +21,49 @@ import { setPendingWizardCommit } from "@/lib/wizard-handoff";
 import { clearWizardDraft, hasWizardDraft, loadWizardDraft } from "@/lib/wizard-draft-storage";
 import { TopologyPreview } from "@/components/landing/topology-preview";
 
-/** VROL-707 — derive a coarse category from preset id so cards can show a tag. */
+/**
+ * VROL-707 — derive a coarse category from preset id so cards can show
+ * a tag.
+ *
+ * VROL-1217 — second-pass audit called out that Reliability + Topology
+ * chips read as "disabled" because they used the *-foreground variants
+ * (low contrast on low-contrast bg) while Process used the saturated
+ * text-* variant. Unified every category on the same recipe:
+ *   `bg-<hue>/15  text-<hue>  ring-<hue>/25 ring-inset ring-1`
+ * so no category ever reads as active vs. dimmed by accident.
+ */
 function presetCategory(id: string): { label: string; tone: string } {
   if (id.includes("bottling") || id.includes("pharma") || id.includes("bakery")) {
-    return { label: "Process", tone: "bg-sim-running/15 text-sim-running" };
+    return {
+      label: "Process",
+      tone: "bg-sim-running/15 text-sim-running ring-sim-running/25 ring-inset ring-1",
+    };
   }
   if (id.includes("worker") || id.includes("labor")) {
-    return { label: "Labor", tone: "bg-sim-setup/15 text-sim-setup-foreground" };
+    return {
+      label: "Labor",
+      tone: "bg-sim-setup/15 text-sim-setup ring-sim-setup/25 ring-inset ring-1",
+    };
   }
   if (id.includes("maintenance") || id.includes("breakdown")) {
-    return { label: "Reliability", tone: "bg-sim-down/15 text-sim-down-foreground" };
+    return {
+      label: "Reliability",
+      tone: "bg-sim-down/15 text-sim-down ring-sim-down/25 ring-inset ring-1",
+    };
   }
   if (id.includes("changeover") || id.includes("job-shop") || id.includes("mixed")) {
-    return { label: "Mix", tone: "bg-sim-blocked/15 text-sim-blocked-foreground" };
+    return {
+      label: "Mix",
+      tone: "bg-sim-blocked/15 text-sim-blocked ring-sim-blocked/25 ring-inset ring-1",
+    };
   }
   if (id.includes("parallel") || id.includes("two-line") || id.includes("electronics")) {
-    return { label: "Topology", tone: "bg-sim-maintenance/15 text-sim-maintenance-foreground" };
+    return {
+      label: "Topology",
+      tone: "bg-sim-maintenance/15 text-sim-maintenance ring-sim-maintenance/25 ring-inset ring-1",
+    };
   }
-  return { label: "Demo", tone: "bg-muted text-muted-foreground" };
+  return { label: "Demo", tone: "bg-muted text-muted-foreground ring-border ring-inset ring-1" };
 }
 
 /** VROL-706 — count up to N over ~600ms. Lightweight CSS-free counter. */
