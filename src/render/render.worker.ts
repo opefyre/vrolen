@@ -45,6 +45,16 @@ if (typeof scopeAny.document === "undefined") {
   };
   const wrapCanvas = (canvas: OffscreenCanvas): OffscreenCanvas =>
     new Proxy(canvas, {
+      // VROL-1195 — native OffscreenCanvas methods (getContext,
+      // transferControlToOffscreen, etc.) throw "Illegal invocation"
+      // when called with the Proxy as `this` instead of the underlying
+      // canvas. Return bound copies so `proxyCanvas.getContext('webgl2')`
+      // dispatches to the real canvas. This unbroke Pixi's GL init in
+      // v8 which probes context capabilities via getTestContext.
+      get(target, key) {
+        const value = Reflect.get(target, key, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
       set(target, key, value) {
         // OffscreenCanvas demands unsigned-long for width/height; PixiJS
         // sometimes passes undefined or fractional intermediates while
@@ -72,6 +82,21 @@ if (typeof scopeAny.document === "undefined") {
     documentElement: stubEl,
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
+  };
+}
+
+// VROL-1195 — DedicatedWorkerGlobalScope doesn't expose
+// requestAnimationFrame. Pixi's ticker calls it every frame; without
+// a polyfill the ticker never advances and FPS stays at 0 (the render
+// loop looks alive because a first paint happens, but scene diffs never
+// re-render). setTimeout at ~16ms gives a stable 60fps floor.
+if (typeof (scopeAny as { requestAnimationFrame?: unknown }).requestAnimationFrame !== "function") {
+  (
+    scopeAny as { requestAnimationFrame: (cb: FrameRequestCallback) => number }
+  ).requestAnimationFrame = (cb) =>
+    setTimeout(() => cb(performance.now()), 16) as unknown as number;
+  (scopeAny as { cancelAnimationFrame: (id: number) => void }).cancelAnimationFrame = (id) => {
+    clearTimeout(id as unknown as ReturnType<typeof setTimeout>);
   };
 }
 
@@ -189,7 +214,9 @@ function reportError(
   stage: WorkerToMain extends { stage: infer S } ? S : never,
   err: unknown,
 ): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const baseMessage = err instanceof Error ? err.message : String(err);
+  const stack = err instanceof Error && err.stack ? `\n${err.stack}` : "";
+  const message = `${baseMessage}${stack}`;
   post({ kind: "error", stage, message });
 }
 

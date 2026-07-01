@@ -19,7 +19,12 @@
  * Real-art builds should pack into a single PNG for one texture upload.
  */
 
-import { Application, Graphics, RenderTexture, Texture } from "pixi.js";
+import { Application, Cache, Graphics, RenderTexture, Texture } from "pixi.js";
+// VROL-1195 — Pixi v8 renamed the Texture cache from Texture.addToCache
+// (v7) to Cache.set (v8, moved into @pixi/assets under the Cache singleton).
+// Same behaviour: subsequent `Sprite.from('machine-idle')` resolves via
+// the cache. Also swapped Texture.fromURL (removed in v8) → Assets.load.
+import { Assets } from "pixi.js";
 
 /** Sprite names registered by the placeholder atlas (and the contract real
  *  art needs to keep). Keep in lockstep with the StationType enum. */
@@ -75,7 +80,7 @@ export function buildPlaceholderAtlas(app: Application): Map<string, Texture> {
     });
     app.renderer.render({ container: g, target: texture });
     g.destroy();
-    Texture.addToCache(texture, name);
+    Cache.set(name, texture);
     out.set(name, texture);
   }
   return out;
@@ -97,8 +102,11 @@ export async function loadManifestAtlas(): Promise<Map<string, Texture> | null> 
     if (!Array.isArray(manifest.sprites) || manifest.sprites.length === 0) return null;
     const out = new Map<string, Texture>();
     for (const s of manifest.sprites) {
-      const texture = await Texture.fromURL(s.src);
-      Texture.addToCache(texture, s.name);
+      // VROL-1195 — Pixi v8: use Assets.load rather than the removed
+      // Texture.fromURL; register under a stable alias so `Sprite.from(name)`
+      // resolves via the cache.
+      const texture = (await Assets.load({ alias: s.name, src: s.src })) as Texture;
+      Cache.set(s.name, texture);
       out.set(s.name, texture);
     }
     return out;
