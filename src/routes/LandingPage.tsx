@@ -259,7 +259,12 @@ export default function LandingPage() {
             }}
             className="text-muted-foreground hover:text-foreground text-sm underline-offset-4 hover:underline"
           >
-            Browse 12 templates →
+            {/* VROL-1222 — was hard-coded "12" which drifted from the
+                actual PRESETS.length as new presets landed. Derived so
+                the landing count always agrees with the editor's
+                Scenarios drawer badge. Also unified "template" → "preset"
+                for consistency with the drawer copy. */}
+            Browse {PRESETS.length} preset{PRESETS.length === 1 ? "" : "s"} →
           </a>
         </div>
       </section>
