@@ -34,7 +34,8 @@ export function computeSixLoss(result: ChainResult): SixLossRow[] {
   const labels = result.perStationLabels ?? [];
   const n = result.perStationOee?.length ?? 0;
   if (n === 0) return out;
-  const lastSample = result.samples[result.samples.length - 1];
+  const samples = result.samples ?? [];
+  const lastSample = samples[samples.length - 1];
   const oees: OeeMetrics[] = [...result.perStationOee];
   for (let i = 0; i < n; i++) {
     const stateMs = lastSample?.perStationStateMs?.[i] ?? {};

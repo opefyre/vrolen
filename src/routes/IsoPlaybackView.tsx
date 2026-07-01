@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import type { Edge, Node } from "@xyflow/react";
 
 import { IsoCanvas, type IsoCanvasHandle } from "@/render/iso-canvas";
+import { interpolateResultAt } from "@/render/interpolate-result";
 import { worldToScreen } from "@/render/isometric";
 import { scenarioToIsoLayout } from "@/render/scenario-to-iso-layout";
 import { scenarioToRender } from "@/render/scenario-to-render";
@@ -77,12 +78,20 @@ export function IsoPlaybackView({
   // VROL-1192 — ? cheat sheet overlay.
   const [cheatSheetOpen, setCheatSheetOpen] = useState<boolean>(false);
 
+  // VROL-226 — snapshot the result at simTimeMs so the scene reflects
+  // where the run WAS at that moment, not the final steady-state.
+  // No simTimeMs → hand the raw result through unchanged.
+  const effectiveResult = useMemo(() => {
+    if (!result || simTimeMs === undefined) return result;
+    return interpolateResultAt(result, simTimeMs);
+  }, [result, simTimeMs]);
+
   useEffect(() => {
     if (!ready) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const layout = scenarioToIsoLayout(nodes, edges);
-    const render = scenarioToRender(nodes, edges, result);
+    const render = scenarioToRender(nodes, edges, effectiveResult);
     // Override the pixel-scale positions from scenarioToRender with the
     // topo-sort tile coords from scenarioToIsoLayout so the view reads
     // as a proper iso factory floor rather than a shrunken editor.
@@ -91,8 +100,8 @@ export function IsoPlaybackView({
       return p ? { ...s, x: p.x, y: p.y } : s;
     });
     // VROL-212 — worker sprites derived from perStationRunningPct.
-    const idxToNodeId = topologyIndexToNodeIdMap(nodes, result?.perStationLabels ?? []);
-    const workers = scenarioToWorkers(layout, result, idxToNodeId);
+    const idxToNodeId = topologyIndexToNodeIdMap(nodes, effectiveResult?.perStationLabels ?? []);
+    const workers = scenarioToWorkers(layout, effectiveResult, idxToNodeId);
     const options: {
       simTimeMs?: number;
       workers?: readonly (typeof workers)[number][];
@@ -101,7 +110,7 @@ export function IsoPlaybackView({
     if (simTimeMs !== undefined) options.simTimeMs = simTimeMs;
     if (workers.length > 0) options.workers = workers;
     canvas.setScene(laidOut, render.edges, options);
-  }, [ready, nodes, edges, result, simTimeMs, heatmapOn]);
+  }, [ready, nodes, edges, effectiveResult, simTimeMs, heatmapOn]);
 
   // VROL-217 — F focuses bottleneck; VROL-1192 — ? opens cheat sheet;
   // Escape closes overlays.
@@ -133,7 +142,7 @@ export function IsoPlaybackView({
       const canvas = canvasRef.current;
       if (!canvas) return;
       const layout = scenarioToIsoLayout(nodes, edges);
-      const render = scenarioToRender(nodes, edges, result);
+      const render = scenarioToRender(nodes, edges, effectiveResult);
       const focusStation = render.stations.find((s) => s.isBottleneck) ?? render.stations[0];
       if (!focusStation) return;
       const pos = layout.positions.get(focusStation.id);
@@ -145,7 +154,7 @@ export function IsoPlaybackView({
     return () => {
       window.removeEventListener("keydown", onKey);
     };
-  }, [nodes, edges, result, cheatSheetOpen, selectedStationId]);
+  }, [nodes, edges, effectiveResult, cheatSheetOpen, selectedStationId]);
 
   // Centre the scene on ready so the topology lands in the viewport
   // instead of at the origin, which the world camera would show far
@@ -258,21 +267,21 @@ export function IsoPlaybackView({
   // when a genuine input changes.
   const bottleneck = useMemo(() => {
     const layout = scenarioToIsoLayout(nodes, edges);
-    const render = scenarioToRender(nodes, edges, result);
+    const render = scenarioToRender(nodes, edges, effectiveResult);
     const b = render.stations.find((s) => s.isBottleneck);
     if (!b) return { at: null, label: undefined };
     const world = layout.positions.get(b.id);
     if (!world) return { at: null, label: b.label };
     const screen = worldToScreen({ x: world.x, y: world.y }, cameraState);
     return { at: { x: screen.sx, y: screen.sy }, label: b.label };
-  }, [nodes, edges, result, cameraState]);
+  }, [nodes, edges, effectiveResult, cameraState]);
 
   // VROL-1190 — click hitboxes at each station's projected screen
   // position. HTML on top of the canvas so hit-testing bypasses Pixi
   // and the pointer handler for pan doesn't fire on station clicks.
   const stationClickTargets = useMemo(() => {
     const layout = scenarioToIsoLayout(nodes, edges);
-    const render = scenarioToRender(nodes, edges, result);
+    const render = scenarioToRender(nodes, edges, effectiveResult);
     return render.stations
       .map((s) => {
         const world = layout.positions.get(s.id);
@@ -281,7 +290,7 @@ export function IsoPlaybackView({
         return { id: s.id, label: s.label, x: screen.sx, y: screen.sy };
       })
       .filter((v): v is { id: string; label: string; x: number; y: number } => v !== null);
-  }, [nodes, edges, result, cameraState]);
+  }, [nodes, edges, effectiveResult, cameraState]);
 
   // VROL-1190 — lookup selected station's topology index for the KPI panel.
   const kpiIdx = useMemo(() => {
@@ -334,7 +343,7 @@ export function IsoPlaybackView({
       </div>
       <PlaybackReplayBanner hasResult={result !== null} isLive={simTimeMs !== undefined} />
       <PlaybackHud
-        result={result}
+        result={effectiveResult}
         {...(simTimeMs !== undefined ? { simTimeMs } : {})}
         bottleneckAt={bottleneck.at}
         {...(bottleneck.label ? { bottleneckLabel: bottleneck.label } : {})}
@@ -348,7 +357,7 @@ export function IsoPlaybackView({
       <PlaybackStationKpiPanel
         stationId={selectedStationId}
         stationLabel={selectedStation?.label ?? null}
-        result={result}
+        result={effectiveResult}
         topologyIndex={kpiIdx}
         onClose={() => {
           setSelectedStationId(null);
