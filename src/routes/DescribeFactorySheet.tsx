@@ -555,6 +555,15 @@ function QuestionsPanel({
           Answering makes the scenario match your line more precisely. Or skip and I&apos;ll pick
           sensible defaults.
         </p>
+        {/* VROL-1221 — a shared helper reminding users that human units
+            are welcome. The system prompt (v4) also tells the LLM to
+            phrase questions in seconds / minutes, but users still see
+            legacy runs so we surface the reassurance here regardless. */}
+        <p className="text-muted-foreground text-[10px] leading-snug">
+          Times can be written however you like — <span className="font-mono">2 s</span>,{" "}
+          <span className="font-mono">1.5 min</span>, <span className="font-mono">8 h</span>, or a
+          plain number.
+        </p>
       </div>
       <div className="space-y-2.5">
         {questions.map((q, i) => (

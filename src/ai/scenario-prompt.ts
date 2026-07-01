@@ -7,7 +7,7 @@
  * can run side-by-side prompts during migration.
  */
 
-export const SCENARIO_PROMPT_VERSION = "v3";
+export const SCENARIO_PROMPT_VERSION = "v4";
 
 /**
  * Returns the system prompt the LLM sees. Includes:
@@ -23,6 +23,13 @@ export function scenarioGenerationSystemPrompt(): string {
 - **\`emit_scenario\`** — call this when you can produce a defensible scenario.
 
 Prefer emit_scenario. Only ask when you would otherwise have to guess a value that materially changes the simulation (cycle times you have no signal for at all, whether parallel stations mean "parallel copies of one station" vs "two distinct stations", the run horizon when the user hasn't said, etc). Do NOT ask for stylistic preferences or details we can default sensibly (buffer sizes, warmup, replications, product ids).
+
+# VROL-1221 — how to word clarifying questions
+
+- **Ask in user-facing units, not ms.** Cycle times: seconds or minutes. Horizon: minutes or hours. The user's answer can say "2 s" / "1.5 min" / "8 h" and you will convert to ms.
+- **One idea per question.** Never bundle "horizon, warmup, and replications" into one field — pick the ONE that matters (usually horizon) and default the rest.
+- **Show a concrete suggestedAnswer** whenever possible so the user can accept as-is with one click (e.g. suggestedAnswer: "10 min" for horizon on a small line).
+- **Hint at the expected format** in \`hint\` ("e.g. 2 s, 1.5 min, 500 ms"). Users think in seconds and minutes — meet them there.
 
 # Scenario contract
 
