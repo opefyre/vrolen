@@ -20,13 +20,16 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 
-import { worldToScreen } from "./isometric";
+import { TILE_HEIGHT, TILE_WIDTH, worldToScreen } from "./isometric";
 import type { MainToWorker, RenderEdge, RenderStation, WorkerToMain } from "./protocol";
 import RenderWorker from "./render.worker?worker";
 
 export interface IsoCanvasHandle {
   setScene(stations: readonly RenderStation[], edges: readonly RenderEdge[]): void;
   setCamera(camera: { x: number; y: number; zoom: number }): void;
+  /** VROL-217 — imperatively pan the camera so the given world point
+   *  sits at the wrapper's centre. Zoom preserved. */
+  focusOn(world: { x: number; y: number }): void;
 }
 
 export interface IsoCanvasProps {
@@ -61,6 +64,35 @@ export const IsoCanvas = forwardRef<IsoCanvasHandle, IsoCanvasProps>(function Is
     zoom: 1,
   });
 
+  // VROL-217 — clamp camera to bounds derived from the floor tile
+  // radius (VROL-199 draws [-20, +20]²). Prevents the user from
+  // panning into a completely empty grey background.
+  const FLOOR_RADIUS_TILES = 20;
+  const clampCamera = (next: {
+    x: number;
+    y: number;
+    zoom: number;
+  }): { x: number; y: number; zoom: number } => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return next;
+    const rect = wrapper.getBoundingClientRect();
+    const zoom = Math.max(0.25, Math.min(4, next.zoom));
+    // Floor spans FLOOR_RADIUS_TILES * TILE_WIDTH * zoom in each iso
+    // direction. Allow the user to pan just past the edge by a
+    // wrapper-size margin so a station near the corner stays reachable.
+    const floorHalfPx = FLOOR_RADIUS_TILES * TILE_WIDTH * zoom;
+    const marginX = rect.width;
+    const marginY = rect.height;
+    return {
+      zoom,
+      x: Math.max(-floorHalfPx - marginX, Math.min(rect.width + floorHalfPx + marginX, next.x)),
+      y: Math.max(
+        -floorHalfPx - marginY,
+        Math.min(rect.height + floorHalfPx * (TILE_HEIGHT / TILE_WIDTH) + marginY, next.y),
+      ),
+    };
+  };
+
   useImperativeHandle(
     ref,
     () => ({
@@ -69,11 +101,28 @@ export const IsoCanvas = forwardRef<IsoCanvasHandle, IsoCanvasProps>(function Is
         setLabels(stations);
       },
       setCamera(nextCamera) {
-        bridgeRef.current?.postCamera(nextCamera);
-        setCameraState(nextCamera);
+        const clamped = clampCamera(nextCamera);
+        bridgeRef.current?.postCamera(clamped);
+        setCameraState(clamped);
+      },
+      focusOn(world) {
+        const wrapper = wrapperRef.current;
+        if (!wrapper) return;
+        const rect = wrapper.getBoundingClientRect();
+        // Solve: worldToScreen(world, cam).sx === rect.width/2, .sy === rect.height/2
+        // Use the identity projection then centre-offset the camera.
+        const identity = worldToScreen(world);
+        const zoom = camera.zoom;
+        const next = clampCamera({
+          x: rect.width / 2 - identity.sx * zoom,
+          y: rect.height / 2 - identity.sy * zoom,
+          zoom,
+        });
+        bridgeRef.current?.postCamera(next);
+        setCameraState(next);
       },
     }),
-    [],
+    [camera.zoom],
   );
 
   useEffect(() => {

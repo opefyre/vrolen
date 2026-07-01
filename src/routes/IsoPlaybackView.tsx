@@ -48,6 +48,35 @@ export function IsoPlaybackView({ nodes, edges, result, className }: Props): Rea
     canvas.setScene(laidOut, render.edges);
   }, [ready, nodes, edges, result]);
 
+  // VROL-217 — F key focuses the bottleneck (or first station) so the
+  // user can hop to the important spot without hunting on the floor.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== "f" && e.key !== "F") return;
+      const t = e.target as HTMLElement | null;
+      if (t) {
+        const tag = t.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable) {
+          return;
+        }
+      }
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const layout = scenarioToIsoLayout(nodes, edges);
+      const render = scenarioToRender(nodes, edges, result);
+      const focusStation = render.stations.find((s) => s.isBottleneck) ?? render.stations[0];
+      if (!focusStation) return;
+      const pos = layout.positions.get(focusStation.id);
+      if (!pos) return;
+      e.preventDefault();
+      canvas.focusOn(pos);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [nodes, edges, result]);
+
   // Centre the scene on ready so the topology lands in the viewport
   // instead of at the origin, which the world camera would show far
   // off-screen.
@@ -71,6 +100,68 @@ export function IsoPlaybackView({ nodes, edges, result, className }: Props): Rea
     // rebuild the scene above but preserve the current camera so the
     // user's pan isn't clobbered mid-inspection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  // VROL-217 — pan (drag), zoom (wheel, cursor-anchored). IsoCanvas
+  // clamps the resulting camera to bounds so the floor stays visible.
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper || !ready) return;
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+    const onDown = (e: PointerEvent): void => {
+      if (e.button !== 0) return;
+      dragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      wrapper.setPointerCapture(e.pointerId);
+    };
+    const onMove = (e: PointerEvent): void => {
+      if (!dragging) return;
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      const cam = cameraRef.current;
+      const next = { x: cam.x + dx, y: cam.y + dy, zoom: cam.zoom };
+      cameraRef.current = next;
+      canvasRef.current?.setCamera(next);
+    };
+    const onUp = (e: PointerEvent): void => {
+      dragging = false;
+      try {
+        wrapper.releasePointerCapture(e.pointerId);
+      } catch {
+        /* pointer may already be released */
+      }
+    };
+    const onWheel = (e: WheelEvent): void => {
+      e.preventDefault();
+      const cam = cameraRef.current;
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      const zoom = Math.max(0.25, Math.min(4, cam.zoom * factor));
+      const rect = wrapper.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const wx = (px - cam.x) / cam.zoom;
+      const wy = (py - cam.y) / cam.zoom;
+      const next = { x: px - wx * zoom, y: py - wy * zoom, zoom };
+      cameraRef.current = next;
+      canvasRef.current?.setCamera(next);
+    };
+    wrapper.addEventListener("pointerdown", onDown);
+    wrapper.addEventListener("pointermove", onMove);
+    wrapper.addEventListener("pointerup", onUp);
+    wrapper.addEventListener("pointercancel", onUp);
+    wrapper.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      wrapper.removeEventListener("pointerdown", onDown);
+      wrapper.removeEventListener("pointermove", onMove);
+      wrapper.removeEventListener("pointerup", onUp);
+      wrapper.removeEventListener("pointercancel", onUp);
+      wrapper.removeEventListener("wheel", onWheel);
+    };
   }, [ready]);
 
   return (
