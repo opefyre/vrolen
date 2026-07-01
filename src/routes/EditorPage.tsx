@@ -92,6 +92,7 @@ import {
 } from "react";
 
 import { DescribeFactorySheet } from "./DescribeFactorySheet";
+import { IsoPlaybackView } from "./IsoPlaybackView";
 import { Accordion, AccordionStatus } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1075,6 +1076,35 @@ function EditorCanvas() {
   const [mobilePaletteOpen, setMobilePaletteOpen] = useState<boolean>(false);
   // VROL-402 — "Describe your factory" AI sheet.
   const [describeFactoryOpen, setDescribeFactoryOpen] = useState<boolean>(false);
+  // VROL-854 — Editor ↔ Playback view toggle. Hydrated from ?view=playback
+  // so the choice is deep-linkable. The Playback view is the read-only
+  // Pixi iso canvas; Editor is the react-flow authoring surface.
+  const [viewMode, setViewMode] = useState<"editor" | "playback">(() => {
+    if (typeof window === "undefined") return "editor";
+    try {
+      const raw = new URL(window.location.href).searchParams.get("view");
+      return raw === "playback" ? "playback" : "editor";
+    } catch {
+      return "editor";
+    }
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const url = new URL(window.location.href);
+      if (viewMode === "playback") {
+        if (url.searchParams.get("view") !== "playback") {
+          url.searchParams.set("view", "playback");
+          window.history.replaceState({}, "", url.toString());
+        }
+      } else if (url.searchParams.has("view")) {
+        url.searchParams.delete("view");
+        window.history.replaceState({}, "", url.toString());
+      }
+    } catch {
+      // history API not available (private mode, sandboxed iframe)
+    }
+  }, [viewMode]);
   useEffect(() => {
     try {
       window.localStorage?.setItem?.(
@@ -4434,6 +4464,38 @@ function EditorCanvas() {
             }}
           />
         </div>
+        {/* VROL-854 — Editor / Playback segmented control. Editor is
+            the react-flow authoring surface; Playback is the read-only
+            Pixi iso canvas of the same scenario. */}
+        <div
+          role="tablist"
+          aria-label="View mode"
+          className="border-border bg-muted/40 inline-flex items-center gap-0.5 rounded-md border p-0.5"
+          data-testid="view-mode-toggle"
+        >
+          {(["editor", "playback"] as const).map((mode) => {
+            const active = viewMode === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                data-testid={`view-mode-${mode}`}
+                onClick={() => {
+                  setViewMode(mode);
+                }}
+                className={`rounded-sm px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
+                  active
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {mode}
+              </button>
+            );
+          })}
+        </div>
         <span
           className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${
             isRunning
@@ -4975,14 +5037,22 @@ function EditorCanvas() {
       <div className="-mx-6 px-3 pt-1 sm:px-6">
         <RunConsole playheadTimeMs={playbackSnapshot?.tMs ?? null} />
       </div>
+      {/* VROL-854 — Playback view swaps the react-flow grid for the
+          Pixi iso canvas. Editor view is the authoring grid + palette
+          + inspector. */}
+      {viewMode === "playback" ? (
+        <div className="h-[calc(100vh-15rem)]">
+          <IsoPlaybackView nodes={nodes} edges={edges} result={result} />
+        </div>
+      ) : null}
       <div
         // Mobile (single column) is driven by `grid-cols-1`. Above
         // lg the inline gridTemplateColumns overrides via JS-detected
         // breakpoint so Tailwind doesn't need to JIT 4 different
         // arbitrary track strings.
-        className="grid h-[calc(100vh-15rem)] grid-cols-1 gap-3"
+        className={`grid h-[calc(100vh-15rem)] grid-cols-1 gap-3 ${viewMode === "playback" ? "hidden" : ""}`}
         style={
-          isLgViewport
+          isLgViewport && viewMode === "editor"
             ? {
                 gridTemplateColumns: `${palettePaneOpen ? "200px" : "0px"} minmax(0,1fr) ${inspectorPaneOpen ? "260px" : "0px"}`,
               }
