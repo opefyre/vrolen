@@ -96,6 +96,19 @@ export interface CoachTipDeps {
    * management tips are unaffected.
    */
   readonly topActionCardTitle?: string;
+  /**
+   * Second-pass audit H1 — total parts completed by the last run.
+   * When 0 we want to say WHY (horizon too short) instead of showing
+   * a scary "Line OEE is 0 %" that's just an artifact of division.
+   */
+  readonly completed?: number;
+  /** Horizon of the last run (ms). Paired with slowestCycleMs to
+   *  detect horizon-too-short for a full cycle. */
+  readonly horizonMs?: number;
+  /** Longest cycle (ms) across all stations in the current scenario. */
+  readonly slowestCycleMs?: number;
+  /** Label of the station with the longest cycle. */
+  readonly slowestStationLabel?: string;
 }
 
 export interface CoachTipCallbacks {
@@ -232,6 +245,31 @@ export function buildCoachTips(deps: CoachTipDeps, callbacks: CoachTipCallbacks)
         // VROL-1158 — action card "WIP averaging X parts" rule
         // already speaks for this signal.
         !actionCardCoversSignal(deps.topActionCardTitle, ["wip"]),
+    },
+    // Second-pass audit H1 — nothing completed. Almost always because
+    // the horizon is shorter than a single cycle. Diagnosing the
+    // horizon gap up front is a friendlier first-run experience than
+    // a scary "Line OEE is 0 %" that just falls out of dividing by
+    // zero. Ranked ABOVE low-OEE so a 0-parts run gets this tip, not
+    // the OEE one.
+    {
+      id: "run-produced-nothing",
+      title: "Horizon is shorter than a single cycle",
+      body: (() => {
+        const slowest = deps.slowestCycleMs ?? 0;
+        const horizon = deps.horizonMs ?? 0;
+        const label = deps.slowestStationLabel ?? "the slowest station";
+        const slowestSec = (slowest / 1000).toFixed(0);
+        const horizonSec = (horizon / 1000).toFixed(0);
+        const suggested = Math.max(300, Math.ceil((slowest * 5) / 1000));
+        return `Nothing finished — the run window (${horizonSec}s) is shorter than ${label}'s cycle (${slowestSec}s). Bump Horizon to about ${String(suggested)}s in Run Settings so a full cycle fits.`;
+      })(),
+      whenVisible: () =>
+        hasRun &&
+        (deps.completed ?? 0) === 0 &&
+        (deps.slowestCycleMs ?? 0) > 0 &&
+        (deps.horizonMs ?? 0) > 0 &&
+        (deps.horizonMs ?? 0) < (deps.slowestCycleMs ?? 0),
     },
     // VROL-1064 — line OEE below 0.5 is "something is structurally
     // wrong" not "tune a station." Direct the user at the OEE

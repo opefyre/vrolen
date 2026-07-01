@@ -5551,6 +5551,39 @@ function EditorCanvas() {
                   if (total <= 0) return 0;
                   return (stateMs["Idle"] ?? 0) / total;
                 })(),
+                // Second-pass audit H1 (VROL-1212) — feed the horizon
+                // vs slowest-cycle signal so the coach can diagnose
+                // "nothing finished" with the specific numbers rather
+                // than a blank low-OEE tip.
+                completed: result?.completed,
+                horizonMs: settings.horizonMs,
+                ...(() => {
+                  let slowest = 0;
+                  let slowestLabel = "the slowest station";
+                  for (const n of nodes) {
+                    if (n.type !== "station") continue;
+                    const d = n.data as
+                      | {
+                          label?: string;
+                          cycleDistribution?: { kind?: string; value?: number; mean?: number };
+                        }
+                      | undefined;
+                    const dist = d?.cycleDistribution;
+                    const ms =
+                      typeof dist?.value === "number"
+                        ? dist.value
+                        : typeof dist?.mean === "number"
+                          ? dist.mean
+                          : 0;
+                    if (ms > slowest) {
+                      slowest = ms;
+                      slowestLabel = typeof d?.label === "string" ? d.label : slowestLabel;
+                    }
+                  }
+                  return slowest > 0
+                    ? { slowestCycleMs: slowest, slowestStationLabel: slowestLabel }
+                    : {};
+                })(),
               },
               {
                 runNow: handleRun,
