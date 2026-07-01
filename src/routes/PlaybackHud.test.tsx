@@ -22,6 +22,8 @@ describe("PlaybackHud (VROL-232)", () => {
         bottleneckAt={null}
         wrapperWidth={400}
         wrapperHeight={300}
+        heatmapOn={false}
+        onToggleHeatmap={() => undefined}
       />,
     );
     expect(screen.getByTestId("playback-hud")).toBeInTheDocument();
@@ -40,6 +42,8 @@ describe("PlaybackHud (VROL-232)", () => {
         bottleneckAt={null}
         wrapperWidth={400}
         wrapperHeight={300}
+        heatmapOn={false}
+        onToggleHeatmap={() => undefined}
       />,
     );
     expect(screen.getByText(/Clock/i)).toBeInTheDocument();
@@ -54,6 +58,8 @@ describe("PlaybackHud (VROL-232)", () => {
         bottleneckAt={null}
         wrapperWidth={400}
         wrapperHeight={300}
+        heatmapOn={false}
+        onToggleHeatmap={() => undefined}
       />,
     );
     expect(screen.getByText(/Day 2/i)).toBeInTheDocument();
@@ -66,6 +72,8 @@ describe("PlaybackHud (VROL-232)", () => {
         bottleneckAt={null}
         wrapperWidth={400}
         wrapperHeight={300}
+        heatmapOn={false}
+        onToggleHeatmap={() => undefined}
       />,
     );
     expect(screen.queryByText(/Clock/i)).toBeNull();
@@ -79,6 +87,8 @@ describe("PlaybackHud (VROL-232)", () => {
         bottleneckLabel="Capper"
         wrapperWidth={400}
         wrapperHeight={300}
+        heatmapOn={false}
+        onToggleHeatmap={() => undefined}
       />,
     );
     expect(screen.getByTestId("playback-hud-bottleneck-arrow")).toBeInTheDocument();
@@ -93,6 +103,8 @@ describe("PlaybackHud (VROL-232)", () => {
         bottleneckLabel="Capper"
         wrapperWidth={400}
         wrapperHeight={300}
+        heatmapOn={false}
+        onToggleHeatmap={() => undefined}
       />,
     );
     expect(screen.queryByTestId("playback-hud-bottleneck-arrow")).toBeNull();

@@ -24,6 +24,9 @@ export interface RenderStation {
   readonly state: "idle" | "running" | "blocked" | "starved" | "down" | "setup";
   /** Bottleneck flag → ring highlight. */
   readonly isBottleneck: boolean;
+  /** VROL-237 — utilization 0..1 for the heatmap overlay. Optional so
+   *  callers without a run don't need to fabricate a value. */
+  readonly utilization?: number;
 }
 
 export interface RenderEdge {
@@ -79,6 +82,9 @@ export type MainToWorker =
       /** VROL-212 — optional worker layer. Absent = don't touch existing
        *  worker sprites (compatible with older callers). */
       workers?: readonly RenderWorker[];
+      /** VROL-237 — utilization heatmap toggle. When true, tile-under-
+       *  station tint scales with utilization: 0 → cool blue, 1 → hot red. */
+      heatmap?: boolean;
     }
   | { kind: "camera"; x: number; y: number; zoom: number }
   | { kind: "dispose" };

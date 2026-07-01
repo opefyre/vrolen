@@ -23,6 +23,6 @@ describe("IsoPlaybackView (VROL-854)", () => {
     render(<IsoPlaybackView nodes={NODES} edges={EDGES} result={null} />);
     expect(screen.getByTestId("iso-playback-view")).toBeInTheDocument();
     expect(screen.getByTestId("iso-canvas-stub")).toBeInTheDocument();
-    expect(screen.getByText(/Playback view/i)).toBeInTheDocument();
+    expect(screen.getByText(/Playback/i)).toBeInTheDocument();
   });
 });

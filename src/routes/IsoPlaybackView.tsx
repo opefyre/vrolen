@@ -22,6 +22,11 @@ import { scenarioToWorkers, topologyIndexToNodeIdMap } from "@/render/scenario-t
 import type { ChainResult } from "@/engine";
 
 import { PlaybackHud } from "./PlaybackHud";
+import {
+  PlaybackCheatSheet,
+  PlaybackReplayBanner,
+  PlaybackStationKpiPanel,
+} from "./PlaybackOverlays";
 
 interface Props {
   readonly nodes: readonly Node[];
@@ -51,6 +56,26 @@ export function IsoPlaybackView({
   // position whenever either changes.
   const [cameraState, setCameraState] = useState({ x: 0, y: 0, zoom: 1 });
   const [wrapperSize, setWrapperSize] = useState({ w: 0, h: 0 });
+  // VROL-1191 — heatmap toggle, persisted so the pick survives reload.
+  const [heatmapOn, setHeatmapOn] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage?.getItem?.("vrolen.playback.heatmap") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage?.setItem?.("vrolen.playback.heatmap", heatmapOn ? "1" : "0");
+    } catch {
+      /* private mode / quota */
+    }
+  }, [heatmapOn]);
+  // VROL-1190 — click-to-KPI drawer for the selected station.
+  const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
+  // VROL-1192 — ? cheat sheet overlay.
+  const [cheatSheetOpen, setCheatSheetOpen] = useState<boolean>(false);
 
   useEffect(() => {
     if (!ready) return;
@@ -71,17 +96,17 @@ export function IsoPlaybackView({
     const options: {
       simTimeMs?: number;
       workers?: readonly (typeof workers)[number][];
-    } = {};
+      heatmap?: boolean;
+    } = { heatmap: heatmapOn };
     if (simTimeMs !== undefined) options.simTimeMs = simTimeMs;
     if (workers.length > 0) options.workers = workers;
     canvas.setScene(laidOut, render.edges, options);
-  }, [ready, nodes, edges, result, simTimeMs]);
+  }, [ready, nodes, edges, result, simTimeMs, heatmapOn]);
 
-  // VROL-217 — F key focuses the bottleneck (or first station) so the
-  // user can hop to the important spot without hunting on the floor.
+  // VROL-217 — F focuses bottleneck; VROL-1192 — ? opens cheat sheet;
+  // Escape closes overlays.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== "f" && e.key !== "F") return;
       const t = e.target as HTMLElement | null;
       if (t) {
         const tag = t.tagName;
@@ -89,6 +114,22 @@ export function IsoPlaybackView({
           return;
         }
       }
+      if (e.key === "Escape") {
+        if (cheatSheetOpen) {
+          e.preventDefault();
+          setCheatSheetOpen(false);
+        } else if (selectedStationId !== null) {
+          e.preventDefault();
+          setSelectedStationId(null);
+        }
+        return;
+      }
+      if (e.key === "?") {
+        e.preventDefault();
+        setCheatSheetOpen((v) => !v);
+        return;
+      }
+      if (e.key !== "f" && e.key !== "F") return;
       const canvas = canvasRef.current;
       if (!canvas) return;
       const layout = scenarioToIsoLayout(nodes, edges);
@@ -104,7 +145,7 @@ export function IsoPlaybackView({
     return () => {
       window.removeEventListener("keydown", onKey);
     };
-  }, [nodes, edges, result]);
+  }, [nodes, edges, result, cheatSheetOpen, selectedStationId]);
 
   // Centre the scene on ready so the topology lands in the viewport
   // instead of at the origin, which the world camera would show far
@@ -226,6 +267,33 @@ export function IsoPlaybackView({
     return { at: { x: screen.sx, y: screen.sy }, label: b.label };
   }, [nodes, edges, result, cameraState]);
 
+  // VROL-1190 — click hitboxes at each station's projected screen
+  // position. HTML on top of the canvas so hit-testing bypasses Pixi
+  // and the pointer handler for pan doesn't fire on station clicks.
+  const stationClickTargets = useMemo(() => {
+    const layout = scenarioToIsoLayout(nodes, edges);
+    const render = scenarioToRender(nodes, edges, result);
+    return render.stations
+      .map((s) => {
+        const world = layout.positions.get(s.id);
+        if (!world) return null;
+        const screen = worldToScreen({ x: world.x, y: world.y }, cameraState);
+        return { id: s.id, label: s.label, x: screen.sx, y: screen.sy };
+      })
+      .filter((v): v is { id: string; label: string; x: number; y: number } => v !== null);
+  }, [nodes, edges, result, cameraState]);
+
+  // VROL-1190 — lookup selected station's topology index for the KPI panel.
+  const kpiIdx = useMemo(() => {
+    if (selectedStationId === null || !result) return null;
+    const map = topologyIndexToNodeIdMap(nodes, result.perStationLabels ?? []);
+    for (const [idx, nodeId] of map) {
+      if (nodeId === selectedStationId) return idx;
+    }
+    return null;
+  }, [selectedStationId, nodes, result]);
+  const selectedStation = stationClickTargets.find((s) => s.id === selectedStationId) ?? null;
+
   return (
     <div
       ref={wrapperRef}
@@ -240,6 +308,31 @@ export function IsoPlaybackView({
           setReady(true);
         }}
       />
+      {/* VROL-1190 — click hitboxes at station centres. 40×20 diamond
+          bounds; pointer-events-auto so clicks register. */}
+      <div className="pointer-events-none absolute inset-0 z-[5]">
+        {stationClickTargets.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            className="pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-md focus-visible:ring-2 focus-visible:ring-orange-400"
+            style={{
+              left: s.x,
+              top: s.y,
+              width: 80,
+              height: 32,
+              background: "transparent",
+            }}
+            aria-label={`Open KPIs for ${s.label}`}
+            data-testid={`playback-station-hit-${s.id}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedStationId(s.id);
+            }}
+          />
+        ))}
+      </div>
+      <PlaybackReplayBanner hasResult={result !== null} isLive={simTimeMs !== undefined} />
       <PlaybackHud
         result={result}
         {...(simTimeMs !== undefined ? { simTimeMs } : {})}
@@ -247,9 +340,28 @@ export function IsoPlaybackView({
         {...(bottleneck.label ? { bottleneckLabel: bottleneck.label } : {})}
         wrapperWidth={wrapperSize.w}
         wrapperHeight={wrapperSize.h}
+        heatmapOn={heatmapOn}
+        onToggleHeatmap={() => {
+          setHeatmapOn((v) => !v);
+        }}
+      />
+      <PlaybackStationKpiPanel
+        stationId={selectedStationId}
+        stationLabel={selectedStation?.label ?? null}
+        result={result}
+        topologyIndex={kpiIdx}
+        onClose={() => {
+          setSelectedStationId(null);
+        }}
+      />
+      <PlaybackCheatSheet
+        open={cheatSheetOpen}
+        onClose={() => {
+          setCheatSheetOpen(false);
+        }}
       />
       <div className="text-muted-foreground pointer-events-none absolute right-3 bottom-3 rounded bg-white/85 px-2 py-1 text-[10px] shadow-sm ring-1 ring-gray-200">
-        Playback view · read-only · F to focus bottleneck
+        Playback · click a station · F focus · ? shortcuts
       </div>
     </div>
   );

@@ -40,6 +40,8 @@ export interface IsoCanvasHandle {
       readonly simTimeMs?: number;
       /** VROL-212 — worker sprites on the top layer. */
       readonly workers?: readonly RenderWorker[];
+      /** VROL-237 — utilization heatmap toggle. */
+      readonly heatmap?: boolean;
     },
   ): void;
   setCamera(camera: { x: number; y: number; zoom: number }): void;
@@ -62,6 +64,7 @@ interface WorkerBridge {
     edges: readonly RenderEdge[],
     simTimeMs?: number,
     workers?: readonly RenderWorker[],
+    heatmap?: boolean,
   ): void;
   postCamera(camera: { x: number; y: number; zoom: number }): void;
   postResize(width: number, height: number, dpr: number): void;
@@ -118,7 +121,13 @@ export const IsoCanvas = forwardRef<IsoCanvasHandle, IsoCanvasProps>(function Is
     ref,
     () => ({
       setScene(stations, edges, options) {
-        bridgeRef.current?.postScene(stations, edges, options?.simTimeMs, options?.workers);
+        bridgeRef.current?.postScene(
+          stations,
+          edges,
+          options?.simTimeMs,
+          options?.workers,
+          options?.heatmap,
+        );
         setLabels(stations);
       },
       setCamera(nextCamera) {
@@ -228,10 +237,11 @@ export const IsoCanvas = forwardRef<IsoCanvasHandle, IsoCanvasProps>(function Is
 
     const bridge: WorkerBridge = {
       worker,
-      postScene(stations, edges, simTimeMs, workers) {
+      postScene(stations, edges, simTimeMs, workers, heatmap) {
         const msg: MainToWorker = { kind: "scene", stations, edges };
         if (simTimeMs !== undefined) msg.simTimeMs = simTimeMs;
         if (workers !== undefined) msg.workers = workers;
+        if (heatmap !== undefined) msg.heatmap = heatmap;
         post(msg);
       },
       postCamera(camera) {

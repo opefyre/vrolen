@@ -14,6 +14,8 @@
  * `simTimeMs`, the clock ticks from that; otherwise the clock hides.
  */
 
+import { Flame } from "lucide-react";
+
 import type { ChainResult } from "@/engine";
 
 interface Props {
@@ -25,6 +27,9 @@ interface Props {
   /** Wrapper size for laying out the callout arrow. */
   readonly wrapperWidth: number;
   readonly wrapperHeight: number;
+  /** VROL-1191 — heatmap toggle state + handler. */
+  readonly heatmapOn: boolean;
+  readonly onToggleHeatmap: () => void;
 }
 
 function fmtSimClock(ms: number): string {
@@ -52,6 +57,8 @@ export function PlaybackHud({
   bottleneckLabel,
   wrapperWidth,
   wrapperHeight,
+  heatmapOn,
+  onToggleHeatmap,
 }: Props) {
   const showClock = simTimeMs !== undefined;
   const throughput = result ? fmtRate(result.throughputLambda) : "—";
@@ -104,6 +111,21 @@ export function PlaybackHud({
           <span className="text-muted-foreground text-[10px] tracking-wide uppercase">WIP</span>
           <span className="text-foreground font-mono font-semibold tabular-nums">{wipStr}</span>
         </div>
+        {/* VROL-1191 — heatmap toggle button. */}
+        <button
+          type="button"
+          onClick={onToggleHeatmap}
+          aria-pressed={heatmapOn}
+          data-testid="playback-hud-heatmap-toggle"
+          title={heatmapOn ? "Hide utilization heatmap" : "Show utilization heatmap"}
+          className={`focus-visible:ring-ring focus-visible:ring-offset-background inline-flex h-6 w-6 items-center justify-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
+            heatmapOn
+              ? "bg-sim-down/20 text-sim-down"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          }`}
+        >
+          <Flame className="h-3.5 w-3.5" aria-hidden />
+        </button>
       </div>
 
       {/* Bottleneck callout — SVG arrow from the HUD panel toward the

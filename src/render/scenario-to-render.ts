@@ -103,6 +103,7 @@ export function scenarioToRender(
   const idToIdx = buildIdToIdx(stationNodes, labels);
   const lastSample = result?.samples[result.samples.length - 1];
   const perStationStateMs = lastSample?.perStationStateMs ?? [];
+  const runningPcts = result?.perStationRunningPct ?? [];
 
   const stations: RenderStation[] = stationNodes.map((n) => {
     const idx = idToIdx.get(n.id);
@@ -112,6 +113,7 @@ export function scenarioToRender(
       result !== null && idx !== undefined && idx === result.bottleneckStationIdx;
     const nodeLabel = (n.data as { label?: unknown } | undefined)?.label;
     const label = typeof nodeLabel === "string" ? nodeLabel : n.id;
+    const utilization = idx !== undefined ? runningPcts[idx] : undefined;
     return {
       id: n.id,
       x: n.position.x / TILE_PX_X,
@@ -120,6 +122,7 @@ export function scenarioToRender(
       label,
       state,
       isBottleneck,
+      ...(utilization !== undefined ? { utilization } : {}),
     };
   });
 

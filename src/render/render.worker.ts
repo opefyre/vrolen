@@ -108,6 +108,11 @@ let floorLayer: Container | null = null;
 // VROL-212 — worker layer. Above stations so walking workers occlude
 // station bodies from the front.
 let workerLayer: Container | null = null;
+// VROL-237 — utilization heatmap layer. Above the floor tiles but
+// below stations so the diamond overlay reads without hiding the
+// station bodies. Only visible when scene msg sets heatmap=true.
+let heatmapLayer: Container | null = null;
+let heatmapVisible = false;
 // VROL-933 — sprite trails. Dots travel along each edge at a speed
 // proportional to flowRate so the live playback shows visible motion.
 let dotLayer: Container | null = null;
@@ -230,6 +235,11 @@ async function handleInit(msg: Extract<MainToWorker, { kind: "init" }>): Promise
     floorLayer.label = "floor";
     drawFloorGrid(floorLayer);
     world.addChild(floorLayer);
+    // VROL-237 — heatmap tiles above floor, below stations.
+    heatmapLayer = new Container();
+    heatmapLayer.label = "heatmap";
+    heatmapLayer.visible = false;
+    world.addChild(heatmapLayer);
     // Edges below stations so connections don't draw over node faces.
     // Dots sit between edges and stations.
     world.addChild(edgeLayer);
@@ -614,12 +624,60 @@ function advanceWorkers(): void {
   }
 }
 
+// VROL-237 — utilization → heat color. 0 = cool blue, 0.5 = amber,
+// 1 = hot red. Returns a 24-bit int for PixiJS fills.
+function heatColorAt(util: number): number {
+  const t = Math.max(0, Math.min(1, util));
+  // Blue (0x3b82f6) → Amber (0xfbbf24) at 0.5 → Red (0xef4444)
+  const lerp = (a: number, b: number, k: number) => Math.round(a + (b - a) * k);
+  if (t <= 0.5) {
+    const k = t / 0.5;
+    const r = lerp(0x3b, 0xfb, k);
+    const g = lerp(0x82, 0xbf, k);
+    const b = lerp(0xf6, 0x24, k);
+    return (r << 16) | (g << 8) | b;
+  }
+  const k = (t - 0.5) / 0.5;
+  const r = lerp(0xfb, 0xef, k);
+  const g = lerp(0xbf, 0x44, k);
+  const b = lerp(0x24, 0x44, k);
+  return (r << 16) | (g << 8) | b;
+}
+
+/** Rebuild the heatmap layer from the current stations. Cheap enough
+ *  that a full rebuild per scene msg beats a per-tile diff. */
+function syncHeatmap(stations: readonly RenderStation[]): void {
+  if (!heatmapLayer) return;
+  heatmapLayer.removeChildren();
+  const halfW = TILE_WIDTH / 2;
+  const halfH = TILE_HEIGHT / 2;
+  for (const s of stations) {
+    if (s.utilization === undefined) continue;
+    const center = worldToScreen({ x: s.x, y: s.y, z: s.z });
+    const g = new Graphics();
+    g.moveTo(center.sx, center.sy - halfH)
+      .lineTo(center.sx + halfW, center.sy)
+      .lineTo(center.sx, center.sy + halfH)
+      .lineTo(center.sx - halfW, center.sy)
+      .closePath()
+      .fill({ color: heatColorAt(s.utilization), alpha: 0.55 });
+    heatmapLayer.addChild(g);
+  }
+}
+
 function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
   if (!appReady || !app || !stationLayer || !edgeLayer) return;
   try {
     // VROL-856 — remember the scrubber time so advanceTrails renders
     // dots deterministically. undefined = auto-advance.
     simTimeMs = msg.simTimeMs ?? null;
+    // VROL-237 — heatmap visibility follows the msg. When flipping
+    // OFF, syncHeatmap does the tile teardown implicitly via
+    // removeChildren next time it runs.
+    if (msg.heatmap !== undefined && heatmapLayer) {
+      heatmapVisible = msg.heatmap;
+      heatmapLayer.visible = heatmapVisible;
+    }
     // Drop placeholder on first real scene.
     const placeholder = app.stage.getChildByLabel("placeholder", true);
     if (placeholder) placeholder.removeFromParent();
@@ -653,6 +711,10 @@ function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
       n.container.removeFromParent();
       stationNodes.delete(id);
     }
+
+    // VROL-237 — rebuild heatmap tiles from the current stations. Cheap
+    // enough at scenario scale that a full rebuild beats a diff.
+    if (heatmapVisible) syncHeatmap(msg.stations);
 
     // Edges — simpler full rebuild for now; render is cheap when the count
     // is in the dozens and a diff-pass adds complexity without payoff.
@@ -711,6 +773,8 @@ function handleDispose(): void {
   dotLayer = null;
   floorLayer = null;
   workerLayer = null;
+  heatmapLayer = null;
+  heatmapVisible = false;
   stationNodes.clear();
   edgeNodes.clear();
   edgeTrails.clear();
