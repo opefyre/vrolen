@@ -25,7 +25,15 @@ import type { MainToWorker, RenderEdge, RenderStation, WorkerToMain } from "./pr
 import RenderWorker from "./render.worker?worker";
 
 export interface IsoCanvasHandle {
-  setScene(stations: readonly RenderStation[], edges: readonly RenderEdge[]): void;
+  setScene(
+    stations: readonly RenderStation[],
+    edges: readonly RenderEdge[],
+    options?: {
+      /** VROL-856 — playback scrubber time in ms. When provided,
+       *  edge dots position deterministically from it. */
+      readonly simTimeMs?: number;
+    },
+  ): void;
   setCamera(camera: { x: number; y: number; zoom: number }): void;
   /** VROL-217 — imperatively pan the camera so the given world point
    *  sits at the wrapper's centre. Zoom preserved. */
@@ -41,7 +49,11 @@ export interface IsoCanvasProps {
 
 interface WorkerBridge {
   readonly worker: Worker;
-  postScene(stations: readonly RenderStation[], edges: readonly RenderEdge[]): void;
+  postScene(
+    stations: readonly RenderStation[],
+    edges: readonly RenderEdge[],
+    simTimeMs?: number,
+  ): void;
   postCamera(camera: { x: number; y: number; zoom: number }): void;
   postResize(width: number, height: number, dpr: number): void;
   dispose(): void;
@@ -96,8 +108,8 @@ export const IsoCanvas = forwardRef<IsoCanvasHandle, IsoCanvasProps>(function Is
   useImperativeHandle(
     ref,
     () => ({
-      setScene(stations, edges) {
-        bridgeRef.current?.postScene(stations, edges);
+      setScene(stations, edges, options) {
+        bridgeRef.current?.postScene(stations, edges, options?.simTimeMs);
         setLabels(stations);
       },
       setCamera(nextCamera) {
@@ -207,8 +219,12 @@ export const IsoCanvas = forwardRef<IsoCanvasHandle, IsoCanvasProps>(function Is
 
     const bridge: WorkerBridge = {
       worker,
-      postScene(stations, edges) {
-        post({ kind: "scene", stations, edges });
+      postScene(stations, edges, simTimeMs) {
+        const msg: MainToWorker =
+          simTimeMs !== undefined
+            ? { kind: "scene", stations, edges, simTimeMs }
+            : { kind: "scene", stations, edges };
+        post(msg);
       },
       postCamera(camera) {
         post({ kind: "camera", x: camera.x, y: camera.y, zoom: camera.zoom });

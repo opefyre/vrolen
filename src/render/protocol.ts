@@ -47,7 +47,18 @@ export type MainToWorker =
       dpr: number;
     }
   | { kind: "resize"; width: number; height: number; dpr: number }
-  | { kind: "scene"; stations: readonly RenderStation[]; edges: readonly RenderEdge[] }
+  | {
+      kind: "scene";
+      stations: readonly RenderStation[];
+      edges: readonly RenderEdge[];
+      /**
+       * VROL-856 — playback scrubber time in ms. When present, edge dots
+       * position deterministically from (simTimeMs * flowRate + i / N),
+       * so scrubbing backwards/jumping snaps to a reproducible position.
+       * Absent = auto-advance at 60fps (default demo behaviour).
+       */
+      simTimeMs?: number;
+    }
   | { kind: "camera"; x: number; y: number; zoom: number }
   | { kind: "dispose" };
 

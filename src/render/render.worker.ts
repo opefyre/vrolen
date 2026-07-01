@@ -126,6 +126,10 @@ const edgeTrails = new Map<string, EdgeTrail>();
 // stay smooth, but the eye can't follow more than ~12 dots per edge
 // anyway. Density throttle.
 const MAX_DOTS_PER_EDGE = 12;
+// VROL-856 — latest sim time received via a scene msg. null = no
+// scrubber attached; advance auto per-frame. Number = position dots
+// deterministically from that time so scrub/seek is reproducible.
+let simTimeMs: number | null = null;
 // Convert RenderEdge.flowRate (parts/sec at the playback's notional
 // scale) into a t-advance per frame. The visual goal: a part/sec of 1
 // completes the edge in ~2 seconds at 60 fps.
@@ -450,7 +454,27 @@ function syncTrail(
 }
 
 function advanceTrails(): void {
+  // VROL-856 — deterministic mode: simTimeMs drives every dot's t so
+  // scrubbing backwards or seeking snaps to a reproducible position.
+  // Convention: T_ADVANCE_PER_FRAME_PER_FLOW is 1 / (2 * 60), i.e. a
+  // flowRate of 1 completes the edge in 2 seconds. In sim-time terms
+  // that's t = (simMs / 2000) * flowRate.
+  const deterministic = simTimeMs !== null;
   for (const trail of edgeTrails.values()) {
+    if (deterministic && !trail.frozen) {
+      const N = trail.dots.length;
+      const base = ((simTimeMs ?? 0) / 2000) * trail.flowRate;
+      for (let i = 0; i < N; i++) {
+        let t = (base + i / N) % 1;
+        if (t < 0) t += 1;
+        trail.positions[i] = t;
+        const dot = trail.dots[i];
+        if (!dot) continue;
+        dot.x = trail.from.x + (trail.to.x - trail.from.x) * t;
+        dot.y = trail.from.y + (trail.to.y - trail.from.y) * t;
+      }
+      continue;
+    }
     // VROL-207 — frozen edges (source station Down) keep the dot pool
     // in place mid-flight rather than looping. Positions stay, sprites
     // stay, only the advance skips.
@@ -470,6 +494,9 @@ function advanceTrails(): void {
 function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
   if (!appReady || !app || !stationLayer || !edgeLayer) return;
   try {
+    // VROL-856 — remember the scrubber time so advanceTrails renders
+    // dots deterministically. undefined = auto-advance.
+    simTimeMs = msg.simTimeMs ?? null;
     // Drop placeholder on first real scene.
     const placeholder = app.stage.getChildByLabel("placeholder", true);
     if (placeholder) placeholder.removeFromParent();

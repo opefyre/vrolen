@@ -23,10 +23,21 @@ interface Props {
   readonly nodes: readonly Node[];
   readonly edges: readonly Edge[];
   readonly result: ChainResult | null;
+  /**
+   * VROL-856 — optional playback scrubber time. When provided, edge
+   * dots position deterministically from this instead of auto-loop.
+   */
+  readonly simTimeMs?: number;
   readonly className?: string;
 }
 
-export function IsoPlaybackView({ nodes, edges, result, className }: Props): ReactElement {
+export function IsoPlaybackView({
+  nodes,
+  edges,
+  result,
+  simTimeMs,
+  className,
+}: Props): ReactElement {
   const canvasRef = useRef<IsoCanvasHandle>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [ready, setReady] = useState<boolean>(false);
@@ -45,8 +56,8 @@ export function IsoPlaybackView({ nodes, edges, result, className }: Props): Rea
       const p = layout.positions.get(s.id);
       return p ? { ...s, x: p.x, y: p.y } : s;
     });
-    canvas.setScene(laidOut, render.edges);
-  }, [ready, nodes, edges, result]);
+    canvas.setScene(laidOut, render.edges, simTimeMs !== undefined ? { simTimeMs } : undefined);
+  }, [ready, nodes, edges, result, simTimeMs]);
 
   // VROL-217 — F key focuses the bottleneck (or first station) so the
   // user can hop to the important spot without hunting on the floor.

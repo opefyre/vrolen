@@ -5042,7 +5042,12 @@ function EditorCanvas() {
           + inspector. */}
       {viewMode === "playback" ? (
         <div className="h-[calc(100vh-15rem)]">
-          <IsoPlaybackView nodes={nodes} edges={edges} result={result} />
+          <IsoPlaybackView
+            nodes={nodes}
+            edges={edges}
+            result={result}
+            {...(playbackMs !== null ? { simTimeMs: playbackMs } : {})}
+          />
         </div>
       ) : null}
       <div
