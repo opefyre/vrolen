@@ -684,13 +684,134 @@ function buildStationBody(type: RenderStationType | undefined): Container {
   return drawProceduralBody(type);
 }
 
+/**
+ * VROL-1233 — soft elliptical drop-shadow under the sprite, drawn at
+ * the tile plane. Grounds the sprite visually so it doesn't read as
+ * a floating cutout. Also paints a subtle state-tinted iso diamond
+ * beneath so a run-in-progress reads as "claimed floor".
+ */
+function drawFloorMarker(state: RenderStation["state"]): Graphics {
+  const g = new Graphics();
+  const tintColor = STATION_COLORS[state];
+  const halfW = STATION_HALF_W + 6;
+  const halfH = STATION_HALF_H + 3;
+  // State tint diamond — matches the iso tile shape (2:1 ratio).
+  g.moveTo(0, -halfH)
+    .lineTo(halfW, 0)
+    .lineTo(0, halfH)
+    .lineTo(-halfW, 0)
+    .closePath()
+    .fill({ color: tintColor, alpha: 0.14 })
+    .stroke({ color: tintColor, width: 1, alpha: 0.35 });
+  // Elliptical shadow, slightly offset iso "south" as if the sun is
+  // up-and-to-the-left.
+  g.ellipse(2, 2, STATION_HALF_W - 4, STATION_HALF_H - 2).fill({
+    color: 0x000000,
+    alpha: 0.18,
+  });
+  return g;
+}
+
+/**
+ * VROL-1231 — per-state overlay glyph rendered ABOVE the body so state
+ * signals read even at 0.5× zoom. Idle + Running use no overlay (the
+ * body itself + subtle floor tint are the signal).
+ */
+function drawStateOverlay(state: RenderStation["state"]): Graphics | null {
+  const g = new Graphics();
+  const bodyTop = -STATION_HALF_H - STATION_BODY_LIFT;
+  switch (state) {
+    case "down": {
+      // Big red X over the body + repair cone in the top-right.
+      const cx = 24;
+      const cy = bodyTop - 6;
+      g.moveTo(cx - 6, cy + 10)
+        .lineTo(cx + 6, cy + 10)
+        .lineTo(cx + 3, cy - 4)
+        .lineTo(cx - 3, cy - 4)
+        .closePath()
+        .fill({ color: 0xf59e0b })
+        .stroke({ color: 0x111827, width: 0.8 });
+      g.rect(cx - 4, cy + 3, 8, 1.2).fill({ color: 0xffffff });
+      g.moveTo(-18, bodyTop + 6)
+        .lineTo(18, -6)
+        .stroke({ color: 0xef4444, width: 3, alpha: 0.9 });
+      g.moveTo(18, bodyTop + 6)
+        .lineTo(-18, -6)
+        .stroke({ color: 0xef4444, width: 3, alpha: 0.9 });
+      return g;
+    }
+    case "setup": {
+      // Amber body tint + gear glyph top-right.
+      g.rect(
+        -STATION_HALF_W,
+        bodyTop,
+        STATION_HALF_W * 2,
+        STATION_HALF_H * 2 + STATION_BODY_LIFT,
+      ).fill({ color: 0xf59e0b, alpha: 0.14 });
+      const cx = 22;
+      const cy = bodyTop - 6;
+      g.circle(cx, cy, 6).fill({ color: 0xfef3c7 }).stroke({ color: 0xd97706, width: 1 });
+      for (let i = 0; i < 8; i++) {
+        const a = (i * Math.PI * 2) / 8;
+        const x1 = cx + Math.cos(a) * 6;
+        const y1 = cy + Math.sin(a) * 6;
+        const x2 = cx + Math.cos(a) * 8.5;
+        const y2 = cy + Math.sin(a) * 8.5;
+        g.moveTo(x1, y1).lineTo(x2, y2).stroke({ color: 0xd97706, width: 1.5 });
+      }
+      g.circle(cx, cy, 2).fill({ color: 0xd97706 });
+      return g;
+    }
+    case "blocked": {
+      // Diagonal orange stripes over the output (right) side.
+      const stripeColor = 0xf97316;
+      for (let i = 0; i < 5; i++) {
+        const startY = bodyTop + 4 + i * 6;
+        g.moveTo(4, startY)
+          .lineTo(STATION_HALF_W - 2, startY + 8)
+          .stroke({ color: stripeColor, width: 2, alpha: 0.75 });
+      }
+      g.roundRect(6, bodyTop - 10, 22, 8, 2)
+        .fill({ color: stripeColor })
+        .stroke({ color: 0x111827, width: 0.6 });
+      return g;
+    }
+    case "starved": {
+      // Pale ghost overlay + hourglass glyph top-left.
+      g.rect(
+        -STATION_HALF_W,
+        bodyTop,
+        STATION_HALF_W * 2,
+        STATION_HALF_H * 2 + STATION_BODY_LIFT,
+      ).fill({ color: 0xffffff, alpha: 0.35 });
+      const cx = -22;
+      const cy = bodyTop - 6;
+      g.moveTo(cx - 5, cy - 5)
+        .lineTo(cx + 5, cy - 5)
+        .lineTo(cx - 5, cy + 5)
+        .lineTo(cx + 5, cy + 5)
+        .closePath()
+        .fill({ color: 0xfef9c3 })
+        .stroke({ color: 0xa16207, width: 1 });
+      g.circle(cx, cy, 1).fill({ color: 0xa16207 });
+      return g;
+    }
+    case "running":
+    case "idle":
+    default:
+      return null;
+  }
+}
+
 function drawStation(s: RenderStation): Container {
   const c = new Container();
   c.label = `station:${s.id}`;
+  // VROL-1233 — floor marker (state-tinted diamond + drop shadow) sits
+  // BELOW the sprite so the sprite occludes it partially, adding depth.
+  c.addChild(drawFloorMarker(s.state));
   // VROL-1229 — ring now anchors around the visible body mid-height
   // (STATION_BODY_LIFT above the tile plane), NOT the floor tile.
-  // Bottleneck marker + hit-testing feel land on the sprite silhouette
-  // as a result.
   const ringCenterY = -Math.round(STATION_BODY_LIFT / 2 + STATION_HALF_H / 2);
   const ring = new Graphics();
   ring
@@ -708,6 +829,11 @@ function drawStation(s: RenderStation): Container {
     });
   c.addChild(ring);
   c.addChild(buildStationBody(s.nodeType));
+  // VROL-1231 — per-state overlay ON TOP of the body so signals like
+  // Down (red X + cone), Setup (wrench + amber tint), Blocked (stripes)
+  // and Starved (ghost + hourglass) read even at low zoom.
+  const overlay = drawStateOverlay(s.state);
+  if (overlay) c.addChild(overlay);
   // Text labels overlay on the main thread (HTML) via IsoCanvas so we
   // can use real CSS + a11y + i18n without dragging `document` into
   // the worker. The container's screen position drives where the

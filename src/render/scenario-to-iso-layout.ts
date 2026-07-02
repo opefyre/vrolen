@@ -106,6 +106,18 @@ function rowOf(layer: Map<string, number>): Map<string, number> {
   return row;
 }
 
+/**
+ * VROL-1232 — spacing multiplier applied to raw layer / row indices.
+ * At 1.0 (previous default), a bottling-line preset packed 7 stations
+ * into a diagonal stack where sprites overlapped 30-50 % each. Bumping
+ * to LAYER_SPACING = 2.0 (right-axis) and ROW_SPACING = 2.4 (down-axis)
+ * gives every sprite its own iso cell at fit-view zoom, matches the
+ * width of the new procedural sprites (VROL-1228, ~60 px at zoom=1),
+ * and leaves visual breathing room between parallel branches.
+ */
+const LAYER_SPACING = 2.0;
+const ROW_SPACING = 2.4;
+
 export function scenarioToIsoLayout(
   nodes: readonly Node[],
   edges: readonly Edge[],
@@ -117,10 +129,10 @@ export function scenarioToIsoLayout(
   const positions = new Map<string, { readonly x: number; readonly y: number }>();
   let maxLayer = 0;
   for (const id of stationIds) {
-    const x = layer.get(id) ?? 0;
-    const y = row.get(id) ?? 0;
-    positions.set(id, { x, y });
-    if (x > maxLayer) maxLayer = x;
+    const rawLayer = layer.get(id) ?? 0;
+    const rawRow = row.get(id) ?? 0;
+    positions.set(id, { x: rawLayer * LAYER_SPACING, y: rawRow * ROW_SPACING });
+    if (rawLayer > maxLayer) maxLayer = rawLayer;
   }
   return { positions, layerCount: maxLayer + 1 };
 }

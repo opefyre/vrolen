@@ -16,9 +16,13 @@ describe("scenarioToIsoLayout (VROL-858)", () => {
     const nodes = [station("a"), station("b"), station("c")];
     const edges = [edge("e1", "a", "b"), edge("e2", "b", "c")];
     const { positions, layerCount } = scenarioToIsoLayout(nodes, edges);
+    // VROL-1232 — LAYER_SPACING = 2.0 was added to scenarioToIsoLayout
+    // so consecutive stations in a linear chain don't visually overlap
+    // in the iso projection. Raw layers are still 0/1/2 (layerCount
+    // still reports 3) but world x is scaled by the spacing multiplier.
     expect(positions.get("a")?.x).toBe(0);
-    expect(positions.get("b")?.x).toBe(1);
-    expect(positions.get("c")?.x).toBe(2);
+    expect(positions.get("b")?.x).toBe(2);
+    expect(positions.get("c")?.x).toBe(4);
     expect(layerCount).toBe(3);
   });
 
@@ -32,10 +36,11 @@ describe("scenarioToIsoLayout (VROL-858)", () => {
     ];
     const { positions } = scenarioToIsoLayout(nodes, edges);
     expect(positions.get("a")?.y).not.toBe(positions.get("b")?.y);
+    // VROL-1232 — LAYER_SPACING = 2.0.
     expect(positions.get("src")?.x).toBe(0);
-    expect(positions.get("sink")?.x).toBe(2);
-    expect(positions.get("a")?.x).toBe(1);
-    expect(positions.get("b")?.x).toBe(1);
+    expect(positions.get("sink")?.x).toBe(4);
+    expect(positions.get("a")?.x).toBe(2);
+    expect(positions.get("b")?.x).toBe(2);
   });
 
   it("skips non-station nodes and dangling edges", () => {
@@ -62,9 +67,10 @@ describe("scenarioToIsoLayout (VROL-858)", () => {
     const nodes = [station("a"), station("b"), station("c"), station("d")];
     const edges = [edge("e1", "a", "c"), edge("e2", "b", "c"), edge("e3", "c", "d")];
     const { positions } = scenarioToIsoLayout(nodes, edges);
+    // VROL-1232 — LAYER_SPACING = 2.0.
     expect(positions.get("a")?.x).toBe(0);
     expect(positions.get("b")?.x).toBe(0);
-    expect(positions.get("c")?.x).toBe(1);
-    expect(positions.get("d")?.x).toBe(2);
+    expect(positions.get("c")?.x).toBe(2);
+    expect(positions.get("d")?.x).toBe(4);
   });
 });

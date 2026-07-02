@@ -307,21 +307,35 @@ export const IsoCanvas = forwardRef<IsoCanvasHandle, IsoCanvasProps>(function Is
       {/* VROL-857 — HTML label overlay. Absolutely-positioned divs
           projected through the same worldToScreen the worker uses so
           the labels track sprites through camera pan/zoom. Pointer
-          events off so clicks pass through to the canvas. */}
+          events off so clicks pass through to the canvas.
+          VROL-1230 — labels now sit ABOVE the sprite silhouette (was
+          22 px BELOW the tile plane, which put them behind / inside
+          the taller VROL-1228 procedural sprites). Small downward
+          caret ties each label to its sprite. Lift scales with zoom
+          so labels stay attached at any camera scale. */}
       <div
         className="pointer-events-none absolute inset-0 overflow-hidden"
         data-testid="iso-labels"
       >
         {labels.map((s) => {
           const p = worldToScreen({ x: s.x, y: s.y, z: s.z }, camera);
+          const labelLift = 62 * camera.zoom;
           return (
             <div
               key={s.id}
-              className="absolute -translate-x-1/2 rounded-sm bg-white/85 px-1.5 py-0.5 text-[10px] font-medium text-gray-800 shadow-sm ring-1 ring-gray-200"
-              style={{ left: p.sx, top: p.sy + 22 }}
+              className="absolute flex -translate-x-1/2 flex-col items-center"
+              style={{ left: p.sx, top: p.sy - labelLift }}
               data-testid={`iso-label-${s.id}`}
             >
-              {s.label}
+              <div className="rounded-sm bg-white/95 px-1.5 py-0.5 text-[10px] font-medium text-gray-800 shadow-sm ring-1 ring-gray-200">
+                {s.label}
+              </div>
+              {/* Caret pointing DOWN at the sprite — 5 px tall solid
+                  triangle, muted grey so it recedes visually. */}
+              <div
+                aria-hidden
+                className="h-0 w-0 border-t-[5px] border-r-[4px] border-l-[4px] border-t-white/95 border-r-transparent border-l-transparent drop-shadow-[0_1px_0_rgba(0,0,0,0.15)]"
+              />
             </div>
           );
         })}
