@@ -99,7 +99,14 @@ export default function IsoDemoPage() {
     const onWheel = (e: WheelEvent): void => {
       e.preventDefault();
       const cam = cameraRef.current;
-      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      // VROL-1237 — mirror the IsoPlaybackView smoothing: scale by
+      // deltaY magnitude (deltaMode-normalised) with an exp() curve
+      // so trackpad micro-scrolls step small and mouse-wheel clicks
+      // still move noticeably. Fixed 1.1 factor felt jumpy.
+      const deltaPx =
+        e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 100 : e.deltaY;
+      const clampedDelta = Math.max(-120, Math.min(120, deltaPx));
+      const factor = Math.exp(-clampedDelta * 0.0025);
       const zoom = Math.max(0.25, Math.min(4, cam.zoom * factor));
       // Zoom around the cursor: translate so the world point under the
       // cursor stays under the cursor.

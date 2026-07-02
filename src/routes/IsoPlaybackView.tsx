@@ -92,18 +92,31 @@ export function IsoPlaybackView({
     if (!ready) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const layout = scenarioToIsoLayout(nodes, edges);
     const render = scenarioToRender(nodes, edges, effectiveResult);
-    // Override the pixel-scale positions from scenarioToRender with the
-    // topo-sort tile coords from scenarioToIsoLayout so the view reads
-    // as a proper iso factory floor rather than a shrunken editor.
-    const laidOut = render.stations.map((s) => {
-      const p = layout.positions.get(s.id);
-      return p ? { ...s, x: p.x, y: p.y } : s;
-    });
+    // VROL-1238 — was overriding render.stations x/y with the pure
+    // topological layout from scenarioToIsoLayout, so moving a station
+    // in /editor had no effect on /editor?view=playback ("stuck to
+    // each other" feedback). Now we use the editor's tile coords
+    // (converted from n.position / TILE_PX inside scenarioToRender)
+    // directly. Only fall back to the topo layout when the editor
+    // positions are all stacked at (0,0) — brand-new scenarios that
+    // never went through auto-layout.
+    const allAtOrigin = render.stations.every((s) => s.x === 0 && s.y === 0);
+    const laidOut = allAtOrigin
+      ? (() => {
+          const fallback = scenarioToIsoLayout(nodes, edges);
+          return render.stations.map((s) => {
+            const p = fallback.positions.get(s.id);
+            return p ? { ...s, x: p.x, y: p.y } : s;
+          });
+        })()
+      : render.stations;
     // VROL-212 — worker sprites derived from perStationRunningPct.
+    // The topo layout still drives worker start positions so multiple
+    // workers spread across the line rather than clumping.
+    const workerLayout = scenarioToIsoLayout(nodes, edges);
     const idxToNodeId = topologyIndexToNodeIdMap(nodes, effectiveResult?.perStationLabels ?? []);
-    const workers = scenarioToWorkers(layout, effectiveResult, idxToNodeId);
+    const workers = scenarioToWorkers(workerLayout, effectiveResult, idxToNodeId);
     const options: {
       simTimeMs?: number;
       workers?: readonly (typeof workers)[number][];
@@ -143,12 +156,16 @@ export function IsoPlaybackView({
       if (e.key !== "f" && e.key !== "F") return;
       const canvas = canvasRef.current;
       if (!canvas) return;
-      const layout = scenarioToIsoLayout(nodes, edges);
+      // VROL-1238 — focus on the editor-derived position; only fall
+      // back to topological when the scenario is degenerate.
       const render = scenarioToRender(nodes, edges, effectiveResult);
       const focusStation = render.stations.find((s) => s.isBottleneck) ?? render.stations[0];
       if (!focusStation) return;
-      const pos = layout.positions.get(focusStation.id);
-      if (!pos) return;
+      let pos: { x: number; y: number } = { x: focusStation.x, y: focusStation.y };
+      if (pos.x === 0 && pos.y === 0) {
+        const fb = scenarioToIsoLayout(nodes, edges).positions.get(focusStation.id);
+        if (fb) pos = fb;
+      }
       e.preventDefault();
       canvas.focusOn(pos);
     };
@@ -172,14 +189,20 @@ export function IsoPlaybackView({
     const canvas = canvasRef.current;
     if (!wrapper || !canvas) return;
     const rect = wrapper.getBoundingClientRect();
-    const layout = scenarioToIsoLayout(nodes, edges);
-    if (layout.positions.size === 0 || rect.width === 0 || rect.height === 0) return;
+    // VROL-1238 — fit-view now works over the editor-derived positions
+    // (via scenarioToRender), matching what the sprites render at.
+    const render = scenarioToRender(nodes, edges, effectiveResult);
+    if (render.stations.length === 0 || rect.width === 0 || rect.height === 0) return;
+    const allAtOrigin = render.stations.every((s) => s.x === 0 && s.y === 0);
+    const points: readonly { x: number; y: number }[] = allAtOrigin
+      ? [...scenarioToIsoLayout(nodes, edges).positions.values()]
+      : render.stations.map((s) => ({ x: s.x, y: s.y }));
 
     let minX = Infinity;
     let maxX = -Infinity;
     let minY = Infinity;
     let maxY = -Infinity;
-    for (const p of layout.positions.values()) {
+    for (const p of points) {
       if (p.x < minX) minX = p.x;
       if (p.x > maxX) maxX = p.x;
       if (p.y < minY) minY = p.y;
@@ -270,7 +293,20 @@ export function IsoPlaybackView({
     const onWheel = (e: WheelEvent): void => {
       e.preventDefault();
       const cam = cameraRef.current;
-      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      // VROL-1237 — was `1.1` fixed factor per notch, which combined
+      // with a trackpad flick delivering 5-10 notches to triple the
+      // zoom in ~200 ms. Scale by deltaY magnitude (clamped) so a slow
+      // two-finger scroll produces small, continuous steps and a mouse-
+      // wheel click still moves meaningfully. deltaMode differs across
+      // input types (0=pixel, 1=line, 2=page) — normalise to a stable
+      // 0..1 range then apply exp() for a smooth exponential curve.
+      const deltaPx =
+        e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 100 : e.deltaY;
+      // Clamp so a single huge flick doesn't over-zoom.
+      const clampedDelta = Math.max(-120, Math.min(120, deltaPx));
+      // 0.0025 gives ~1.04x zoom per notch at deltaY=15 (typical mouse
+      // wheel), and much smaller steps for trackpad micro-scrolls.
+      const factor = Math.exp(-clampedDelta * 0.0025);
       const zoom = Math.max(0.25, Math.min(4, cam.zoom * factor));
       const rect = wrapper.getBoundingClientRect();
       const px = e.clientX - rect.left;
@@ -320,42 +356,57 @@ export function IsoPlaybackView({
   // KPI-panel anchor all want the BODY center, not the floor. Half the
   // sprite lift ≈ 22 px gets us onto the sprite silhouette.
   const SPRITE_BODY_OFFSET_PX = 22;
-  const bottleneck = useMemo(() => {
-    const layout = scenarioToIsoLayout(nodes, edges);
+
+  // VROL-1238 — single source of truth for world-space station coords.
+  // Prefers the editor's positions (n.position via scenarioToRender);
+  // falls back to the topological layout only when every station is at
+  // the origin (brand-new scenario that never went through auto-layout).
+  // All three consumers below (sprite scene, bottleneck ring,
+  // click hitboxes) now share this array so they never drift apart.
+  const stationWorldCoords = useMemo(() => {
     const render = scenarioToRender(nodes, edges, effectiveResult);
-    const b = render.stations.find((s) => s.isBottleneck);
+    const allAtOrigin = render.stations.every((s) => s.x === 0 && s.y === 0);
+    const fallback = allAtOrigin ? scenarioToIsoLayout(nodes, edges) : null;
+    return render.stations.map((s) => {
+      const from = fallback?.positions.get(s.id);
+      return {
+        id: s.id,
+        x: from ? from.x : s.x,
+        y: from ? from.y : s.y,
+        label: s.label,
+        isBottleneck: s.isBottleneck,
+      };
+    });
+  }, [nodes, edges, effectiveResult]);
+
+  const bottleneck = useMemo(() => {
+    const b = stationWorldCoords.find((v) => v.isBottleneck);
     if (!b) return { at: null, label: undefined };
-    const world = layout.positions.get(b.id);
-    if (!world) return { at: null, label: b.label };
-    const screen = worldToScreen({ x: world.x, y: world.y }, cameraState);
+    const screen = worldToScreen({ x: b.x, y: b.y }, cameraState);
     return {
       at: { x: screen.sx, y: screen.sy - SPRITE_BODY_OFFSET_PX * cameraState.zoom },
       label: b.label,
     };
-  }, [nodes, edges, effectiveResult, cameraState]);
+  }, [stationWorldCoords, cameraState]);
 
   // VROL-1190 — click hitboxes at each station's projected screen
   // position. HTML on top of the canvas so hit-testing bypasses Pixi
   // and the pointer handler for pan doesn't fire on station clicks.
-  const stationClickTargets = useMemo(() => {
-    const layout = scenarioToIsoLayout(nodes, edges);
-    const render = scenarioToRender(nodes, edges, effectiveResult);
-    return render.stations
-      .map((s) => {
-        const world = layout.positions.get(s.id);
-        if (!world) return null;
-        const screen = worldToScreen({ x: world.x, y: world.y }, cameraState);
+  const stationClickTargets = useMemo(
+    () =>
+      stationWorldCoords.map((v) => {
+        const screen = worldToScreen({ x: v.x, y: v.y }, cameraState);
         // VROL-1229 — lift hitbox to sprite body mid-height so clicks
         // land on the visible silhouette instead of the empty tile.
         return {
-          id: s.id,
-          label: s.label,
+          id: v.id,
+          label: v.label,
           x: screen.sx,
           y: screen.sy - SPRITE_BODY_OFFSET_PX * cameraState.zoom,
         };
-      })
-      .filter((v): v is { id: string; label: string; x: number; y: number } => v !== null);
-  }, [nodes, edges, effectiveResult, cameraState]);
+      }),
+    [stationWorldCoords, cameraState],
+  );
 
   // VROL-1190 — lookup selected station's topology index for the KPI panel.
   const kpiIdx = useMemo(() => {
