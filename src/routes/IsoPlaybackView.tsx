@@ -102,6 +102,8 @@ export function IsoPlaybackView({
     // positions are all stacked at (0,0) — brand-new scenarios that
     // never went through auto-layout.
     const allAtOrigin = render.stations.every((s) => s.x === 0 && s.y === 0);
+    // VROL-1239 — see stationWorldCoords memo for the spacing rationale.
+    const SPACING_MULT = 1.8;
     const laidOut = allAtOrigin
       ? (() => {
           const fallback = scenarioToIsoLayout(nodes, edges);
@@ -110,7 +112,7 @@ export function IsoPlaybackView({
             return p ? { ...s, x: p.x, y: p.y } : s;
           });
         })()
-      : render.stations;
+      : render.stations.map((s) => ({ ...s, x: s.x * SPACING_MULT, y: s.y * SPACING_MULT }));
     // VROL-212 — worker sprites derived from perStationRunningPct.
     // The topo layout still drives worker start positions so multiple
     // workers spread across the line rather than clumping.
@@ -194,9 +196,12 @@ export function IsoPlaybackView({
     const render = scenarioToRender(nodes, edges, effectiveResult);
     if (render.stations.length === 0 || rect.width === 0 || rect.height === 0) return;
     const allAtOrigin = render.stations.every((s) => s.x === 0 && s.y === 0);
+    // VROL-1239 — mirror the sprite-scene spacing so fit-view frames
+    // the actual expanded footprint.
+    const SPACING_MULT = 1.8;
     const points: readonly { x: number; y: number }[] = allAtOrigin
       ? [...scenarioToIsoLayout(nodes, edges).positions.values()]
-      : render.stations.map((s) => ({ x: s.x, y: s.y }));
+      : render.stations.map((s) => ({ x: s.x * SPACING_MULT, y: s.y * SPACING_MULT }));
 
     let minX = Infinity;
     let maxX = -Infinity;
@@ -363,6 +368,15 @@ export function IsoPlaybackView({
   // the origin (brand-new scenario that never went through auto-layout).
   // All three consumers below (sprite scene, bottleneck ring,
   // click hitboxes) now share this array so they never drift apart.
+  //
+  // VROL-1239 — editor pixel positions divided by TILE_PX give tile
+  // coords under 3 units apart (Bottling preset: Input=0.3, Filler=1.2,
+  // Capper=2.2). At iso projection with ~60 px sprites that packs
+  // silhouettes into visible overlap. Multiply the editor-derived
+  // coords by ISO_SPACING_MULT so the same relative layout expands
+  // into non-overlapping cells; fit-view re-derives zoom afterwards.
+  // Topological fallback is already spaced (VROL-1232) so it uses 1x.
+  const ISO_SPACING_MULT = 1.8;
   const stationWorldCoords = useMemo(() => {
     const render = scenarioToRender(nodes, edges, effectiveResult);
     const allAtOrigin = render.stations.every((s) => s.x === 0 && s.y === 0);
@@ -371,8 +385,8 @@ export function IsoPlaybackView({
       const from = fallback?.positions.get(s.id);
       return {
         id: s.id,
-        x: from ? from.x : s.x,
-        y: from ? from.y : s.y,
+        x: from ? from.x : s.x * ISO_SPACING_MULT,
+        y: from ? from.y : s.y * ISO_SPACING_MULT,
         label: s.label,
         isBottleneck: s.isBottleneck,
       };

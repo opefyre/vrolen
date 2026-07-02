@@ -142,7 +142,20 @@ let heatmapVisible = false;
 // VROL-933 — sprite trails. Dots travel along each edge at a speed
 // proportional to flowRate so the live playback shows visible motion.
 let dotLayer: Container | null = null;
-const stationNodes = new Map<string, { container: Container; lastState: string }>();
+// VROL-1240 — diff key now includes nodeType + isBottleneck. lastState
+// alone missed two real state transitions: (a) a preset load where the
+// SAME station id had a different type from a previous session, and
+// (b) a bottleneck flip that changes ring stroke width without state
+// change. Both used to leave the stale container in place.
+const stationNodes = new Map<
+  string,
+  {
+    container: Container;
+    lastState: string;
+    lastType: string;
+    lastBottleneck: boolean;
+  }
+>();
 const edgeNodes = new Map<string, Graphics>();
 // Per-edge state for sprite trails: cached endpoint positions, the dot
 // graphics (sized ~proportional to flowRate, capped), and each dot's
@@ -1151,7 +1164,14 @@ function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
       states.set(s.id, s.state);
       seenStations.add(s.id);
       const existing = stationNodes.get(s.id);
-      if (existing && existing.lastState === s.state) {
+      const typeKey = s.nodeType ?? "generic";
+      const bottleneckKey = s.isBottleneck === true;
+      const fingerprintMatches =
+        existing !== undefined &&
+        existing.lastState === s.state &&
+        existing.lastType === typeKey &&
+        existing.lastBottleneck === bottleneckKey;
+      if (fingerprintMatches) {
         existing.container.x = screen.sx;
         existing.container.y = screen.sy;
         existing.container.zIndex = depthKey({ x: s.x, y: s.y, z: s.z }) * 1000;
@@ -1159,7 +1179,12 @@ function handleScene(msg: Extract<MainToWorker, { kind: "scene" }>): void {
         existing?.container.removeFromParent();
         const container = drawStation(s);
         stationLayer.addChild(container);
-        stationNodes.set(s.id, { container, lastState: s.state });
+        stationNodes.set(s.id, {
+          container,
+          lastState: s.state,
+          lastType: typeKey,
+          lastBottleneck: bottleneckKey,
+        });
       }
     }
     // Remove stations no longer in the scene.
