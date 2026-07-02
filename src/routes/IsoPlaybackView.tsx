@@ -114,11 +114,15 @@ export function IsoPlaybackView({
         })()
       : render.stations.map((s) => ({ ...s, x: s.x * SPACING_MULT, y: s.y * SPACING_MULT }));
     // VROL-212 — worker sprites derived from perStationRunningPct.
-    // The topo layout still drives worker start positions so multiple
-    // workers spread across the line rather than clumping.
-    const workerLayout = scenarioToIsoLayout(nodes, edges);
+    // VROL-1246 — feed the ACTUAL sprite world coords into
+    // scenarioToWorkers so workers pin near their station instead of
+    // drifting on empty floor tiles. Prior code passed the topological
+    // layout which was decoupled from where sprites actually render
+    // (editor positions * ISO_SPACING_MULT).
+    const workerLayoutMap = new Map<string, { x: number; y: number }>();
+    for (const s of laidOut) workerLayoutMap.set(s.id, { x: s.x, y: s.y });
     const idxToNodeId = topologyIndexToNodeIdMap(nodes, effectiveResult?.perStationLabels ?? []);
-    const workers = scenarioToWorkers(workerLayout, effectiveResult, idxToNodeId);
+    const workers = scenarioToWorkers({ positions: workerLayoutMap }, effectiveResult, idxToNodeId);
     const options: {
       simTimeMs?: number;
       workers?: readonly (typeof workers)[number][];
@@ -557,6 +561,7 @@ export function IsoPlaybackView({
         {...(simTimeMs !== undefined ? { simTimeMs } : {})}
         bottleneckAt={bottleneck.at}
         {...(bottleneck.label ? { bottleneckLabel: bottleneck.label } : {})}
+        cameraZoom={cameraState.zoom}
         wrapperWidth={wrapperSize.w}
         wrapperHeight={wrapperSize.h}
         heatmapOn={heatmapOn}

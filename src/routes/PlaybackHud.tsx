@@ -32,6 +32,12 @@ interface Props {
   /** Screen coords (px in the wrapper) of the current bottleneck. */
   readonly bottleneckAt: { readonly x: number; readonly y: number } | null;
   readonly bottleneckLabel?: string;
+  /**
+   * VROL-1247 — camera zoom used to scale the iso-style bottleneck
+   * marker (floor diamond + hazard pin) so it feels part of the scene
+   * at any zoom. Defaults to 1 when omitted.
+   */
+  readonly cameraZoom?: number;
   /** Wrapper size for laying out the callout arrow. */
   readonly wrapperWidth: number;
   readonly wrapperHeight: number;
@@ -64,6 +70,7 @@ export function PlaybackHud({
   simTimeMs,
   bottleneckAt,
   bottleneckLabel,
+  cameraZoom,
   wrapperWidth,
   wrapperHeight,
   heatmapOn,
@@ -172,74 +179,130 @@ export function PlaybackHud({
         </button>
       </div>
 
-      {/* VROL-1213 — bottleneck marker: pulsing ring on the target
-          sprite + a compact label above. Reads as "look at THIS
-          station" and never points into empty canvas. */}
-      {ringActive && bottleneckAt ? (
-        <svg
-          className="pointer-events-none absolute inset-0"
-          width={wrapperWidth}
-          height={wrapperHeight}
-          data-testid="playback-hud-bottleneck-arrow"
-          aria-hidden
-        >
-          <g transform={`translate(${String(bottleneckAt.x)} ${String(bottleneckAt.y)})`}>
-            {/* Outer pulsing ring — CSS animation via inline style. */}
-            <circle
-              r={26}
-              fill="none"
-              stroke="#f97316"
-              strokeWidth={3}
-              strokeDasharray="6 4"
-              opacity={0.9}
-            >
-              <animate attributeName="r" values="24;32;24" dur="1.6s" repeatCount="indefinite" />
-              <animate
-                attributeName="opacity"
-                values="0.9;0.4;0.9"
-                dur="1.6s"
-                repeatCount="indefinite"
-              />
-            </circle>
-            {/* Solid inner ring so the target is legible even mid-pulse. */}
-            <circle r={22} fill="none" stroke="#f97316" strokeWidth={2} opacity={0.85} />
-            {bottleneckLabel
-              ? (() => {
-                  // Approximate label width — 7 px per glyph is close
-                  // enough for ui-monospace at 11 px.
-                  const labelText = `Bottleneck: ${bottleneckLabel}`;
-                  const w = Math.max(120, labelText.length * 7 + 12);
-                  const h = 20;
-                  return (
-                    <g transform="translate(0 -34)">
-                      <rect
-                        x={-w / 2}
-                        y={-h / 2}
-                        width={w}
-                        height={h}
-                        rx={4}
-                        fill="#fff"
-                        fillOpacity={0.92}
-                        stroke="#f97316"
-                        strokeWidth={1}
-                      />
-                      <text
-                        y={4}
-                        fill="#9a3412"
-                        fontSize={11}
-                        fontFamily="ui-monospace, monospace"
-                        textAnchor="middle"
-                        fontWeight={600}
-                      >
-                        {labelText}
-                      </text>
-                    </g>
-                  );
-                })()
-              : null}
-          </g>
-        </svg>
-      ) : null}
+      {/* VROL-1247 — bottleneck marker replaced. Was two pulsing SVG
+          rings (dashed + solid) — user feedback: "very ugly and old,
+          we need a creative element". New marker uses iso-native
+          shapes matching the rest of the scene:
+            (a) an orange iso diamond on the station's floor tile,
+                gently pulsing between 20-40 % fill so it reads as
+                "hot spot" without frames.
+            (b) a downward-pointing hazard PIN floating above the
+                sprite (rounded orange lozenge with an exclamation),
+                with a subtle bob animation.
+            (c) the "Bottleneck: X" label pill stays but rides on top
+                of the pin so all three form a single visual unit. */}
+      {ringActive && bottleneckAt
+        ? (() => {
+            // VROL-1247 — bottleneckAt is at the sprite body center (see
+            // SPRITE_BODY_OFFSET_PX in IsoPlaybackView). Diamond floats
+            // on the tile floor, so shift it DOWN by that same offset
+            // scaled by zoom.
+            const zoom = cameraZoom ?? 1;
+            const floorOffsetY = 22 * zoom;
+            const diamondHalfW = 46 * zoom;
+            const diamondHalfH = 22 * zoom;
+            const pinY = -58 * zoom;
+            const pinBobA = -58 * zoom;
+            const pinBobB = -64 * zoom;
+            const pinScale = zoom;
+            const labelY = -92 * zoom;
+            return (
+              <svg
+                className="pointer-events-none absolute inset-0"
+                width={wrapperWidth}
+                height={wrapperHeight}
+                data-testid="playback-hud-bottleneck-arrow"
+                aria-hidden
+              >
+                <g transform={`translate(${String(bottleneckAt.x)} ${String(bottleneckAt.y)})`}>
+                  {/* Floor hazard diamond — matches the tile shape from the
+                iso layer so the marker feels part of the scene. */}
+                  <path
+                    d={`M 0 ${String(floorOffsetY + diamondHalfH)} L ${String(diamondHalfW)} ${String(floorOffsetY)} L 0 ${String(floorOffsetY - diamondHalfH)} L ${String(-diamondHalfW)} ${String(floorOffsetY)} Z`}
+                    fill="#f97316"
+                    stroke="#c2410c"
+                    strokeWidth={1.5}
+                    strokeLinejoin="round"
+                    opacity={0.35}
+                    data-testid="playback-hud-bottleneck-diamond"
+                  >
+                    <animate
+                      attributeName="opacity"
+                      values="0.22;0.42;0.22"
+                      dur="1.6s"
+                      repeatCount="indefinite"
+                    />
+                  </path>
+                  {/* Hazard pin above the sprite — droplet shape with an
+                exclamation glyph. Bobs vertically to draw attention
+                without an animated ring. */}
+                  <g transform={`translate(0 ${String(pinY)}) scale(${String(pinScale)})`}>
+                    <animateTransform
+                      attributeName="transform"
+                      type="translate"
+                      values={`0,${String(pinBobA)}; 0,${String(pinBobB)}; 0,${String(pinBobA)}`}
+                      dur="1.4s"
+                      repeatCount="indefinite"
+                      additive="sum"
+                    />
+                    {/* Pin body — rounded top + downward point. */}
+                    <path
+                      d="M -11 -12 A 11 11 0 1 1 11 -12 L 0 6 Z"
+                      fill="#f97316"
+                      stroke="#7c2d12"
+                      strokeWidth={1.4}
+                      strokeLinejoin="round"
+                    />
+                    {/* Highlight arc for a bit of sheen. */}
+                    <path
+                      d="M -7 -14 A 7 7 0 0 1 4 -18"
+                      fill="none"
+                      stroke="#fff7ed"
+                      strokeWidth={1.4}
+                      strokeLinecap="round"
+                      opacity={0.7}
+                    />
+                    {/* Exclamation mark. */}
+                    <rect x={-1.4} y={-16} width={2.8} height={9} rx={1.2} fill="#fff7ed" />
+                    <circle cx={0} cy={-4} r={1.4} fill="#fff7ed" />
+                  </g>
+                  {/* Label pill floats above the pin. */}
+                  {bottleneckLabel
+                    ? (() => {
+                        const labelText = `Bottleneck: ${bottleneckLabel}`;
+                        const w = Math.max(120, labelText.length * 7 + 14);
+                        const h = 20;
+                        return (
+                          <g transform={`translate(0 ${String(labelY)})`}>
+                            <rect
+                              x={-w / 2}
+                              y={-h / 2}
+                              width={w}
+                              height={h}
+                              rx={10}
+                              fill="#fff7ed"
+                              stroke="#f97316"
+                              strokeWidth={1.4}
+                            />
+                            <text
+                              y={4}
+                              fill="#9a3412"
+                              fontSize={11}
+                              fontFamily="ui-monospace, monospace"
+                              textAnchor="middle"
+                              fontWeight={600}
+                            >
+                              {labelText}
+                            </text>
+                          </g>
+                        );
+                      })()
+                    : null}
+                </g>
+              </svg>
+            );
+          })()
+        : null}
     </div>
   );
 }
