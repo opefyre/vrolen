@@ -75,6 +75,8 @@ export function IsoPlaybackView({
   }, [heatmapOn]);
   // VROL-1190 — click-to-KPI drawer for the selected station.
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
+  // VROL-1235 — hovered station for the highlight ring / tooltip.
+  const [hoveredStationId, setHoveredStationId] = useState<string | null>(null);
   // VROL-1192 — ? cheat sheet overlay.
   const [cheatSheetOpen, setCheatSheetOpen] = useState<boolean>(false);
 
@@ -381,7 +383,13 @@ export function IsoPlaybackView({
         }}
       />
       {/* VROL-1190 — click hitboxes at station centres. 40×20 diamond
-          bounds; pointer-events-auto so clicks register. */}
+          bounds; pointer-events-auto so clicks register.
+          VROL-1235 — hover state now highlights an SVG ring drawn on
+          the sibling HUD SVG layer (see below) so we don't have to
+          repaint the Pixi scene on every mousemove. Hitbox tracks
+          hover via onPointerEnter/Leave.
+          VROL-1236 — clicked station gets a persistent bright blue
+          selection ring rendered on the same SVG layer. */}
       <div className="pointer-events-none absolute inset-0 z-[5]">
         {stationClickTargets.map((s) => (
           <button
@@ -401,9 +409,73 @@ export function IsoPlaybackView({
               e.stopPropagation();
               setSelectedStationId(s.id);
             }}
+            onPointerEnter={() => {
+              setHoveredStationId(s.id);
+            }}
+            onPointerLeave={() => {
+              setHoveredStationId((prev) => (prev === s.id ? null : prev));
+            }}
           />
         ))}
       </div>
+      {/* VROL-1235 + VROL-1236 — hover + selection rings. SVG on top of
+          the canvas so we can animate cheaply. Ring center = same offset
+          as bottleneckAt (sprite body center). */}
+      {wrapperSize.w > 0 && wrapperSize.h > 0 ? (
+        <svg
+          className="pointer-events-none absolute inset-0 z-[6]"
+          width={wrapperSize.w}
+          height={wrapperSize.h}
+          data-testid="playback-hover-select-layer"
+          aria-hidden
+        >
+          {(() => {
+            const rx = 46 * cameraState.zoom;
+            const ry = 24 * cameraState.zoom;
+            const marks: ReactElement[] = [];
+            if (selectedStationId !== null) {
+              const sel = stationClickTargets.find((t) => t.id === selectedStationId);
+              if (sel) {
+                marks.push(
+                  <ellipse
+                    key="select"
+                    cx={sel.x}
+                    cy={sel.y}
+                    rx={rx}
+                    ry={ry}
+                    fill="none"
+                    stroke="#2563eb"
+                    strokeWidth={2.5}
+                    strokeOpacity={0.9}
+                    data-testid="playback-selection-ring"
+                  />,
+                );
+              }
+            }
+            if (hoveredStationId !== null && hoveredStationId !== selectedStationId) {
+              const hov = stationClickTargets.find((t) => t.id === hoveredStationId);
+              if (hov) {
+                marks.push(
+                  <ellipse
+                    key="hover"
+                    cx={hov.x}
+                    cy={hov.y}
+                    rx={rx + 3}
+                    ry={ry + 2}
+                    fill="none"
+                    stroke="#ffffff"
+                    strokeWidth={2}
+                    strokeOpacity={0.75}
+                    strokeDasharray="4 3"
+                    data-testid="playback-hover-ring"
+                  />,
+                );
+              }
+            }
+            return marks;
+          })()}
+        </svg>
+      ) : null}
       <PlaybackReplayBanner hasResult={result !== null} isLive={simTimeMs !== undefined} />
       <PlaybackHud
         result={effectiveResult}

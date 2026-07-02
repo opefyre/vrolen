@@ -853,7 +853,57 @@ function drawEdge(
   const g = new Graphics();
   g.label = `edge:${e.id}`;
   const w = e.flowRate > 0 ? 2 : 1.2;
-  g.moveTo(from.x, from.y).lineTo(to.x, to.y).stroke({ color: 0x6b7280, width: w });
+  const color = e.flowRate > 0 ? 0x475569 : 0x94a3b8;
+  g.moveTo(from.x, from.y).lineTo(to.x, to.y).stroke({ color, width: w });
+  // VROL-1234 — arrowhead at the target end so viewers can read flow
+  // direction. Rotated to the edge angle in screen space; sized so it
+  // stays legible across zooms.
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy);
+  if (len > 12) {
+    const ux = dx / len;
+    const uy = dy / len;
+    const HEAD = 10;
+    // Pull the arrow tip BACK from the sprite center so it doesn't
+    // disappear under the target's ring/body. STATION_HALF_W is a
+    // rough approximation of "where the sprite silhouette ends".
+    const tipBack = Math.min(len - 4, STATION_HALF_W - 6);
+    const tipX = to.x - ux * tipBack;
+    const tipY = to.y - uy * tipBack;
+    // Perpendicular unit vector for the arrowhead wings.
+    const px = -uy;
+    const py = ux;
+    const baseX = tipX - ux * HEAD;
+    const baseY = tipY - uy * HEAD;
+    const wing = HEAD * 0.55;
+    g.moveTo(tipX, tipY)
+      .lineTo(baseX + px * wing, baseY + py * wing)
+      .lineTo(baseX - px * wing, baseY - py * wing)
+      .closePath()
+      .fill({ color });
+    // Direction chevrons every ~120 px along the edge for long runs.
+    const chevronSpacing = 120;
+    if (len > chevronSpacing * 1.4) {
+      const chevronCount = Math.floor(len / chevronSpacing);
+      const chevronSize = 6;
+      for (let i = 1; i <= chevronCount; i++) {
+        const t = i / (chevronCount + 1);
+        const cx = from.x + dx * t;
+        const cy = from.y + dy * t;
+        g.moveTo(
+          cx - ux * chevronSize + px * chevronSize * 0.7,
+          cy - uy * chevronSize + py * chevronSize * 0.7,
+        )
+          .lineTo(cx, cy)
+          .lineTo(
+            cx - ux * chevronSize - px * chevronSize * 0.7,
+            cy - uy * chevronSize - py * chevronSize * 0.7,
+          )
+          .stroke({ color, width: 1.2, alpha: 0.55 });
+      }
+    }
+  }
   return g;
 }
 
