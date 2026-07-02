@@ -483,9 +483,12 @@ export function IsoPlaybackView({
           />
         ))}
       </div>
-      {/* VROL-1235 + VROL-1236 — hover + selection rings. SVG on top of
-          the canvas so we can animate cheaply. Ring center = same offset
-          as bottleneckAt (sprite body center). */}
+      {/* VROL-1242 — hover + selection markers drawn as iso diamonds on
+          the FLOOR (matching the tile shape) rather than screen-space
+          ellipses that clashed with the aesthetic. Selection is a
+          solid bright-blue diamond; hover is a soft white lift + fill
+          on the target tile. Both track the sprite footprint, not the
+          body center, so they land on the ground plane. */}
       {wrapperSize.w > 0 && wrapperSize.h > 0 ? (
         <svg
           className="pointer-events-none absolute inset-0 z-[6]"
@@ -495,23 +498,28 @@ export function IsoPlaybackView({
           aria-hidden
         >
           {(() => {
-            const rx = 46 * cameraState.zoom;
-            const ry = 24 * cameraState.zoom;
             const marks: ReactElement[] = [];
+            const halfW = 46 * cameraState.zoom;
+            const halfH = 24 * cameraState.zoom;
+            const bodyLift = SPRITE_BODY_OFFSET_PX * cameraState.zoom;
+            const diamond = (cx: number, cy: number): string => {
+              // Iso diamond centred on tile plane (below the sprite
+              // body center by SPRITE_BODY_OFFSET_PX * zoom).
+              const fy = cy + bodyLift;
+              return `M ${String(cx)} ${String(fy - halfH)} L ${String(cx + halfW)} ${String(fy)} L ${String(cx)} ${String(fy + halfH)} L ${String(cx - halfW)} ${String(fy)} Z`;
+            };
             if (selectedStationId !== null) {
               const sel = stationClickTargets.find((t) => t.id === selectedStationId);
               if (sel) {
                 marks.push(
-                  <ellipse
+                  <path
                     key="select"
-                    cx={sel.x}
-                    cy={sel.y}
-                    rx={rx}
-                    ry={ry}
-                    fill="none"
+                    d={diamond(sel.x, sel.y)}
+                    fill="#3b82f6"
+                    fillOpacity={0.16}
                     stroke="#2563eb"
-                    strokeWidth={2.5}
-                    strokeOpacity={0.9}
+                    strokeWidth={2}
+                    strokeLinejoin="round"
                     data-testid="playback-selection-ring"
                   />,
                 );
@@ -521,17 +529,15 @@ export function IsoPlaybackView({
               const hov = stationClickTargets.find((t) => t.id === hoveredStationId);
               if (hov) {
                 marks.push(
-                  <ellipse
+                  <path
                     key="hover"
-                    cx={hov.x}
-                    cy={hov.y}
-                    rx={rx + 3}
-                    ry={ry + 2}
-                    fill="none"
+                    d={diamond(hov.x, hov.y)}
+                    fill="#ffffff"
+                    fillOpacity={0.22}
                     stroke="#ffffff"
-                    strokeWidth={2}
-                    strokeOpacity={0.75}
-                    strokeDasharray="4 3"
+                    strokeWidth={1.5}
+                    strokeOpacity={0.9}
+                    strokeLinejoin="round"
                     data-testid="playback-hover-ring"
                   />,
                 );

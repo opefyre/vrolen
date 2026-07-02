@@ -426,7 +426,9 @@ function drawFloorGrid(layer: Container): void {
 // users can read the topology at a glance.
 const STATION_HALF_W = 40;
 const STATION_HALF_H = 16;
-const STATION_RING_PAD = 4;
+// VROL-1241 — STATION_RING_PAD removed with the drawStation ring; kept
+// no longer referenced. State signal now lives in drawFloorMarker +
+// drawStateOverlay instead of a rounded rect around the body.
 // VROL-1229 — sprite footprint sits ON the tile plane (base at z=0)
 // with the visible body rising UP from there. This lift value is the
 // screen-space y offset from the tile center to the body center of
@@ -820,27 +822,18 @@ function drawStateOverlay(state: RenderStation["state"]): Graphics | null {
 function drawStation(s: RenderStation): Container {
   const c = new Container();
   c.label = `station:${s.id}`;
-  // VROL-1233 — floor marker (state-tinted diamond + drop shadow) sits
-  // BELOW the sprite so the sprite occludes it partially, adding depth.
+  // VROL-1241 — the state-coloured rounded-rect ring that used to sit
+  // around every sprite read as an ugly hard bounding-box (user
+  // feedback: "huge ugly frames around each element"). Removed. State
+  // signal now comes from:
+  //   • floor diamond (drawFloorMarker) — state-tinted iso footprint
+  //     under the sprite, drawn first so the sprite partially occludes
+  //     it for depth.
+  //   • state overlay (drawStateOverlay) — glyphs on top for Down /
+  //     Setup / Blocked / Starved.
+  //   • bottleneck marker — pulsing orange SVG ring on the HUD layer
+  //     (VROL-1213), never inside the scene.
   c.addChild(drawFloorMarker(s.state));
-  // VROL-1229 — ring now anchors around the visible body mid-height
-  // (STATION_BODY_LIFT above the tile plane), NOT the floor tile.
-  const ringCenterY = -Math.round(STATION_BODY_LIFT / 2 + STATION_HALF_H / 2);
-  const ring = new Graphics();
-  ring
-    .roundRect(
-      -(STATION_HALF_W + STATION_RING_PAD),
-      ringCenterY - (STATION_HALF_H + STATION_RING_PAD),
-      (STATION_HALF_W + STATION_RING_PAD) * 2,
-      (STATION_HALF_H + STATION_RING_PAD) * 2,
-      8,
-    )
-    .stroke({
-      color: STATION_COLORS[s.state],
-      width: s.isBottleneck ? 3 : 2,
-      alpha: 0.95,
-    });
-  c.addChild(ring);
   c.addChild(buildStationBody(s.nodeType));
   // VROL-1231 — per-state overlay ON TOP of the body so signals like
   // Down (red X + cone), Setup (wrench + amber tint), Blocked (stripes)
@@ -865,57 +858,121 @@ function drawEdge(
 ): Graphics {
   const g = new Graphics();
   g.label = `edge:${e.id}`;
-  const w = e.flowRate > 0 ? 2 : 1.2;
-  const color = e.flowRate > 0 ? 0x475569 : 0x94a3b8;
-  g.moveTo(from.x, from.y).lineTo(to.x, to.y).stroke({ color, width: w });
-  // VROL-1234 — arrowhead at the target end so viewers can read flow
-  // direction. Rotated to the edge angle in screen space; sized so it
-  // stays legible across zooms.
+
+  // VROL-1243 — real conveyor belt in place of an abstract stroke line.
+  // Paint order: drop shadow → side rails → belt strip → cross-belt
+  // rollers → inline arrowhead. All drawn inline in one Graphics so
+  // the edge-diff replacement stays cheap. Trail dots (VROL-207) still
+  // animate along the belt centre from a sibling layer.
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const len = Math.hypot(dx, dy);
-  if (len > 12) {
-    const ux = dx / len;
-    const uy = dy / len;
-    const HEAD = 10;
-    // Pull the arrow tip BACK from the sprite center so it doesn't
-    // disappear under the target's ring/body. STATION_HALF_W is a
-    // rough approximation of "where the sprite silhouette ends".
-    const tipBack = Math.min(len - 4, STATION_HALF_W - 6);
-    const tipX = to.x - ux * tipBack;
-    const tipY = to.y - uy * tipBack;
-    // Perpendicular unit vector for the arrowhead wings.
-    const px = -uy;
-    const py = ux;
-    const baseX = tipX - ux * HEAD;
-    const baseY = tipY - uy * HEAD;
-    const wing = HEAD * 0.55;
+  if (len < 1) return g;
+  const ux = dx / len;
+  const uy = dy / len;
+  const px = -uy;
+  const py = ux;
+
+  // Trim so the belt tucks into the sprite silhouettes rather than
+  // clipping across them. Roughly STATION_HALF_W on each side, capped
+  // at 40 % of the run length so short edges still show belt.
+  const trim = Math.min(len * 0.4, STATION_HALF_W - 6);
+  const sx1 = from.x + ux * trim;
+  const sy1 = from.y + uy * trim;
+  const sx2 = to.x - ux * trim;
+  const sy2 = to.y - uy * trim;
+  const beltLen = Math.hypot(sx2 - sx1, sy2 - sy1);
+  if (beltLen < 4) return g;
+
+  const active = e.flowRate > 0;
+  const beltColor = active ? 0x334155 : 0x4b5563;
+  const railColor = 0x1f2937;
+  const rollerColor = active ? 0xd1d5db : 0x9ca3af;
+  const arrowColor = active ? 0xf59e0b : 0x9ca3af;
+
+  const BELT_HALF = 5;
+  const RAIL_HALF = 7;
+
+  const corner = (offset: number, along: number): [number, number] => [
+    sx1 + ux * along + px * offset,
+    sy1 + uy * along + py * offset,
+  ];
+
+  // Drop shadow on the floor tile so the belt doesn't read as floating.
+  {
+    const [x1, y1] = corner(RAIL_HALF + 2, 2);
+    const [x2, y2] = corner(RAIL_HALF + 2, beltLen + 2);
+    const [x3, y3] = corner(-RAIL_HALF + 2, beltLen + 2);
+    const [x4, y4] = corner(-RAIL_HALF + 2, 2);
+    g.moveTo(x1, y1)
+      .lineTo(x2, y2)
+      .lineTo(x3, y3)
+      .lineTo(x4, y4)
+      .closePath()
+      .fill({ color: 0x000000, alpha: 0.14 });
+  }
+  // Side rails — two dark stripes running the full belt length.
+  {
+    const [ax, ay] = corner(RAIL_HALF, 0);
+    const [bx, by] = corner(RAIL_HALF, beltLen);
+    const [cx, cy] = corner(BELT_HALF, beltLen);
+    const [dx2, dy2] = corner(BELT_HALF, 0);
+    g.moveTo(ax, ay)
+      .lineTo(bx, by)
+      .lineTo(cx, cy)
+      .lineTo(dx2, dy2)
+      .closePath()
+      .fill({ color: railColor });
+    const [ex, ey] = corner(-BELT_HALF, 0);
+    const [fx, fy] = corner(-BELT_HALF, beltLen);
+    const [gx, gy] = corner(-RAIL_HALF, beltLen);
+    const [hx, hy] = corner(-RAIL_HALF, 0);
+    g.moveTo(ex, ey)
+      .lineTo(fx, fy)
+      .lineTo(gx, gy)
+      .lineTo(hx, hy)
+      .closePath()
+      .fill({ color: railColor });
+  }
+  // Belt strip — the main dark polygon between the rails.
+  {
+    const [ax, ay] = corner(BELT_HALF, 0);
+    const [bx, by] = corner(BELT_HALF, beltLen);
+    const [cx, cy] = corner(-BELT_HALF, beltLen);
+    const [dx2, dy2] = corner(-BELT_HALF, 0);
+    g.moveTo(ax, ay)
+      .lineTo(bx, by)
+      .lineTo(cx, cy)
+      .lineTo(dx2, dy2)
+      .closePath()
+      .fill({ color: beltColor });
+  }
+  // Cross-belt rollers every ~28 px so the belt reads as physical.
+  {
+    const rollerSpacing = 28;
+    const rollerCount = Math.max(2, Math.floor(beltLen / rollerSpacing));
+    const step = beltLen / rollerCount;
+    for (let i = 0; i <= rollerCount; i++) {
+      const along = i * step;
+      const [cxr, cyr] = corner(0, along);
+      g.moveTo(cxr + px * (BELT_HALF - 0.5), cyr + py * (BELT_HALF - 0.5))
+        .lineTo(cxr - px * (BELT_HALF - 0.5), cyr - py * (BELT_HALF - 0.5))
+        .stroke({ color: rollerColor, width: 1.4, alpha: 0.95 });
+    }
+  }
+  // Inline arrowhead near the target end — replaces the direction
+  // chevrons from VROL-1234 (the rollers already sell direction).
+  {
+    const HEAD = 9;
+    const tipAlong = beltLen - 2;
+    const [tipX, tipY] = corner(0, tipAlong);
+    const [baseX, baseY] = corner(0, tipAlong - HEAD);
+    const wing = HEAD * 0.65;
     g.moveTo(tipX, tipY)
       .lineTo(baseX + px * wing, baseY + py * wing)
       .lineTo(baseX - px * wing, baseY - py * wing)
       .closePath()
-      .fill({ color });
-    // Direction chevrons every ~120 px along the edge for long runs.
-    const chevronSpacing = 120;
-    if (len > chevronSpacing * 1.4) {
-      const chevronCount = Math.floor(len / chevronSpacing);
-      const chevronSize = 6;
-      for (let i = 1; i <= chevronCount; i++) {
-        const t = i / (chevronCount + 1);
-        const cx = from.x + dx * t;
-        const cy = from.y + dy * t;
-        g.moveTo(
-          cx - ux * chevronSize + px * chevronSize * 0.7,
-          cy - uy * chevronSize + py * chevronSize * 0.7,
-        )
-          .lineTo(cx, cy)
-          .lineTo(
-            cx - ux * chevronSize - px * chevronSize * 0.7,
-            cy - uy * chevronSize - py * chevronSize * 0.7,
-          )
-          .stroke({ color, width: 1.2, alpha: 0.55 });
-      }
-    }
+      .fill({ color: arrowColor });
   }
   return g;
 }
