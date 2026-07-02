@@ -5020,22 +5020,26 @@ function EditorCanvas() {
           toolbar while the user edits so they never lose sight of the
           headline metrics from the last run. Hidden until the first run
           produces a result. */}
-      {result && runMeta ? (
-        <div
-          role="group"
-          aria-label="Last run KPIs"
-          className="border-border bg-card/70 supports-[backdrop-filter]:bg-card/55 sticky top-[3.25rem] z-10 -mx-6 grid grid-cols-3 gap-2 border-b px-3 py-2 backdrop-blur sm:grid-cols-6 sm:gap-3 sm:px-6"
-        >
-          {(() => {
+      {result && runMeta
+        ? (() => {
             // VROL-906 — when playback is active and the snapshot has KPI
             // data, render the playhead values so the strip counts UP as
             // the scrubber moves. Falls back to result.* aggregates the
             // rest of the time (paused / no playback / no samples).
-            const usePlayback = playbackSnapshot && playbackSnapshot.kpi !== undefined;
-            const kpi = usePlayback ? playbackSnapshot.kpi : null;
+            const usePlayback = Boolean(playbackSnapshot && playbackSnapshot.kpi !== undefined);
+            const kpi = usePlayback ? playbackSnapshot?.kpi : null;
+            // VROL-1224 — second-pass audit follow-up: header pill + HUD
+            // report run-average throughput; when the scrubber ran the
+            // KPI strip silently switched to cursor-time values and the
+            // three surfaces disagreed (e.g. header 13,876/h · KPI
+            // 4,049/h at t=7s). Fixed by (a) labelling the strip
+            // "At cursor · MM:SS" while the scrubber is live, and (b)
+            // ALWAYS surfacing the run-average throughput as a small
+            // trailing chip so the anchor number never leaves the frame.
             const tput = Math.round(
               kpi ? kpi.throughputPerHr : result.throughputLambda * 3_600_000,
             );
+            const runAvgTput = Math.round(result.throughputLambda * 3_600_000);
             const oeePct = ((kpi ? kpi.lineEfficiencyPct : result.lineOee) * 100).toFixed(0);
             const completedVal = kpi ? Math.round(kpi.completed) : result.completed;
             const tisMs = kpi ? kpi.avgTimeInSystemMs : result.avgTimeInSystemW;
@@ -5049,35 +5053,68 @@ function EditorCanvas() {
               : result.bottlenecks[0]
                 ? `${(result.bottlenecks[0].runningPct * 100).toFixed(0)}%`
                 : "—";
+            const tMs = usePlayback ? (playbackSnapshot?.tMs ?? 0) : 0;
+            const cursorClock = (() => {
+              const total = Math.max(0, Math.floor(tMs / 1000));
+              const h = Math.floor(total / 3600);
+              const m = Math.floor((total % 3600) / 60);
+              const s = total % 60;
+              const pad = (n: number) => n.toString().padStart(2, "0");
+              return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+            })();
             const tiles: { label: string; value: string; hint?: string }[] = [
-              { label: "Throughput", value: tput.toLocaleString(), hint: "parts / h" },
+              {
+                label: "Throughput",
+                value: tput.toLocaleString(),
+                hint: usePlayback ? `parts / h · avg ${runAvgTput.toLocaleString()}` : "parts / h",
+              },
               { label: "Line efficiency", value: `${oeePct}%`, hint: "vs theoretical" },
               { label: "Completed", value: completedVal.toLocaleString(), hint: "parts" },
               { label: "Time-in-system", value: tisLabel, hint: "avg" },
               { label: "Bottleneck", value: bnLabel },
               { label: "Util on b/n", value: bnRunPct, hint: "running %" },
             ];
-            return tiles.map((t) => (
+            return (
               <div
-                key={t.label}
-                className="border-border/60 bg-background/40 flex flex-col rounded-md border px-2 py-1"
+                role="group"
+                aria-label={usePlayback ? "At-cursor KPIs" : "Last run KPIs"}
+                className="border-border bg-card/70 supports-[backdrop-filter]:bg-card/55 sticky top-[3.25rem] z-10 -mx-6 space-y-1.5 border-b px-3 py-2 backdrop-blur sm:px-6"
               >
-                <span className="text-muted-foreground truncate text-[9px] font-medium tracking-wide uppercase">
-                  {t.label}
-                </span>
-                {/* VROL-906 — short CSS transition on the value swap so the
-                    count-up at 200× feels smooth instead of stutter-jumpy. */}
-                <span className="text-foreground truncate font-mono text-sm font-semibold tabular-nums transition-[color,opacity] duration-100 sm:text-base">
-                  {t.value}
-                </span>
-                {t.hint ? (
-                  <span className="text-muted-foreground truncate text-[9px]">{t.hint}</span>
+                {/* VROL-1224 — mode chip so users never confuse cursor
+                    values with run averages. Only appears when the
+                    scrubber is driving the numbers. */}
+                {usePlayback ? (
+                  <div className="text-muted-foreground flex items-center gap-1.5 text-[10px] tracking-wide uppercase">
+                    <span className="bg-sim-setup/20 text-sim-setup border-sim-setup/30 rounded-full border px-1.5 py-0.5 font-semibold">
+                      At cursor · {cursorClock}
+                    </span>
+                    <span className="truncate">Header pill + HUD report the run average.</span>
+                  </div>
                 ) : null}
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-6 sm:gap-3">
+                  {tiles.map((t) => (
+                    <div
+                      key={t.label}
+                      className="border-border/60 bg-background/40 flex flex-col rounded-md border px-2 py-1"
+                    >
+                      <span className="text-muted-foreground truncate text-[9px] font-medium tracking-wide uppercase">
+                        {t.label}
+                      </span>
+                      {/* VROL-906 — short CSS transition on the value swap so the
+                    count-up at 200× feels smooth instead of stutter-jumpy. */}
+                      <span className="text-foreground truncate font-mono text-sm font-semibold tabular-nums transition-[color,opacity] duration-100 sm:text-base">
+                        {t.value}
+                      </span>
+                      {t.hint ? (
+                        <span className="text-muted-foreground truncate text-[9px]">{t.hint}</span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ));
-          })()}
-        </div>
-      ) : null}
+            );
+          })()
+        : null}
       {/* VROL-777 — persistent run console pane. Sits below the KPI strip
           (or below the toolbar when no run has fired). Collapsed by
           default; expands to a 200-line buffer with severity + clock. */}
