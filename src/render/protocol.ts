@@ -9,6 +9,32 @@
  * boundary, in the `init` message.
  */
 
+/**
+ * VROL-1228 — node "type" from the domain model, projected into the
+ * render layer so the worker can draw a type-distinct sprite per
+ * station (mixer vs filler vs capper etc.) instead of the generic
+ * grey box every entry used to render as. Values mirror the react-flow
+ * node.type strings authored in the editor. Unknown / missing values
+ * fall through to a generic sprite so brand-new node types don't
+ * crash rendering.
+ */
+export type RenderStationType =
+  | "mixer"
+  | "filler"
+  | "capper"
+  | "qc"
+  | "labeler"
+  | "packer"
+  | "conveyor"
+  | "manual"
+  | "machine"
+  | "buffer"
+  | "assembly"
+  | "transport"
+  | "source"
+  | "sink"
+  | "generic";
+
 /** Renderer-side state for a single station node, as projected from the
  *  domain model. The render layer doesn't know about react-flow nodes;
  *  EditorPage will map between the two before posting. */
@@ -27,6 +53,10 @@ export interface RenderStation {
   /** VROL-237 — utilization 0..1 for the heatmap overlay. Optional so
    *  callers without a run don't need to fabricate a value. */
   readonly utilization?: number;
+  /** VROL-1228 — node type so the worker can draw a type-distinct
+   *  sprite. Optional for wire-compat with older scenes; missing
+   *  values fall through to the generic sprite. */
+  readonly nodeType?: RenderStationType;
 }
 
 export interface RenderEdge {

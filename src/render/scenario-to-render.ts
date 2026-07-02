@@ -19,7 +19,64 @@
 import type { Edge, Node } from "@xyflow/react";
 
 import type { ChainResult } from "@/engine";
-import type { RenderEdge, RenderStation } from "./protocol";
+import type { RenderEdge, RenderStation, RenderStationType } from "./protocol";
+
+/**
+ * VROL-1228 — map the editor's react-flow node type strings to a
+ * RenderStationType. Presets + the wizard tag nodes with a coarse
+ * `data.stationType` ("machine", "buffer", "qc", "input", "output",
+ * "transport"), and put the specific role in `data.label` ("Mixer",
+ * "Filler A", "Capper"). So we first try the label for a specific
+ * type match, and fall back to the stationType for the coarse buckets.
+ * Unknown values fall through to `generic` so the render layer never
+ * crashes.
+ */
+function resolveNodeType(node: Node): RenderStationType {
+  const data = node.data as { stationType?: string; kind?: string; label?: string } | undefined;
+  const stationType = (data?.stationType ?? data?.kind ?? node.type ?? "").toLowerCase();
+  const label = (data?.label ?? "").toLowerCase();
+
+  // Try label matches first (more specific). Substring match handles
+  // "Filler A" / "Filler B" / "Mixer 2" style variants.
+  if (label.includes("mixer")) return "mixer";
+  if (label.includes("filler")) return "filler";
+  if (label.includes("capper")) return "capper";
+  if (label.includes("labeler") || label.includes("labeller")) return "labeler";
+  if (label.includes("packer") || label.includes("packag") || label.includes("crate")) {
+    return "packer";
+  }
+  if (label.includes("conveyor") || label.includes("belt")) return "conveyor";
+  if (label.includes("assembly") || label.includes("assembler")) return "assembly";
+  if (label.includes("transport") || label.includes("dolly")) return "transport";
+
+  // Coarse stationType buckets from presets + wizard.
+  switch (stationType) {
+    case "mixer":
+    case "filler":
+    case "capper":
+    case "labeler":
+    case "packer":
+    case "conveyor":
+    case "assembly":
+    case "transport":
+    case "manual":
+    case "buffer":
+      return stationType;
+    case "qc":
+      return "qc";
+    case "input":
+    case "source":
+      return "source";
+    case "output":
+    case "sink":
+      return "sink";
+    case "machine":
+    case "station":
+      return "machine";
+    default:
+      return "generic";
+  }
+}
 
 const TILE_PX_X = 200;
 const TILE_PX_Y = 140;
@@ -122,6 +179,10 @@ export function scenarioToRender(
       label,
       state,
       isBottleneck,
+      // VROL-1228 — carry the resolved type into the render layer so
+      // the worker can draw a type-distinct sprite (mixer / filler /
+      // capper etc.) instead of a generic grey box.
+      nodeType: resolveNodeType(n),
       ...(utilization !== undefined ? { utilization } : {}),
     };
   });

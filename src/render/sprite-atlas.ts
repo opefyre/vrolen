@@ -26,6 +26,8 @@ import { Application, Cache, Graphics, RenderTexture, Texture } from "pixi.js";
 // the cache. Also swapped Texture.fromURL (removed in v8) → Assets.load.
 import { Assets } from "pixi.js";
 
+import type { RenderStationType } from "./protocol";
+
 /** Sprite names registered by the placeholder atlas (and the contract real
  *  art needs to keep). Keep in lockstep with the StationType enum. */
 export const PLACEHOLDER_SPRITE_NAMES = [
@@ -84,6 +86,50 @@ export function buildPlaceholderAtlas(app: Application): Map<string, Texture> {
     out.set(name, texture);
   }
   return out;
+}
+
+/**
+ * VROL-1227 — typed sprite key registry.
+ *
+ * One key per RenderStationType so the worker can pull a distinct
+ * texture per node type via `getStationSprite(nodeType)`. Real texture
+ * PNGs land in `public/sprites/manifest.json` under these keys; when
+ * absent the caller (buildStationBody in the worker) falls back to a
+ * procedural per-type draw so the atlas is never blocked on art.
+ */
+export const STATION_TYPE_SPRITE_KEYS: Readonly<Record<RenderStationType, string>> = {
+  mixer: "station.mixer",
+  filler: "station.filler",
+  capper: "station.capper",
+  qc: "station.qc",
+  labeler: "station.labeler",
+  packer: "station.packer",
+  conveyor: "station.conveyor",
+  manual: "station.manual",
+  machine: "station.machine",
+  buffer: "station.buffer",
+  assembly: "station.assembly",
+  transport: "station.transport",
+  source: "station.source",
+  sink: "station.sink",
+  generic: "station.generic",
+};
+
+/**
+ * VROL-1227 — resolve a cached texture for a station type. Returns null
+ * when no texture is registered under that key so the caller can render
+ * the procedural fallback. Consulting the Cache directly means both
+ * placeholder textures (state-based, from buildPlaceholderAtlas) and
+ * real textures (from loadManifestAtlas) resolve the same way.
+ */
+export function getStationSprite(nodeType: RenderStationType | undefined): Texture | null {
+  const key = STATION_TYPE_SPRITE_KEYS[nodeType ?? "generic"];
+  const cached = Cache.get(key) as Texture | undefined;
+  if (!cached) return null;
+  // Cache.get returns the empty-white 1×1 stub for unknown keys in some
+  // Pixi builds; guard so the caller can fall back cleanly.
+  if (cached.width <= 1 && cached.height <= 1) return null;
+  return cached;
 }
 
 /**

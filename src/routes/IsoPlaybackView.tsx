@@ -313,6 +313,11 @@ export function IsoPlaybackView({
   // VROL-232 — compute bottleneck station's screen position from the
   // iso layout + current camera. Memoised so the HUD only rebuilds
   // when a genuine input changes.
+  // VROL-1229 — sprite body sits ABOVE the tile plane (base at tile
+  // center, top ~44 px up at zoom=1). Hit-testing / bottleneck ring /
+  // KPI-panel anchor all want the BODY center, not the floor. Half the
+  // sprite lift ≈ 22 px gets us onto the sprite silhouette.
+  const SPRITE_BODY_OFFSET_PX = 22;
   const bottleneck = useMemo(() => {
     const layout = scenarioToIsoLayout(nodes, edges);
     const render = scenarioToRender(nodes, edges, effectiveResult);
@@ -321,7 +326,10 @@ export function IsoPlaybackView({
     const world = layout.positions.get(b.id);
     if (!world) return { at: null, label: b.label };
     const screen = worldToScreen({ x: world.x, y: world.y }, cameraState);
-    return { at: { x: screen.sx, y: screen.sy }, label: b.label };
+    return {
+      at: { x: screen.sx, y: screen.sy - SPRITE_BODY_OFFSET_PX * cameraState.zoom },
+      label: b.label,
+    };
   }, [nodes, edges, effectiveResult, cameraState]);
 
   // VROL-1190 — click hitboxes at each station's projected screen
@@ -335,7 +343,14 @@ export function IsoPlaybackView({
         const world = layout.positions.get(s.id);
         if (!world) return null;
         const screen = worldToScreen({ x: world.x, y: world.y }, cameraState);
-        return { id: s.id, label: s.label, x: screen.sx, y: screen.sy };
+        // VROL-1229 — lift hitbox to sprite body mid-height so clicks
+        // land on the visible silhouette instead of the empty tile.
+        return {
+          id: s.id,
+          label: s.label,
+          x: screen.sx,
+          y: screen.sy - SPRITE_BODY_OFFSET_PX * cameraState.zoom,
+        };
       })
       .filter((v): v is { id: string; label: string; x: number; y: number } => v !== null);
   }, [nodes, edges, effectiveResult, cameraState]);

@@ -102,7 +102,7 @@ if (typeof (scopeAny as { requestAnimationFrame?: unknown }).requestAnimationFra
 
 // Geometry-only — text labels overlay on the main thread via HTML in
 // IsoCanvas, so the renderer never needs `document` for font measurement.
-import { Application, Container, Graphics, Sprite, Texture } from "pixi.js";
+import { Application, Container, Graphics, Sprite } from "pixi.js";
 
 import { TILE_HEIGHT, TILE_WIDTH, depthKey, worldToScreen } from "./isometric";
 import {
@@ -110,10 +110,11 @@ import {
   type MainToWorker,
   type RenderEdge,
   type RenderStation,
+  type RenderStationType,
   type RenderWorker,
   type WorkerToMain,
 } from "./protocol";
-import { buildPlaceholderAtlas, loadManifestAtlas } from "./sprite-atlas";
+import { buildPlaceholderAtlas, getStationSprite, loadManifestAtlas } from "./sprite-atlas";
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -404,45 +405,298 @@ function drawFloorGrid(layer: Container): void {
   layer.addChild(outline);
 }
 
-// VROL-857 — sprite-based station body. Prefers the atlas texture
-// ('machine-idle' as a neutral base — state signal is carried by the
-// ring), falls back to a Graphics rounded-rect when the atlas hasn't
-// registered any textures (e.g. tests / cold init).
-const STATION_BASE_SPRITE = "machine-idle";
+// VROL-857 — sprite-based station body. Prefers a typed atlas texture
+// via getStationSprite(nodeType) (see sprite-atlas.ts), and falls back
+// to a procedural per-type Graphics draw (VROL-1228) when no texture
+// is registered yet. Never falls back to the plain grey roundRect
+// anymore — every station type has its own distinct silhouette so
+// users can read the topology at a glance.
 const STATION_HALF_W = 40;
 const STATION_HALF_H = 16;
 const STATION_RING_PAD = 4;
+// VROL-1229 — sprite footprint sits ON the tile plane (base at z=0)
+// with the visible body rising UP from there. This lift value is the
+// screen-space y offset from the tile center to the body center of
+// the tallest procedural sprite (mixer/filler ≈ 42 px), used to
+// re-target the bottleneck ring so it lands on the body center rather
+// than the floor tile.
+const STATION_BODY_LIFT = 22;
 
-function buildStationBody(): Container {
-  if (Texture.from(STATION_BASE_SPRITE)) {
-    const tex = Texture.from(STATION_BASE_SPRITE);
-    // Texture.from returns the empty-white 1×1 stub when the name isn't
-    // registered — that would render as a tiny dot. Detect and fall back.
-    if (tex.width > 1 && tex.height > 1) {
-      const sprite = new Sprite(tex);
-      sprite.anchor.set(0.5);
-      sprite.width = STATION_HALF_W * 2;
-      sprite.height = STATION_HALF_H * 2;
-      return sprite;
+/**
+ * VROL-1228 — procedural per-type station body. Each RenderStationType
+ * gets a distinct silhouette drawn in Pixi Graphics so the topology
+ * reads even before Kenney/AI textures land. All sprites share the
+ * same 80×72 bounding box: base of the visible body sits at (0, 0),
+ * top extends upward, so anchoring to the tile plane is straightforward
+ * (VROL-1229).
+ *
+ * Palette conventions:
+ *   • body: light neutral fill (#f3f4f6) with #111827 outline
+ *   • accents: type-specific highlights that read at 0.5x zoom
+ *   • no state colour here — the ring carries that signal.
+ */
+function drawProceduralBody(type: RenderStationType | undefined): Graphics {
+  const g = new Graphics();
+  const body = 0xf3f4f6;
+  const outline = 0x1f2937;
+  const accent = 0x64748b;
+  const warmAccent = 0xf59e0b;
+
+  switch (type ?? "generic") {
+    case "mixer": {
+      // Cylindrical vat with two agitator paddles on top.
+      g.roundRect(-24, -30, 48, 40, 6).fill({ color: body }).stroke({ color: outline, width: 1.2 });
+      // Vat rim
+      g.rect(-24, -30, 48, 4).fill({ color: accent });
+      // Agitator paddles poking up
+      g.rect(-6, -42, 3, 12).fill({ color: outline });
+      g.rect(3, -42, 3, 12).fill({ color: outline });
+      // Motor cap
+      g.circle(0, -44, 6).fill({ color: warmAccent }).stroke({ color: outline, width: 1 });
+      // Level line
+      g.moveTo(-22, -14).lineTo(22, -14).stroke({ color: accent, width: 1, alpha: 0.7 });
+      break;
+    }
+    case "filler": {
+      // Box with 3 vertical fill nozzles above.
+      g.roundRect(-30, -26, 60, 36, 4).fill({ color: body }).stroke({ color: outline, width: 1.2 });
+      // Nozzle heads
+      for (const nx of [-16, 0, 16]) {
+        g.rect(nx - 3, -38, 6, 12)
+          .fill({ color: accent })
+          .stroke({ color: outline, width: 0.8 });
+        g.circle(nx, -26, 2).fill({ color: 0x3b82f6 });
+      }
+      // Control panel LED strip
+      g.rect(-24, -8, 48, 3).fill({ color: warmAccent });
+      break;
+    }
+    case "capper": {
+      // Rotating arm above a bottle silhouette.
+      g.roundRect(-28, -22, 56, 32, 4).fill({ color: body }).stroke({ color: outline, width: 1.2 });
+      // Arm mount pillar
+      g.rect(-2, -40, 4, 18).fill({ color: outline });
+      // Rotating arm
+      g.rect(-18, -42, 36, 4).fill({ color: warmAccent }).stroke({ color: outline, width: 0.8 });
+      // Cap stack
+      g.circle(-14, -38, 3).fill({ color: 0xef4444 });
+      g.circle(14, -38, 3).fill({ color: 0xef4444 });
+      // Bottle silhouette on the plate
+      g.roundRect(-4, -12, 8, 20, 2)
+        .fill({ color: 0xbfdbfe })
+        .stroke({ color: outline, width: 0.7 });
+      break;
+    }
+    case "qc": {
+      // Box with an inspection magnifier icon.
+      g.roundRect(-28, -22, 56, 32, 4).fill({ color: body }).stroke({ color: outline, width: 1.2 });
+      // Screen showing "PASS/FAIL"
+      g.roundRect(-20, -18, 40, 12, 2).fill({ color: 0x0f172a });
+      g.rect(-16, -14, 8, 3).fill({ color: 0x22c55e });
+      g.rect(-4, -14, 8, 3).fill({ color: 0xef4444 });
+      // Magnifier
+      g.circle(14, -32, 7).fill({ color: 0xbfdbfe }).stroke({ color: outline, width: 1.2 });
+      g.moveTo(20, -26).lineTo(28, -18).stroke({ color: outline, width: 2 });
+      break;
+    }
+    case "labeler": {
+      // Box with paper-label stripe on the front + label reel above.
+      g.roundRect(-30, -24, 60, 34, 4).fill({ color: body }).stroke({ color: outline, width: 1.2 });
+      // Reel of labels
+      g.circle(-16, -34, 9).fill({ color: warmAccent }).stroke({ color: outline, width: 1 });
+      g.circle(-16, -34, 3).fill({ color: outline });
+      // Label stripe (the "paper" coming out onto the product)
+      g.rect(-8, -30, 34, 6).fill({ color: 0xffffff }).stroke({ color: outline, width: 0.8 });
+      g.rect(-4, -28, 4, 2).fill({ color: accent });
+      g.rect(4, -28, 4, 2).fill({ color: accent });
+      break;
+    }
+    case "packer": {
+      // Cardboard-box crate silhouette with tape line.
+      g.moveTo(-32, 10)
+        .lineTo(-24, -18)
+        .lineTo(24, -18)
+        .lineTo(32, 10)
+        .closePath()
+        .fill({ color: 0xd6a976 })
+        .stroke({ color: outline, width: 1.2 });
+      // Top flaps
+      g.rect(-24, -22, 48, 5).fill({ color: 0xc79866 }).stroke({ color: outline, width: 0.8 });
+      // Tape strip down the middle
+      g.rect(-2, -18, 4, 28).fill({ color: warmAccent });
+      // Package label
+      g.rect(-14, -8, 20, 8).fill({ color: 0xffffff }).stroke({ color: outline, width: 0.6 });
+      g.rect(-12, -6, 16, 1).fill({ color: outline });
+      g.rect(-12, -3, 12, 1).fill({ color: outline });
+      break;
+    }
+    case "conveyor": {
+      // Belt with 3 rollers, no vertical body — sits low on the tile.
+      g.rect(-36, -6, 72, 12).fill({ color: 0x334155 }).stroke({ color: outline, width: 1 });
+      // Rollers
+      for (const rx of [-28, -12, 4, 20]) {
+        g.circle(rx, -6, 3).fill({ color: accent }).stroke({ color: outline, width: 0.7 });
+        g.circle(rx, 6, 3).fill({ color: accent }).stroke({ color: outline, width: 0.7 });
+      }
+      // Direction arrow
+      g.moveTo(-4, -12).lineTo(6, 0).lineTo(-4, 12).stroke({ color: warmAccent, width: 1.5 });
+      break;
+    }
+    case "manual": {
+      // Workbench + person silhouette.
+      // Bench
+      g.rect(-28, -10, 56, 12).fill({ color: 0xa3a3a3 }).stroke({ color: outline, width: 1 });
+      // Bench legs
+      g.rect(-24, 2, 3, 10).fill({ color: outline });
+      g.rect(21, 2, 3, 10).fill({ color: outline });
+      // Person: head + torso
+      g.circle(-6, -26, 5).fill({ color: 0xfde68a }).stroke({ color: outline, width: 0.8 });
+      g.roundRect(-11, -20, 10, 12, 2)
+        .fill({ color: 0x3b82f6 })
+        .stroke({ color: outline, width: 0.8 });
+      // Tool on the bench
+      g.rect(6, -14, 12, 3).fill({ color: warmAccent }).stroke({ color: outline, width: 0.6 });
+      break;
+    }
+    case "buffer": {
+      // Stack of boxes / shelf. Diagonal iso stack.
+      // Bottom row
+      g.rect(-24, -4, 20, 14).fill({ color: 0xd6a976 }).stroke({ color: outline, width: 1 });
+      g.rect(-4, -4, 20, 14).fill({ color: 0xd6a976 }).stroke({ color: outline, width: 1 });
+      // Middle row
+      g.rect(-14, -20, 20, 16).fill({ color: 0xe8bf8a }).stroke({ color: outline, width: 1 });
+      g.rect(6, -20, 20, 16).fill({ color: 0xe8bf8a }).stroke({ color: outline, width: 1 });
+      // Top box
+      g.rect(-4, -36, 20, 16).fill({ color: 0xf3d4a7 }).stroke({ color: outline, width: 1 });
+      // Tape lines
+      g.moveTo(-14, -4).lineTo(-14, 10).stroke({ color: warmAccent, width: 0.8, alpha: 0.7 });
+      g.moveTo(6, -4).lineTo(6, 10).stroke({ color: warmAccent, width: 0.8, alpha: 0.7 });
+      break;
+    }
+    case "assembly": {
+      // Two robotic arms converging over a plate.
+      g.roundRect(-26, -14, 52, 22, 4).fill({ color: body }).stroke({ color: outline, width: 1.2 });
+      // Base plate
+      g.rect(-16, -18, 32, 4).fill({ color: accent });
+      // Left arm
+      g.moveTo(-20, -40).lineTo(-14, -22).lineTo(-2, -18).stroke({ color: outline, width: 3 });
+      g.circle(-20, -40, 4).fill({ color: warmAccent }).stroke({ color: outline, width: 1 });
+      g.circle(-14, -22, 3).fill({ color: 0xef4444 });
+      // Right arm
+      g.moveTo(20, -40).lineTo(14, -22).lineTo(2, -18).stroke({ color: outline, width: 3 });
+      g.circle(20, -40, 4).fill({ color: warmAccent }).stroke({ color: outline, width: 1 });
+      g.circle(14, -22, 3).fill({ color: 0xef4444 });
+      break;
+    }
+    case "transport": {
+      // Hand-truck / dolly.
+      // Wheels
+      g.circle(-14, 10, 6).fill({ color: 0x1f2937 }).stroke({ color: outline, width: 0.8 });
+      g.circle(14, 10, 6).fill({ color: 0x1f2937 }).stroke({ color: outline, width: 0.8 });
+      // Deck
+      g.rect(-24, 0, 48, 4).fill({ color: warmAccent }).stroke({ color: outline, width: 1 });
+      // Load: 2 stacked crates
+      g.rect(-14, -18, 28, 18).fill({ color: 0xd6a976 }).stroke({ color: outline, width: 1 });
+      g.rect(-10, -32, 20, 14).fill({ color: 0xe8bf8a }).stroke({ color: outline, width: 1 });
+      // Handle
+      g.moveTo(-22, 0).lineTo(-30, -30).stroke({ color: outline, width: 2 });
+      break;
+    }
+    case "source": {
+      // Truncated pyramid feeder ("silo") with a chute at the bottom.
+      g.moveTo(-22, -34)
+        .lineTo(22, -34)
+        .lineTo(28, 6)
+        .lineTo(-28, 6)
+        .closePath()
+        .fill({ color: 0xcbd5e1 })
+        .stroke({ color: outline, width: 1.2 });
+      // Top hatch
+      g.rect(-14, -38, 28, 6).fill({ color: accent }).stroke({ color: outline, width: 1 });
+      // Chute
+      g.moveTo(-6, 6)
+        .lineTo(6, 6)
+        .lineTo(4, 14)
+        .lineTo(-4, 14)
+        .closePath()
+        .fill({ color: outline });
+      // Level indicator lines
+      g.moveTo(-18, -10).lineTo(18, -10).stroke({ color: outline, width: 0.6, alpha: 0.5 });
+      g.moveTo(-16, -20).lineTo(16, -20).stroke({ color: outline, width: 0.6, alpha: 0.5 });
+      break;
+    }
+    case "sink": {
+      // Outbound pallet with a checkmark flag.
+      // Pallet
+      g.rect(-30, 4, 60, 8).fill({ color: 0xa16207 }).stroke({ color: outline, width: 1 });
+      g.rect(-26, 12, 4, 4).fill({ color: outline });
+      g.rect(-2, 12, 4, 4).fill({ color: outline });
+      g.rect(22, 12, 4, 4).fill({ color: outline });
+      // Stacked outbound crates
+      g.rect(-24, -18, 48, 22).fill({ color: 0xd6a976 }).stroke({ color: outline, width: 1 });
+      g.rect(-16, -32, 32, 14).fill({ color: 0xe8bf8a }).stroke({ color: outline, width: 1 });
+      // Delivered checkmark badge
+      g.circle(20, -34, 6).fill({ color: 0x22c55e }).stroke({ color: outline, width: 1 });
+      g.moveTo(17, -34).lineTo(20, -31).lineTo(24, -37).stroke({ color: 0xffffff, width: 1.6 });
+      break;
+    }
+    case "machine":
+    case "generic":
+    default: {
+      // Generic industrial box with a control panel — a fallback that
+      // still reads as "a machine", not a placeholder rect.
+      g.roundRect(-28, -22, 56, 32, 4).fill({ color: body }).stroke({ color: outline, width: 1.2 });
+      // Roof stack
+      g.rect(-6, -30, 12, 10).fill({ color: accent }).stroke({ color: outline, width: 0.8 });
+      // Control panel
+      g.roundRect(-22, -18, 22, 12, 2).fill({ color: 0x0f172a });
+      // LEDs
+      g.circle(-16, -12, 1.5).fill({ color: 0x22c55e });
+      g.circle(-10, -12, 1.5).fill({ color: warmAccent });
+      g.circle(-4, -12, 1.5).fill({ color: 0xef4444 });
+      // Output slot
+      g.rect(6, -2, 18, 4).fill({ color: outline });
+      break;
     }
   }
-  const g = new Graphics();
-  g.roundRect(-STATION_HALF_W, -STATION_HALF_H, STATION_HALF_W * 2, STATION_HALF_H * 2, 6)
-    .fill({ color: 0xf3f4f6 })
-    .stroke({ color: 0x111827, width: 1 });
   return g;
+}
+
+/**
+ * VROL-1229 — build the visible body positioned with its BASE on the
+ * tile plane (y=0 in container-local space, which the parent container
+ * places at worldToScreen(tile center). Sprite is anchored bottom-center
+ * so the visible silhouette rises UP from the floor as an iso viewer
+ * expects. Ring math (below) recentres on the body mid-height so the
+ * bottleneck marker lands ON the sprite instead of at the floor tile.
+ */
+function buildStationBody(type: RenderStationType | undefined): Container {
+  const cached = getStationSprite(type);
+  if (cached) {
+    const sprite = new Sprite(cached);
+    // Anchor bottom-center so sprite.base = container origin (tile plane).
+    sprite.anchor.set(0.5, 1);
+    sprite.width = STATION_HALF_W * 2;
+    sprite.height = STATION_HALF_H * 2 + STATION_BODY_LIFT;
+    return sprite;
+  }
+  // Procedural fallback (VROL-1228).
+  return drawProceduralBody(type);
 }
 
 function drawStation(s: RenderStation): Container {
   const c = new Container();
   c.label = `station:${s.id}`;
-  // VROL-857 — state-colored ring around the body; bottleneck bumps
-  // stroke width so it reads at a glance across a busy grid.
+  // VROL-1229 — ring now anchors around the visible body mid-height
+  // (STATION_BODY_LIFT above the tile plane), NOT the floor tile.
+  // Bottleneck marker + hit-testing feel land on the sprite silhouette
+  // as a result.
+  const ringCenterY = -Math.round(STATION_BODY_LIFT / 2 + STATION_HALF_H / 2);
   const ring = new Graphics();
   ring
     .roundRect(
       -(STATION_HALF_W + STATION_RING_PAD),
-      -(STATION_HALF_H + STATION_RING_PAD),
+      ringCenterY - (STATION_HALF_H + STATION_RING_PAD),
       (STATION_HALF_W + STATION_RING_PAD) * 2,
       (STATION_HALF_H + STATION_RING_PAD) * 2,
       8,
@@ -453,7 +707,7 @@ function drawStation(s: RenderStation): Container {
       alpha: 0.95,
     });
   c.addChild(ring);
-  c.addChild(buildStationBody());
+  c.addChild(buildStationBody(s.nodeType));
   // Text labels overlay on the main thread (HTML) via IsoCanvas so we
   // can use real CSS + a11y + i18n without dragging `document` into
   // the worker. The container's screen position drives where the
