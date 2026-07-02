@@ -1,0 +1,42 @@
+# VROL-491 — Rust engine crate for Vrolen (Phase 4).
+#
+# Compiled to WebAssembly via wasm-pack and loaded by Vite at build time.
+# This scaffolding ships a hello_world entry point so we can validate the
+# TS → Rust → back-to-TS bridge before porting simulation logic (VROL-495
+# scheduler, VROL-498 state machine, ... through VROL-516 UI migration).
+[package]
+name = "engine_rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["Vrolen"]
+description = "Vrolen production-line simulation engine, Rust core"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# wasm-bindgen: the standard #[wasm_bindgen] macro that emits the JS
+# shims wasm-pack needs to expose Rust functions to JavaScript.
+wasm-bindgen = "0.2"
+# console_error_panic_hook: forwards Rust panics to console.error in
+# development so a panic in the WASM module doesn't die silently.
+console_error_panic_hook = { version = "0.1", optional = true }
+# serde + serde-wasm-bindgen — will be used from VROL-495 onwards for
+# passing scenario structs across the bridge. Not called yet but the
+# dep is pinned so the version choice is not blocking later stories.
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+
+[features]
+default = ["console_error_panic_hook"]
+
+[profile.release]
+# opt-level "z" trades a bit of speed for smaller WASM binaries — this
+# is the standard wasm-pack recommendation for shipping to the browser.
+# We can revisit to "3" once the engine is ported and we're profiling
+# for perf regressions vs the TS baseline.
+opt-level = "z"
+lto = true
+codegen-units = 1

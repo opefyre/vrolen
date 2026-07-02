@@ -84,3 +84,11 @@ yarn-error.log*
 *.tsbuildinfo
 .eslintcache
 .stylelintcache
+
+# VROL-491 — Rust engine build artefacts. The `pkg/` dir is generated
+# by `pnpm run build:engine-rs`; tracking it would churn the repo on
+# every rebuild. CI (VROL-509 output-parity spike onwards) will run
+# the wasm-pack build fresh.
+engine-rs/target/
+engine-rs/pkg/
+engine-rs/Cargo.lock

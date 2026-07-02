@@ -2,4 +2,8 @@
 # esbuild needs its postinstall to pick the right platform binary.
 
 allowBuilds:
+  # VROL-491 — @swc/core (added by vitest coverage transitively) needs
+  # its postinstall to select the platform-specific native binary. Set
+  # to `true` so pnpm install stops erroring on ERR_PNPM_IGNORED_BUILDS.
+  "@swc/core": true
   esbuild: true

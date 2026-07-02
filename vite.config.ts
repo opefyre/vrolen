@@ -2,6 +2,8 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import wasm from "vite-plugin-wasm";
+import topLevelAwait from "vite-plugin-top-level-await";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -28,10 +30,15 @@ function loadSharedOpenAiKey(): string | null {
 const SHARED_OPENAI_KEY = loadSharedOpenAiKey();
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  // VROL-491 — vite-plugin-wasm + top-level-await let the Rust
+  // engine's async WASM init (`await init()`) run at module top level.
+  // Order matters: wasm() must sit before topLevelAwait() so the
+  // transform sees the wasm imports first.
+  plugins: [wasm(), topLevelAwait(), react(), tailwindcss()],
   resolve: {
     alias: {
       "@": resolve(import.meta.dirname, "./src"),
+      "@engine-rs": resolve(import.meta.dirname, "./engine-rs/pkg"),
     },
   },
   // VROL-657 — manual chunks for the heavy + reusable deps. Splitting
