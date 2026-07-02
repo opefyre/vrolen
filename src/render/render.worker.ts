@@ -873,14 +873,17 @@ function drawEdge(
   const px = -uy;
   const py = ux;
 
-  // Trim so the belt tucks into the sprite silhouettes rather than
-  // clipping across them. Roughly STATION_HALF_W on each side, capped
-  // at 40 % of the run length so short edges still show belt.
-  const trim = Math.min(len * 0.4, STATION_HALF_W - 6);
-  const sx1 = from.x + ux * trim;
-  const sy1 = from.y + uy * trim;
-  const sx2 = to.x - ux * trim;
-  const sy2 = to.y - uy * trim;
+  // VROL-1244 — belt now runs from tile-center of source to tile-center
+  // of target (no trim). stationLayer sits ABOVE edgeLayer in the
+  // world container (see world.addChild order at init), so the sprite
+  // silhouette + its floor diamond naturally occlude the belt ends —
+  // no visible "disconnection" between belt and sprite. Only pull the
+  // arrowhead back so it doesn't disappear under the target's floor
+  // marker.
+  const sx1 = from.x;
+  const sy1 = from.y;
+  const sx2 = to.x;
+  const sy2 = to.y;
   const beltLen = Math.hypot(sx2 - sx1, sy2 - sy1);
   if (beltLen < 4) return g;
 
@@ -890,8 +893,12 @@ function drawEdge(
   const rollerColor = active ? 0xd1d5db : 0x9ca3af;
   const arrowColor = active ? 0xf59e0b : 0x9ca3af;
 
-  const BELT_HALF = 5;
-  const RAIL_HALF = 7;
+  // VROL-1244 — bumped from 5 / 7 so the belt reads at fit-view zoom
+  // where the whole preset fills the wrapper.
+  const BELT_HALF = 6;
+  const RAIL_HALF = 8;
+  // Arrowhead visible-length pulled inside the target's floor diamond.
+  const ARROW_INSET = STATION_HALF_W - 8;
 
   const corner = (offset: number, along: number): [number, number] => [
     sx1 + ux * along + px * offset,
@@ -962,9 +969,11 @@ function drawEdge(
   }
   // Inline arrowhead near the target end — replaces the direction
   // chevrons from VROL-1234 (the rollers already sell direction).
+  // Pulled back by ARROW_INSET so it sits just inside the target's
+  // floor diamond rather than under the sprite body.
   {
-    const HEAD = 9;
-    const tipAlong = beltLen - 2;
+    const HEAD = 10;
+    const tipAlong = Math.max(beltLen * 0.5, beltLen - ARROW_INSET);
     const [tipX, tipY] = corner(0, tipAlong);
     const [baseX, baseY] = corner(0, tipAlong - HEAD);
     const wing = HEAD * 0.65;

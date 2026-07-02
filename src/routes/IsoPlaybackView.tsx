@@ -103,7 +103,7 @@ export function IsoPlaybackView({
     // never went through auto-layout.
     const allAtOrigin = render.stations.every((s) => s.x === 0 && s.y === 0);
     // VROL-1239 — see stationWorldCoords memo for the spacing rationale.
-    const SPACING_MULT = 1.8;
+    const SPACING_MULT = 2.6;
     const laidOut = allAtOrigin
       ? (() => {
           const fallback = scenarioToIsoLayout(nodes, edges);
@@ -198,7 +198,7 @@ export function IsoPlaybackView({
     const allAtOrigin = render.stations.every((s) => s.x === 0 && s.y === 0);
     // VROL-1239 — mirror the sprite-scene spacing so fit-view frames
     // the actual expanded footprint.
-    const SPACING_MULT = 1.8;
+    const SPACING_MULT = 2.6;
     const points: readonly { x: number; y: number }[] = allAtOrigin
       ? [...scenarioToIsoLayout(nodes, edges).positions.values()]
       : render.stations.map((s) => ({ x: s.x * SPACING_MULT, y: s.y * SPACING_MULT }));
@@ -213,11 +213,14 @@ export function IsoPlaybackView({
       if (p.y < minY) minY = p.y;
       if (p.y > maxY) maxY = p.y;
     }
-    // Extend the world bbox by one tile so sprites don't clip the edge.
-    minX -= 0.5;
-    maxX += 0.5;
-    minY -= 0.5;
-    maxY += 0.5;
+    // VROL-1245 — extend the world bbox by one full tile on each side.
+    // Was 0.5 tiles, which at the new ISO_SPACING_MULT (VROL-1244)
+    // meant tall sprites (silo, buffer stacks) could clip against the
+    // wrapper edge on fresh entry.
+    minX -= 1;
+    maxX += 1;
+    minY -= 1;
+    maxY += 1;
 
     // Project the four world-bbox corners at zoom=1, camera=(0,0) to get
     // the raw screen bbox. worldToScreen is linear in x,y at z=0, so 4
@@ -376,7 +379,7 @@ export function IsoPlaybackView({
   // coords by ISO_SPACING_MULT so the same relative layout expands
   // into non-overlapping cells; fit-view re-derives zoom afterwards.
   // Topological fallback is already spaced (VROL-1232) so it uses 1x.
-  const ISO_SPACING_MULT = 1.8;
+  const ISO_SPACING_MULT = 2.6;
   const stationWorldCoords = useMemo(() => {
     const render = scenarioToRender(nodes, edges, effectiveResult);
     const allAtOrigin = render.stations.every((s) => s.x === 0 && s.y === 0);
